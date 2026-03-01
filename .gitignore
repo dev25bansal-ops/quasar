@@ -1,0 +1,22 @@
+# Build artifacts
+/target
+**/target
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Rust
+**/*.rs.bk
+Cargo.lock
+
+# Logs
+*.log

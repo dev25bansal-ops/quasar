@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/quasar-core",
+    "crates/quasar-math",
+    "crates/quasar-render",
+    "crates/quasar-window",
+    "crates/quasar-physics",
+    "crates/quasar-audio",
+    "crates/quasar-scripting",
+    "crates/quasar-editor",
+    "crates/quasar-engine",
+    "examples/spinning_cube",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Dev2506/quasar"
+authors = ["Dev2506"]
+
+[workspace.dependencies]
+# Internal crates
+quasar-core = { path = "crates/quasar-core" }
+quasar-math = { path = "crates/quasar-math" }
+quasar-render = { path = "crates/quasar-render" }
+quasar-window = { path = "crates/quasar-window" }
+quasar-physics = { path = "crates/quasar-physics" }
+quasar-audio = { path = "crates/quasar-audio" }
+quasar-scripting = { path = "crates/quasar-scripting" }
+quasar-editor = { path = "crates/quasar-editor" }
+
+# Rendering & windowing
+wgpu = "24"
+winit = "0.30"
+
+# Math
+glam = { version = "0.29", features = ["bytemuck"] }
+
+# Utilities
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+log = "0.4"
+env_logger = "0.11"
+
+# Physics
+rapier3d = { version = "0.22", features = ["simd-stable"] }
+
+# Audio
+kira = "0.9"
+
+# Scripting
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+
+# Editor GUI
+egui = "0.30"
+egui-wgpu = "0.30"
+egui-winit = "0.30"
+
+# Image loading
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,16 @@
+[package]
+name = "quasar-engine"
+description = "Quasar Engine — A modular 3D game engine built in Rust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quasar-core = { workspace = true }
+quasar-math = { workspace = true }
+quasar-render = { workspace = true }
+quasar-window = { workspace = true }
+quasar-physics = { workspace = true }
+quasar-audio = { workspace = true }
+quasar-scripting = { workspace = true }
+quasar-editor = { workspace = true }

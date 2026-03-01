@@ -1,0 +1,10 @@
+[package]
+name = "quasar-math"
+description = "Math types and transform utilities for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+bytemuck = { workspace = true }

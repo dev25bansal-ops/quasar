@@ -1,0 +1,12 @@
+[package]
+name = "quasar-physics"
+description = "Physics simulation with rigid bodies and colliders for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quasar-core = { workspace = true }
+quasar-math = { workspace = true }
+rapier3d = { workspace = true }
+log = { workspace = true }

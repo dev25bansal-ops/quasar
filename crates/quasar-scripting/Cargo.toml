@@ -1,0 +1,11 @@
+[package]
+name = "quasar-scripting"
+description = "Lua scripting integration for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quasar-core = { workspace = true }
+mlua = { workspace = true }
+log = { workspace = true }

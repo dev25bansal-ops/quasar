@@ -1,0 +1,9 @@
+[package]
+name = "quasar-core"
+description = "Core ECS framework and application lifecycle for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = { workspace = true }
