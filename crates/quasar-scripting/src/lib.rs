@@ -178,4 +178,4 @@ impl ScriptComponent {
     }
 }
 
-pub use plugin::ScriptingPlugin;
+pub use plugin::{ScriptingPlugin, ScriptingResource};

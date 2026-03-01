@@ -4,7 +4,7 @@ use quasar_core::ecs::{System, World};
 
 use crate::{AudioSource, AudioSystem};
 
-/// Resource wrapper for the audio system as an ECS singleton.
+/// Resource wrapper for the audio system as an ECS global resource.
 pub struct AudioResource {
     pub audio: AudioSystem,
 }
@@ -32,7 +32,7 @@ impl System for AudioPlaybackSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        // Collect audio sources that need to start playing.
+        // Pass 1: collect audio sources that need to start playing.
         let sources_to_play: Vec<(u32, String, bool)> = world
             .query::<AudioSource>()
             .filter(|(_, src)| src.playing_id.is_none())
@@ -43,30 +43,25 @@ impl System for AudioPlaybackSystem {
             return;
         }
 
-        // Get the audio resource.
-        let audio_ptr: Option<*mut AudioSystem> = world
-            .query_mut::<AudioResource>()
-            .next()
-            .map(|(_, res)| &mut res.audio as *mut AudioSystem);
+        // Pass 2: play each source through the audio resource.
+        let mut play_results: Vec<(u32, Option<crate::SoundId>)> = Vec::new();
 
-        let Some(audio_ptr) = audio_ptr else {
-            return;
-        };
+        if let Some(resource) = world.resource_mut::<AudioResource>() {
+            for (entity_idx, path, looping) in &sources_to_play {
+                let id = if *looping {
+                    resource.audio.play_looped(path)
+                } else {
+                    resource.audio.play(path)
+                };
+                play_results.push((*entity_idx, id));
+            }
+        }
 
-        // Play each source.
-        for (entity_idx, path, looping) in sources_to_play {
-            // SAFETY: we're done borrowing AudioResource, now we borrow AudioSource.
-            let audio = unsafe { &mut *audio_ptr };
-            let id = if looping {
-                audio.play_looped(&path)
-            } else {
-                audio.play(&path)
-            };
-
-            // Write back the playing_id.
+        // Pass 3: write back the playing_id to each AudioSource component.
+        for (entity_idx, sound_id) in play_results {
             for (entity, src) in world.query_mut::<AudioSource>() {
                 if entity.index() == entity_idx {
-                    src.playing_id = id;
+                    src.playing_id = sound_id;
                     break;
                 }
             }
@@ -83,8 +78,7 @@ impl quasar_core::Plugin for AudioPlugin {
     }
 
     fn build(&self, app: &mut quasar_core::App) {
-        let singleton = app.world.spawn();
-        app.world.insert(singleton, AudioResource::new());
+        app.world.insert_resource(AudioResource::new());
 
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::PostUpdate,

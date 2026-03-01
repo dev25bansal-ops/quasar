@@ -162,4 +162,4 @@ impl AudioSource {
 #[derive(Debug, Clone, Copy)]
 pub struct AudioListener;
 
-pub use plugin::AudioPlugin;
+pub use plugin::{AudioPlugin, AudioResource};

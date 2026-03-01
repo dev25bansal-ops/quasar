@@ -11,7 +11,7 @@ pub mod rigidbody;
 pub mod world;
 
 pub use collider::{ColliderComponent, ColliderShape};
-pub use plugin::PhysicsPlugin;
+pub use plugin::{PhysicsPlugin, PhysicsResource};
 pub use rigidbody::{BodyType, RigidBodyComponent};
 pub use world::PhysicsWorld;
 

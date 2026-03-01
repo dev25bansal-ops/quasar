@@ -1,11 +1,12 @@
 //! Scripting plugin — runs Lua scripts every frame and handles hot-reload.
 
 use quasar_core::ecs::{System, World};
+use quasar_core::Time;
 
 use crate::bridge;
 use crate::ScriptEngine;
 
-/// Resource wrapper so the scripting engine lives in the ECS.
+/// Resource wrapper so the scripting engine lives in the ECS as a global resource.
 pub struct ScriptingResource {
     pub engine: ScriptEngine,
     /// Frame counter for hot-reload checks (every N frames).
@@ -38,8 +39,14 @@ impl System for ScriptingSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        // Read delta time from the Time resource (falls back to 1/60 if missing).
+        let dt = world
+            .resource::<Time>()
+            .map(|t| t.delta_seconds())
+            .unwrap_or(1.0 / 60.0);
+
         // Get the scripting resource.
-        let Some((_, resource)) = world.query_mut::<ScriptingResource>().next() else {
+        let Some(resource) = world.resource_mut::<ScriptingResource>() else {
             return;
         };
 
@@ -51,9 +58,7 @@ impl System for ScriptingSystem {
         }
 
         // Call the global `on_update(dt)` if it exists.
-        let _ = resource
-            .engine
-            .call_function::<_, ()>("on_update", 0.016f32);
+        let _ = resource.engine.call_function::<_, ()>("on_update", dt);
     }
 }
 
@@ -66,8 +71,7 @@ impl quasar_core::Plugin for ScriptingPlugin {
     }
 
     fn build(&self, app: &mut quasar_core::App) {
-        let singleton = app.world.spawn();
-        app.world.insert(singleton, ScriptingResource::new());
+        app.world.insert_resource(ScriptingResource::new());
 
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::Update,

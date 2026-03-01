@@ -17,7 +17,7 @@ use crate::rigidbody::RigidBodyComponent;
 use crate::world::PhysicsWorld;
 
 /// A resource wrapper so the physics world can live inside the ECS [`World`]
-/// as a singleton component on a dedicated entity.
+/// as a global resource via `insert_resource`.
 pub struct PhysicsResource {
     pub physics: PhysicsWorld,
 }
@@ -51,59 +51,35 @@ impl System for PhysicsStepSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        // We store the PhysicsResource as a component on a dedicated "singleton" entity.
-        // Find it via query.
-        let mut positions_to_write: Vec<(u32, [f32; 3], [f32; 4])> = Vec::new();
-
-        // Step physics and collect updated positions.
-        {
-            let mut iter = world.query_mut::<PhysicsResource>();
-            if let Some((_entity, resource)) = iter.next() {
-                resource.physics.step();
-
-                // Collect body transforms for later write-back.
-                for (_, rb) in resource.physics.bodies.iter() {
-                    let t = rb.translation();
-                    let r = rb.rotation();
-                    // We use the body handle raw bits as a lookup key.
-                    // (Bridge between rapier handle and our entity is via RigidBodyComponent)
-                    let _ = (t, r); // positions collected below
-                }
-            }
+        // Step the physics simulation.
+        if let Some(resource) = world.resource_mut::<PhysicsResource>() {
+            resource.physics.step();
         }
 
-        // Sync: read RigidBodyComponent on each entity → look up Rapier body → write Transform.
-        // We need two passes because we can't borrow PhysicsResource and Transform mutably at once.
-
-        // Pass 1: collect (entity_index, body_handle) pairs.
+        // Pass 1: collect (entity_index, body_handle) pairs from ECS.
         let handles: Vec<(u32, rapier3d::prelude::RigidBodyHandle)> = world
             .query::<RigidBodyComponent>()
             .map(|(e, rbc)| (e.index(), rbc.handle))
             .collect();
 
-        // Pass 2: for each, read position from physics and write to Transform.
-        if !handles.is_empty() {
-            // Get physics resource once.
-            if let Some(physics_world) = world
-                .query::<PhysicsResource>()
-                .next()
-                .map(|(_, pr)| &pr.physics as *const PhysicsWorld)
-            {
-                for &(entity_idx, handle) in &handles {
-                    // SAFETY: we only read from physics (immutable) and write to Transform.
-                    let pw = unsafe { &*physics_world };
-                    if let Some(pos) = pw.body_position(handle) {
-                        if let Some(rot) = pw.body_rotation(handle) {
-                            positions_to_write.push((entity_idx, pos, rot));
-                        }
+        if handles.is_empty() {
+            return;
+        }
+
+        // Pass 2: read positions from physics resource (immutable borrow).
+        let mut positions_to_write: Vec<(u32, [f32; 3], [f32; 4])> = Vec::new();
+        if let Some(resource) = world.resource::<PhysicsResource>() {
+            for &(entity_idx, handle) in &handles {
+                if let Some(pos) = resource.physics.body_position(handle) {
+                    if let Some(rot) = resource.physics.body_rotation(handle) {
+                        positions_to_write.push((entity_idx, pos, rot));
                     }
                 }
             }
         }
 
-        // Write-back pass.
+        // Pass 3: write-back transforms (no aliasing — PhysicsResource not borrowed).
         for (entity_idx, pos, rot) in positions_to_write {
-            // Find the entity by index and update its Transform.
             for (entity, transform) in world.query_mut::<Transform>() {
                 if entity.index() == entity_idx {
                     transform.position = glam::Vec3::new(pos[0], pos[1], pos[2]);
@@ -124,9 +100,8 @@ impl quasar_core::Plugin for PhysicsPlugin {
     }
 
     fn build(&self, app: &mut quasar_core::App) {
-        // Insert the physics resource as a component on a singleton entity.
-        let singleton = app.world.spawn();
-        app.world.insert(singleton, PhysicsResource::new());
+        // Insert the physics resource as a World resource (not a component).
+        app.world.insert_resource(PhysicsResource::new());
 
         // Register the step system in PostUpdate.
         app.schedule.add_system(

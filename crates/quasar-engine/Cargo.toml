@@ -14,3 +14,8 @@ quasar-physics = { workspace = true }
 quasar-audio = { workspace = true }
 quasar-scripting = { workspace = true }
 quasar-editor = { workspace = true }
+winit = { workspace = true }
+pollster = { workspace = true }
+log = { workspace = true }
+glam = { workspace = true }
+wgpu = { workspace = true }

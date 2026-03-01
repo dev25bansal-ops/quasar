@@ -167,16 +167,17 @@ impl World {
     /// Iterate over all `(Entity, &T)` pairs.
     pub fn query<T: Component>(&self) -> impl Iterator<Item = (Entity, &T)> {
         let type_id = TypeId::of::<T>();
+        let allocator = &self.allocator;
         let iter = self
             .storages
             .get(&type_id)
             .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())
             .into_iter()
-            .flat_map(|storage| {
-                storage
-                    .data
-                    .iter()
-                    .map(|(&index, component)| (Entity::new(index, 0), component))
+            .flat_map(move |storage| {
+                storage.data.iter().map(move |(&index, component)| {
+                    let generation = allocator.generation_of(index);
+                    (Entity::new(index, generation), component)
+                })
             });
         iter
     }
@@ -184,16 +185,23 @@ impl World {
     /// Iterate over all `(Entity, &mut T)` pairs.
     pub fn query_mut<T: Component>(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
         let type_id = TypeId::of::<T>();
+        // SAFETY: We take a shared ref to the allocator's generation data
+        // while mutably borrowing the storage. These are disjoint fields
+        // of World, but the borrow checker can't see that. We use a pointer
+        // to the allocator to split the borrow.
+        let alloc_ptr = &self.allocator as *const EntityAllocator;
         let iter = self
             .storages
             .get_mut(&type_id)
             .and_then(|s| s.as_any_mut().downcast_mut::<TypedStorage<T>>())
             .into_iter()
-            .flat_map(|storage| {
-                storage
-                    .data
-                    .iter_mut()
-                    .map(|(&index, component)| (Entity::new(index, 0), component))
+            .flat_map(move |storage| {
+                storage.data.iter_mut().map(move |(&index, component)| {
+                    // SAFETY: allocator is only read (generation_of), storage is
+                    // the only thing mutably borrowed. No aliasing.
+                    let generation = unsafe { (*alloc_ptr).generation_of(index) };
+                    (Entity::new(index, generation), component)
+                })
             });
         iter
     }
@@ -205,11 +213,15 @@ impl World {
     pub fn query2<A: Component, B: Component>(&self) -> impl Iterator<Item = (Entity, &A, &B)> {
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
+        let allocator = &self.allocator;
 
         sa.into_iter().flat_map(move |storage_a| {
             storage_a.data.iter().filter_map(move |(&index, comp_a)| {
                 sb.and_then(|storage_b| storage_b.data.get(&index))
-                    .map(|comp_b| (Entity::new(index, 0), comp_a, comp_b))
+                    .map(|comp_b| {
+                        let generation = allocator.generation_of(index);
+                        (Entity::new(index, generation), comp_a, comp_b)
+                    })
             })
         })
     }
@@ -221,12 +233,14 @@ impl World {
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
         let sc = self.storage::<C>();
+        let allocator = &self.allocator;
 
         sa.into_iter().flat_map(move |storage_a| {
             storage_a.data.iter().filter_map(move |(&index, comp_a)| {
                 let comp_b = sb.and_then(|s| s.data.get(&index))?;
                 let comp_c = sc.and_then(|s| s.data.get(&index))?;
-                Some((Entity::new(index, 0), comp_a, comp_b, comp_c))
+                let generation = allocator.generation_of(index);
+                Some((Entity::new(index, generation), comp_a, comp_b, comp_c))
             })
         })
     }

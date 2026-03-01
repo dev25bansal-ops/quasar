@@ -109,6 +109,14 @@ impl EntityAllocator {
     pub fn alive_count(&self) -> u32 {
         self.alive_count
     }
+
+    /// Return the current generation for a given slot index.
+    ///
+    /// This is used by the query system to reconstruct full `Entity`
+    /// handles (index + generation) when iterating component storage.
+    pub fn generation_of(&self, index: u32) -> u32 {
+        self.generations.get(index as usize).copied().unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
