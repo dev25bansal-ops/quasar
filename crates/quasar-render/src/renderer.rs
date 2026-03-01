@@ -41,7 +41,9 @@ impl Renderer {
         });
 
         // Create the rendering surface from the window.
-        let surface = instance.create_surface(window.clone()).expect("Failed to create surface");
+        let surface = instance
+            .create_surface(window.clone())
+            .expect("Failed to create surface");
 
         // Request a GPU adapter compatible with our surface.
         let adapter = instance
@@ -159,8 +161,7 @@ impl Renderer {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
 
-        let (depth_texture, depth_view) =
-            Self::create_depth_texture(&self.device, width, height);
+        let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, width, height);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
@@ -221,7 +222,8 @@ impl Renderer {
 
             for mesh in meshes {
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
@@ -294,7 +296,8 @@ impl Renderer {
 
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }

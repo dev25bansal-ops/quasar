@@ -10,7 +10,7 @@ pub mod plugin;
 use std::collections::HashMap;
 use std::path::Path;
 
-use kira::manager::{AudioManager, AudioManagerSettings, backend::DefaultBackend};
+use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::tween::Tween;
 
@@ -62,7 +62,7 @@ impl AudioSystem {
     pub fn play_looped<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let mut data = StaticSoundData::from_file(path).ok()?;
-        data.settings.loop_region = Some(kira::sound::Region::default().into());
+        data.settings.loop_region = Some(kira::sound::Region::default());
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;

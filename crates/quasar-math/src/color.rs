@@ -13,18 +13,68 @@ pub struct Color {
 }
 
 impl Color {
-    pub const WHITE: Self = Self { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
-    pub const BLACK: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
-    pub const RED: Self = Self { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
-    pub const GREEN: Self = Self { r: 0.0, g: 1.0, b: 0.0, a: 1.0 };
-    pub const BLUE: Self = Self { r: 0.0, g: 0.0, b: 1.0, a: 1.0 };
-    pub const YELLOW: Self = Self { r: 1.0, g: 1.0, b: 0.0, a: 1.0 };
-    pub const CYAN: Self = Self { r: 0.0, g: 1.0, b: 1.0, a: 1.0 };
-    pub const MAGENTA: Self = Self { r: 1.0, g: 0.0, b: 1.0, a: 1.0 };
-    pub const TRANSPARENT: Self = Self { r: 0.0, g: 0.0, b: 0.0, a: 0.0 };
+    pub const WHITE: Self = Self {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    pub const BLACK: Self = Self {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    pub const RED: Self = Self {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    pub const GREEN: Self = Self {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    pub const BLUE: Self = Self {
+        r: 0.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    pub const YELLOW: Self = Self {
+        r: 1.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
+    pub const CYAN: Self = Self {
+        r: 0.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    pub const MAGENTA: Self = Self {
+        r: 1.0,
+        g: 0.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    pub const TRANSPARENT: Self = Self {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+        a: 0.0,
+    };
 
     /// Cornflower blue — the classic default clear color.
-    pub const CORNFLOWER_BLUE: Self = Self { r: 0.392, g: 0.584, b: 0.929, a: 1.0 };
+    pub const CORNFLOWER_BLUE: Self = Self {
+        r: 0.392,
+        g: 0.584,
+        b: 0.929,
+        a: 1.0,
+    };
 
     /// Create a color from RGB (alpha = 1.0).
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
@@ -59,7 +109,12 @@ impl Color {
 
 impl From<[f32; 4]> for Color {
     fn from(arr: [f32; 4]) -> Self {
-        Self { r: arr[0], g: arr[1], b: arr[2], a: arr[3] }
+        Self {
+            r: arr[0],
+            g: arr[1],
+            b: arr[2],
+            a: arr[3],
+        }
     }
 }
 
@@ -120,8 +175,17 @@ mod tests {
 
     #[test]
     fn constant_colors_are_opaque() {
-        for c in [Color::WHITE, Color::BLACK, Color::RED, Color::GREEN, Color::BLUE,
-                   Color::YELLOW, Color::CYAN, Color::MAGENTA, Color::CORNFLOWER_BLUE] {
+        for c in [
+            Color::WHITE,
+            Color::BLACK,
+            Color::RED,
+            Color::GREEN,
+            Color::BLUE,
+            Color::YELLOW,
+            Color::CYAN,
+            Color::MAGENTA,
+            Color::CORNFLOWER_BLUE,
+        ] {
             assert_eq!(c.a, 1.0, "constant color should be opaque");
         }
         assert_eq!(Color::TRANSPARENT.a, 0.0);

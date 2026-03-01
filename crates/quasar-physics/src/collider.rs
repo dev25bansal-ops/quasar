@@ -47,7 +47,9 @@ impl ColliderShape {
                 radius,
             } => SharedShape::capsule_y(*half_height, *radius),
             Self::HalfSpace => {
-                SharedShape::halfspace(nalgebra::Unit::new_normalize(nalgebra::vector![0.0, 1.0, 0.0]))
+                SharedShape::halfspace(nalgebra::Unit::new_normalize(nalgebra::vector![
+                    0.0, 1.0, 0.0
+                ]))
             }
             Self::Cylinder {
                 half_height,

@@ -90,7 +90,8 @@ impl Transform {
             // Adjust for up vector
             let right = forward.cross(up).normalize();
             let corrected_up = right.cross(forward);
-            self.rotation = Quat::from_mat4(&Mat4::look_to_rh(Vec3::ZERO, forward, corrected_up)).conjugate();
+            self.rotation =
+                Quat::from_mat4(&Mat4::look_to_rh(Vec3::ZERO, forward, corrected_up)).conjugate();
         }
     }
 }
@@ -138,9 +139,7 @@ impl Default for GlobalTransform {
 
 impl From<Transform> for GlobalTransform {
     fn from(t: Transform) -> Self {
-        Self {
-            matrix: t.matrix(),
-        }
+        Self { matrix: t.matrix() }
     }
 }
 

@@ -19,7 +19,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use quasar_core::{World, Time};
+use quasar_core::{Time, World};
 use quasar_math::Transform;
 use quasar_render::{Camera, Mesh, MeshData, Renderer};
 use quasar_window::Input;
@@ -66,8 +66,7 @@ impl ApplicationHandler for QuasarApp {
         );
 
         let size = window.inner_size();
-        let renderer =
-            pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
+        let renderer = pollster::block_on(Renderer::new(window.clone(), size.width, size.height));
 
         let camera = Camera::new(size.width, size.height);
         let mesh = Mesh::from_data(&renderer.device, &MeshData::cube());
@@ -91,7 +90,11 @@ impl ApplicationHandler for QuasarApp {
             cube_entity,
         });
 
-        log::info!("Engine initialized — rendering at {} × {}", size.width, size.height);
+        log::info!(
+            "Engine initialized — rendering at {} × {}",
+            size.width,
+            size.height
+        );
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -170,8 +173,7 @@ impl ApplicationHandler for QuasarApp {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     log::info!("🚀 Quasar Engine — Spinning Cube Demo");
     log::info!("Press ESC to exit");

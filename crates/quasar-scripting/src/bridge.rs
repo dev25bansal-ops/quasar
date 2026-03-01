@@ -49,15 +49,12 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("vec3", vec3_fn)?;
 
     // quasar.lerp(a, b, t)
-    let lerp_fn = lua.create_function(|_, (a, b, t): (f32, f32, f32)| {
-        Ok(a + (b - a) * t)
-    })?;
+    let lerp_fn = lua.create_function(|_, (a, b, t): (f32, f32, f32)| Ok(a + (b - a) * t))?;
     quasar.set("lerp", lerp_fn)?;
 
     // quasar.clamp(value, min, max)
-    let clamp_fn = lua.create_function(|_, (value, min, max): (f32, f32, f32)| {
-        Ok(value.clamp(min, max))
-    })?;
+    let clamp_fn =
+        lua.create_function(|_, (value, min, max): (f32, f32, f32)| Ok(value.clamp(min, max)))?;
     quasar.set("clamp", clamp_fn)?;
 
     Ok(())
@@ -76,10 +73,7 @@ mod tests {
         register_bridge(&lua).unwrap();
 
         // Test vec3
-        let result: LuaTable = lua
-            .load("return quasar.vec3(1, 2, 3)")
-            .eval()
-            .unwrap();
+        let result: LuaTable = lua.load("return quasar.vec3(1, 2, 3)").eval().unwrap();
         assert_eq!(result.get::<f32>("x").unwrap(), 1.0);
         assert_eq!(result.get::<f32>("y").unwrap(), 2.0);
         assert_eq!(result.get::<f32>("z").unwrap(), 3.0);

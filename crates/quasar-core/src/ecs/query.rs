@@ -1,7 +1,7 @@
 //! Query interface for accessing component data across entities.
 
+use super::{Component, Entity, World};
 use std::marker::PhantomData;
-use super::{Entity, World, Component};
 
 /// A query descriptor — currently used as a type-level marker for the
 /// component(s) being queried.

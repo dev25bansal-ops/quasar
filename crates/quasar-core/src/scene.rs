@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 
-use crate::Entity;
 use crate::ecs::World;
-use quasar_math::{Transform, GlobalTransform, Mat4};
+use crate::Entity;
+use quasar_math::{GlobalTransform, Mat4, Transform};
 
 /// Tracks parent → children and child → parent relationships.
 ///
@@ -48,10 +48,7 @@ impl SceneGraph {
             }
         }
         self.parents.insert(child.index(), parent);
-        self.children
-            .entry(parent.index())
-            .or_default()
-            .push(child);
+        self.children.entry(parent.index()).or_default().push(child);
     }
 
     /// Remove parent relationship for `child`.
@@ -80,7 +77,7 @@ impl SceneGraph {
     pub fn has_children(&self, entity: Entity) -> bool {
         self.children
             .get(&entity.index())
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     /// Get all root entities (entities without parents).
@@ -155,10 +152,8 @@ impl SceneGraph {
     /// transforms in sync with the hierarchy.
     pub fn propagate_transforms(&self, world: &mut World) {
         // Collect all entity indices that have a Transform.
-        let entities_with_transform: Vec<u32> = world
-            .query::<Transform>()
-            .map(|(e, _)| e.index())
-            .collect();
+        let entities_with_transform: Vec<u32> =
+            world.query::<Transform>().map(|(e, _)| e.index()).collect();
 
         for &idx in &entities_with_transform {
             let entity = Entity::new(idx, 0);
@@ -337,7 +332,10 @@ mod tests {
 
         // Grandchild at local (0, 3, 0) → global should be (15, 3, 0)
         let grandchild = world.spawn();
-        world.insert(grandchild, Transform::from_position(Vec3::new(0.0, 3.0, 0.0)));
+        world.insert(
+            grandchild,
+            Transform::from_position(Vec3::new(0.0, 3.0, 0.0)),
+        );
         graph.set_parent(grandchild, child);
 
         graph.propagate_transforms(&mut world);

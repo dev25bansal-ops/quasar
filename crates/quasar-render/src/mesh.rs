@@ -18,44 +18,44 @@ impl MeshData {
         // 6 faces × 4 vertices = 24 vertices, 6 faces × 6 indices = 36 indices.
         let vertices = vec![
             // Front face (blue) — +Z
-            Vertex::pos_normal_color([-0.5, -0.5,  0.5], [ 0.0,  0.0,  1.0], [0.2, 0.4, 0.9, 1.0]),
-            Vertex::pos_normal_color([ 0.5, -0.5,  0.5], [ 0.0,  0.0,  1.0], [0.2, 0.4, 0.9, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5,  0.5], [ 0.0,  0.0,  1.0], [0.3, 0.5, 1.0, 1.0]),
-            Vertex::pos_normal_color([-0.5,  0.5,  0.5], [ 0.0,  0.0,  1.0], [0.3, 0.5, 1.0, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, 0.5], [0.0, 0.0, 1.0], [0.2, 0.4, 0.9, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, 0.5], [0.0, 0.0, 1.0], [0.2, 0.4, 0.9, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, 0.5], [0.0, 0.0, 1.0], [0.3, 0.5, 1.0, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, 0.5], [0.0, 0.0, 1.0], [0.3, 0.5, 1.0, 1.0]),
             // Back face (red) — -Z
-            Vertex::pos_normal_color([ 0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0], [0.9, 0.2, 0.2, 1.0]),
-            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [ 0.0,  0.0, -1.0], [0.9, 0.2, 0.2, 1.0]),
-            Vertex::pos_normal_color([-0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0], [1.0, 0.3, 0.3, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5, -0.5], [ 0.0,  0.0, -1.0], [1.0, 0.3, 0.3, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, -0.5], [0.0, 0.0, -1.0], [0.9, 0.2, 0.2, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [0.0, 0.0, -1.0], [0.9, 0.2, 0.2, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, -0.5], [0.0, 0.0, -1.0], [1.0, 0.3, 0.3, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, -0.5], [0.0, 0.0, -1.0], [1.0, 0.3, 0.3, 1.0]),
             // Top face (green) — +Y
-            Vertex::pos_normal_color([-0.5,  0.5,  0.5], [ 0.0,  1.0,  0.0], [0.2, 0.9, 0.3, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5,  0.5], [ 0.0,  1.0,  0.0], [0.2, 0.9, 0.3, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0], [0.3, 1.0, 0.4, 1.0]),
-            Vertex::pos_normal_color([-0.5,  0.5, -0.5], [ 0.0,  1.0,  0.0], [0.3, 1.0, 0.4, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, 0.5], [0.0, 1.0, 0.0], [0.2, 0.9, 0.3, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, 0.5], [0.0, 1.0, 0.0], [0.2, 0.9, 0.3, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, -0.5], [0.0, 1.0, 0.0], [0.3, 1.0, 0.4, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, -0.5], [0.0, 1.0, 0.0], [0.3, 1.0, 0.4, 1.0]),
             // Bottom face (yellow) — -Y
-            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0], [0.9, 0.9, 0.2, 1.0]),
-            Vertex::pos_normal_color([ 0.5, -0.5, -0.5], [ 0.0, -1.0,  0.0], [0.9, 0.9, 0.2, 1.0]),
-            Vertex::pos_normal_color([ 0.5, -0.5,  0.5], [ 0.0, -1.0,  0.0], [1.0, 1.0, 0.3, 1.0]),
-            Vertex::pos_normal_color([-0.5, -0.5,  0.5], [ 0.0, -1.0,  0.0], [1.0, 1.0, 0.3, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [0.0, -1.0, 0.0], [0.9, 0.9, 0.2, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, -0.5], [0.0, -1.0, 0.0], [0.9, 0.9, 0.2, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, 0.5], [0.0, -1.0, 0.0], [1.0, 1.0, 0.3, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, 0.5], [0.0, -1.0, 0.0], [1.0, 1.0, 0.3, 1.0]),
             // Right face (magenta) — +X
-            Vertex::pos_normal_color([ 0.5, -0.5,  0.5], [ 1.0,  0.0,  0.0], [0.9, 0.2, 0.9, 1.0]),
-            Vertex::pos_normal_color([ 0.5, -0.5, -0.5], [ 1.0,  0.0,  0.0], [0.9, 0.2, 0.9, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5, -0.5], [ 1.0,  0.0,  0.0], [1.0, 0.3, 1.0, 1.0]),
-            Vertex::pos_normal_color([ 0.5,  0.5,  0.5], [ 1.0,  0.0,  0.0], [1.0, 0.3, 1.0, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, 0.5], [1.0, 0.0, 0.0], [0.9, 0.2, 0.9, 1.0]),
+            Vertex::pos_normal_color([0.5, -0.5, -0.5], [1.0, 0.0, 0.0], [0.9, 0.2, 0.9, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, -0.5], [1.0, 0.0, 0.0], [1.0, 0.3, 1.0, 1.0]),
+            Vertex::pos_normal_color([0.5, 0.5, 0.5], [1.0, 0.0, 0.0], [1.0, 0.3, 1.0, 1.0]),
             // Left face (cyan) — -X
-            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [-1.0,  0.0,  0.0], [0.2, 0.9, 0.9, 1.0]),
-            Vertex::pos_normal_color([-0.5, -0.5,  0.5], [-1.0,  0.0,  0.0], [0.2, 0.9, 0.9, 1.0]),
-            Vertex::pos_normal_color([-0.5,  0.5,  0.5], [-1.0,  0.0,  0.0], [0.3, 1.0, 1.0, 1.0]),
-            Vertex::pos_normal_color([-0.5,  0.5, -0.5], [-1.0,  0.0,  0.0], [0.3, 1.0, 1.0, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, -0.5], [-1.0, 0.0, 0.0], [0.2, 0.9, 0.9, 1.0]),
+            Vertex::pos_normal_color([-0.5, -0.5, 0.5], [-1.0, 0.0, 0.0], [0.2, 0.9, 0.9, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, 0.5], [-1.0, 0.0, 0.0], [0.3, 1.0, 1.0, 1.0]),
+            Vertex::pos_normal_color([-0.5, 0.5, -0.5], [-1.0, 0.0, 0.0], [0.3, 1.0, 1.0, 1.0]),
         ];
 
         let indices = vec![
-            0,  1,  2,  0,  2,  3,   // front
-            4,  5,  6,  4,  6,  7,   // back
-            8,  9, 10,  8, 10, 11,   // top
-            12, 13, 14, 12, 14, 15,  // bottom
-            16, 17, 18, 16, 18, 19,  // right
-            20, 21, 22, 20, 22, 23,  // left
+            0, 1, 2, 0, 2, 3, // front
+            4, 5, 6, 4, 6, 7, // back
+            8, 9, 10, 8, 10, 11, // top
+            12, 13, 14, 12, 14, 15, // bottom
+            16, 17, 18, 16, 18, 19, // right
+            20, 21, 22, 20, 22, 23, // left
         ];
 
         Self { vertices, indices }
@@ -69,9 +69,9 @@ impl MeshData {
 
         let vertices = vec![
             Vertex::pos_normal_color([-half, 0.0, -half], normal, color),
-            Vertex::pos_normal_color([ half, 0.0, -half], normal, color),
-            Vertex::pos_normal_color([ half, 0.0,  half], normal, color),
-            Vertex::pos_normal_color([-half, 0.0,  half], normal, color),
+            Vertex::pos_normal_color([half, 0.0, -half], normal, color),
+            Vertex::pos_normal_color([half, 0.0, half], normal, color),
+            Vertex::pos_normal_color([-half, 0.0, half], normal, color),
         ];
 
         let indices = vec![0, 1, 2, 0, 2, 3];

@@ -158,7 +158,10 @@ impl ApplicationHandler for QuasarShowcase {
         log::info!(
             "Scene loaded: {} entities, {} with children",
             entities.len(),
-            entities.iter().filter(|(e, _)| scene.has_children(*e)).count()
+            entities
+                .iter()
+                .filter(|(e, _)| scene.has_children(*e))
+                .count()
         );
 
         self.state = Some(AppState {

@@ -6,14 +6,14 @@
 //! - Query interface for iterating over entities with specific components
 //! - System scheduling with ordered execution
 
-mod entity;
 mod component;
-mod world;
+mod entity;
 mod query;
 mod system;
+mod world;
 
-pub use entity::Entity;
 pub use component::Component;
-pub use world::{World, EntityBuilder};
+pub use entity::Entity;
 pub use query::{Query, QueryIter};
-pub use system::{System, SystemStage, Schedule};
+pub use system::{Schedule, System, SystemStage};
+pub use world::{EntityBuilder, World};

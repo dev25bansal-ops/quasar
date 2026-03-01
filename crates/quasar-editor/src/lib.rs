@@ -87,10 +87,7 @@ impl Editor {
                 .resizable(false)
                 .collapsible(false)
                 .show(ctx, |ui| {
-                    ui.label(format!(
-                        "Entities: {}",
-                        entity_names.len()
-                    ));
+                    ui.label(format!("Entities: {}", entity_names.len()));
                     ui.separator();
                     ui.label("Press F12 to toggle editor");
                 });

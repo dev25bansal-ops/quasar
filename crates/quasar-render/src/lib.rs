@@ -11,17 +11,17 @@
 //! - Directional lighting
 //! - Basic WGSL shader compilation
 
-pub mod renderer;
 pub mod camera;
-pub mod mesh;
-pub mod vertex;
-pub mod pipeline;
-pub mod texture;
 pub mod material;
+pub mod mesh;
+pub mod pipeline;
+pub mod renderer;
+pub mod texture;
+pub mod vertex;
 
-pub use renderer::Renderer;
 pub use camera::Camera;
+pub use material::{LightUniform, Material, MaterialUniform};
 pub use mesh::{Mesh, MeshData};
-pub use vertex::Vertex;
+pub use renderer::Renderer;
 pub use texture::Texture;
-pub use material::{Material, MaterialUniform, LightUniform};
+pub use vertex::Vertex;

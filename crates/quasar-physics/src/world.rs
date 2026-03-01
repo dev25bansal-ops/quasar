@@ -53,11 +53,7 @@ impl PhysicsWorld {
     // ------------------------------------------------------------------
 
     /// Add a rigid body and return its handle.
-    pub fn add_body(
-        &mut self,
-        body_type: BodyType,
-        position: [f32; 3],
-    ) -> RigidBodyHandle {
+    pub fn add_body(&mut self, body_type: BodyType, position: [f32; 3]) -> RigidBodyHandle {
         let builder = match body_type {
             BodyType::Dynamic => RigidBodyBuilder::dynamic(),
             BodyType::Fixed => RigidBodyBuilder::fixed(),
@@ -136,7 +132,8 @@ impl PhysicsWorld {
             .restitution(restitution)
             .friction(friction)
             .build();
-        self.colliders.insert_with_parent(collider, parent, &mut self.bodies)
+        self.colliders
+            .insert_with_parent(collider, parent, &mut self.bodies)
     }
 
     /// Attach a collider without a parent body (static geometry).
@@ -154,12 +151,8 @@ impl PhysicsWorld {
 
     /// Remove a collider.
     pub fn remove_collider(&mut self, handle: ColliderHandle) {
-        self.colliders.remove(
-            handle,
-            &mut self.island_manager,
-            &mut self.bodies,
-            true,
-        );
+        self.colliders
+            .remove(handle, &mut self.island_manager, &mut self.bodies, true);
     }
 
     // ------------------------------------------------------------------
@@ -180,9 +173,7 @@ impl PhysicsWorld {
         let filter = QueryFilter::default();
         let mut query_pipeline = QueryPipeline::new();
         query_pipeline.update(&self.colliders);
-        query_pipeline
-            .cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
-            .map(|(handle, toi)| (handle, toi))
+        query_pipeline.cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
     }
 
     // ------------------------------------------------------------------
@@ -192,7 +183,7 @@ impl PhysicsWorld {
     /// Step the physics simulation by one tick.
     pub fn step(&mut self) {
         self.pipeline.step(
-            &self.gravity.into(),
+            &self.gravity,
             &self.integration_parameters,
             &mut self.island_manager,
             &mut self.broad_phase,

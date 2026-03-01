@@ -22,10 +22,7 @@ pub fn hierarchy_panel(
             egui::ScrollArea::vertical().show(ui, |ui| {
                 for (entity, name) in entities {
                     let is_selected = *selected == Some(*entity);
-                    let label = format!(
-                        "{} [{}:{}]",
-                        name, entity.index(), entity.generation()
-                    );
+                    let label = format!("{} [{}:{}]", name, entity.index(), entity.generation());
 
                     let response = ui.selectable_label(is_selected, &label);
                     if response.clicked() {

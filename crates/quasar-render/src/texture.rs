@@ -119,8 +119,16 @@ impl Texture {
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
     ) -> Self {
-        Self::from_rgba(device, queue, layout, &[255, 255, 255, 255], 1, 1, Some("White Texture"))
-            .expect("Failed to create white texture")
+        Self::from_rgba(
+            device,
+            queue,
+            layout,
+            &[255, 255, 255, 255],
+            1,
+            1,
+            Some("White Texture"),
+        )
+        .expect("Failed to create white texture")
     }
 
     /// Create the bind group layout used by all textures.

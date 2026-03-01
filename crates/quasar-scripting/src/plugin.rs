@@ -51,7 +51,9 @@ impl System for ScriptingSystem {
         }
 
         // Call the global `on_update(dt)` if it exists.
-        let _ = resource.engine.call_function::<_, ()>("on_update", 0.016f32);
+        let _ = resource
+            .engine
+            .call_function::<_, ()>("on_update", 0.016f32);
     }
 }
 

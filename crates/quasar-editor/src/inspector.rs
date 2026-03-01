@@ -14,7 +14,8 @@ pub fn inspector_panel(ctx: &egui::Context, selected: Option<Entity>) {
                 Some(entity) => {
                     ui.label(format!(
                         "Entity: [{}:{}]",
-                        entity.index(), entity.generation()
+                        entity.index(),
+                        entity.generation()
                     ));
                     ui.separator();
 

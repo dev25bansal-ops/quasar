@@ -99,7 +99,7 @@ impl World {
     /// Check whether an entity has a specific component type.
     pub fn has<T: Component>(&self, entity: Entity) -> bool {
         self.storage::<T>()
-            .map_or(false, |s| s.data.contains_key(&entity.index))
+            .is_some_and(|s| s.data.contains_key(&entity.index))
     }
 
     // ------------------------------------------------------------------
@@ -154,7 +154,10 @@ impl World {
     /// ```
     pub fn spawn_with(&mut self) -> EntityBuilder<'_> {
         let entity = self.allocator.allocate();
-        EntityBuilder { world: self, entity }
+        EntityBuilder {
+            world: self,
+            entity,
+        }
     }
 
     // ------------------------------------------------------------------
@@ -170,13 +173,10 @@ impl World {
             .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())
             .into_iter()
             .flat_map(|storage| {
-                storage.data.iter().filter_map(|(&index, component)| {
-                    // Reconstruct entity handle — we need the generation from the
-                    // allocator. Because storages only contain alive entities,
-                    // this is safe.
-                    let gen = 0; // Simplified: we trust storage consistency
-                    Some((Entity::new(index, gen), component))
-                })
+                storage
+                    .data
+                    .iter()
+                    .map(|(&index, component)| (Entity::new(index, 0), component))
             });
         iter
     }
@@ -190,9 +190,10 @@ impl World {
             .and_then(|s| s.as_any_mut().downcast_mut::<TypedStorage<T>>())
             .into_iter()
             .flat_map(|storage| {
-                storage.data.iter_mut().map(|(&index, component)| {
-                    (Entity::new(index, 0), component)
-                })
+                storage
+                    .data
+                    .iter_mut()
+                    .map(|(&index, component)| (Entity::new(index, 0), component))
             });
         iter
     }
@@ -201,19 +202,16 @@ impl World {
     ///
     /// Iterates over the smaller storage and looks up the other, yielding
     /// `(Entity, &A, &B)` for every entity that has both.
-    pub fn query2<A: Component, B: Component>(
-        &self,
-    ) -> impl Iterator<Item = (Entity, &A, &B)> {
+    pub fn query2<A: Component, B: Component>(&self) -> impl Iterator<Item = (Entity, &A, &B)> {
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
 
-        sa.into_iter()
-            .flat_map(move |storage_a| {
-                storage_a.data.iter().filter_map(move |(&index, comp_a)| {
-                    sb.and_then(|storage_b| storage_b.data.get(&index))
-                        .map(|comp_b| (Entity::new(index, 0), comp_a, comp_b))
-                })
+        sa.into_iter().flat_map(move |storage_a| {
+            storage_a.data.iter().filter_map(move |(&index, comp_a)| {
+                sb.and_then(|storage_b| storage_b.data.get(&index))
+                    .map(|comp_b| (Entity::new(index, 0), comp_a, comp_b))
             })
+        })
     }
 
     /// Query entities that have components `A`, `B`, **and** `C`.
@@ -224,14 +222,13 @@ impl World {
         let sb = self.storage::<B>();
         let sc = self.storage::<C>();
 
-        sa.into_iter()
-            .flat_map(move |storage_a| {
-                storage_a.data.iter().filter_map(move |(&index, comp_a)| {
-                    let comp_b = sb.and_then(|s| s.data.get(&index))?;
-                    let comp_c = sc.and_then(|s| s.data.get(&index))?;
-                    Some((Entity::new(index, 0), comp_a, comp_b, comp_c))
-                })
+        sa.into_iter().flat_map(move |storage_a| {
+            storage_a.data.iter().filter_map(move |(&index, comp_a)| {
+                let comp_b = sb.and_then(|s| s.data.get(&index))?;
+                let comp_c = sc.and_then(|s| s.data.get(&index))?;
+                Some((Entity::new(index, 0), comp_a, comp_b, comp_c))
             })
+        })
     }
 
     // ------------------------------------------------------------------
@@ -330,7 +327,13 @@ mod tests {
         let mut world = World::new();
         for i in 0..5 {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: 0.0 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                },
+            );
         }
 
         let positions: Vec<_> = world.query::<Position>().collect();
@@ -401,15 +404,22 @@ mod tests {
     #[test]
     fn entity_builder_attaches_components() {
         let mut world = World::new();
-        let e = world.spawn_with()
+        let e = world
+            .spawn_with()
             .with(Position { x: 10.0, y: 20.0 })
             .with(Velocity { dx: 1.0, dy: 2.0 })
             .with(Health(50))
             .id();
 
         assert!(world.is_alive(e));
-        assert_eq!(world.get::<Position>(e), Some(&Position { x: 10.0, y: 20.0 }));
-        assert_eq!(world.get::<Velocity>(e), Some(&Velocity { dx: 1.0, dy: 2.0 }));
+        assert_eq!(
+            world.get::<Position>(e),
+            Some(&Position { x: 10.0, y: 20.0 })
+        );
+        assert_eq!(
+            world.get::<Velocity>(e),
+            Some(&Velocity { dx: 1.0, dy: 2.0 })
+        );
         assert_eq!(world.get::<Health>(e), Some(&Health(50)));
     }
 }

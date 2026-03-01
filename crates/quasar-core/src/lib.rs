@@ -7,16 +7,16 @@
 //! - **Time**: Delta time tracking and fixed timestep support
 //! - **Plugins**: Modular engine extension system
 
+pub mod app;
 pub mod ecs;
 pub mod event;
-pub mod time;
 pub mod plugin;
-pub mod app;
 pub mod scene;
+pub mod time;
 
 pub use app::App;
-pub use ecs::{World, Entity, Component, EntityBuilder};
+pub use ecs::{Component, Entity, EntityBuilder, World};
 pub use event::Events;
-pub use time::Time;
 pub use plugin::Plugin;
-pub use scene::{SceneGraph, Scene};
+pub use scene::{Scene, SceneGraph};
+pub use time::Time;
