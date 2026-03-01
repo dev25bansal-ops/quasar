@@ -22,7 +22,7 @@ pub use quasar_editor as editor;
 pub mod prelude {
     // Core ECS
     pub use quasar_core::{App, World, Entity, Component, Events, Time, Plugin};
-    pub use quasar_core::ecs::{Schedule, SystemStage};
+    pub use quasar_core::ecs::{Schedule, SystemStage, System};
 
     // Math
     pub use quasar_math::{Transform, Color, Vec2, Vec3, Vec4, Mat4, Quat};
@@ -32,4 +32,19 @@ pub mod prelude {
 
     // Window & Input
     pub use quasar_window::{QuasarWindow, Input, KeyState};
+
+    // Physics
+    pub use quasar_physics::{
+        PhysicsWorld, PhysicsPlugin, BodyType,
+        RigidBodyComponent, ColliderComponent, ColliderShape,
+    };
+
+    // Audio
+    pub use quasar_audio::{AudioSystem, AudioSource, AudioListener, AudioPlugin};
+
+    // Scripting
+    pub use quasar_scripting::{ScriptEngine, ScriptComponent, ScriptingPlugin};
+
+    // Editor
+    pub use quasar_editor::Editor;
 }

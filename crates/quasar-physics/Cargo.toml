@@ -9,4 +9,6 @@ license.workspace = true
 quasar-core = { workspace = true }
 quasar-math = { workspace = true }
 rapier3d = { workspace = true }
+glam = { workspace = true }
+nalgebra = "0.33"
 log = { workspace = true }
