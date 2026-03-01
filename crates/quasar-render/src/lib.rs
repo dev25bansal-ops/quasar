@@ -12,6 +12,7 @@
 //! - Basic WGSL shader compilation
 
 pub mod camera;
+pub mod camera_controller;
 pub mod material;
 pub mod mesh;
 pub mod pipeline;
@@ -20,6 +21,7 @@ pub mod texture;
 pub mod vertex;
 
 pub use camera::Camera;
+pub use camera_controller::{FpsCameraController, OrbitController};
 pub use material::{LightUniform, Material, MaterialUniform};
 pub use mesh::{Mesh, MeshData};
 pub use renderer::Renderer;

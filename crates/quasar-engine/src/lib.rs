@@ -21,6 +21,7 @@ pub use quasar_window as window;
 /// Commonly used types — star-import this in your game code.
 pub mod prelude {
     // Core ECS
+    pub use quasar_core::asset::{Asset, AssetHandle, AssetManager};
     pub use quasar_core::ecs::{Schedule, System, SystemStage};
     pub use quasar_core::{App, Component, Entity, EntityBuilder, Events, Plugin, Time, World};
     pub use quasar_core::{Scene, SceneGraph};
@@ -30,7 +31,8 @@ pub mod prelude {
 
     // Rendering
     pub use quasar_render::{
-        Camera, LightUniform, Material, MaterialUniform, Mesh, MeshData, Renderer, Texture, Vertex,
+        Camera, FpsCameraController, LightUniform, Material, MaterialUniform, Mesh, MeshData,
+        OrbitController, Renderer, Texture, Vertex,
     };
 
     // Window & Input
