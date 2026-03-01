@@ -3,8 +3,10 @@
 use wgpu::util::DeviceExt;
 
 use super::camera::{Camera, CameraUniform};
+use super::material::Material;
 use super::mesh::Mesh;
 use super::pipeline;
+use super::texture::Texture;
 
 /// The main GPU renderer for Quasar Engine.
 ///
@@ -22,6 +24,12 @@ pub struct Renderer {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_uniform: CameraUniform,
+    pub material_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
+    /// Default white material used when no material is specified.
+    pub default_material: Material,
+    /// Default 1×1 white texture used when no texture is specified.
+    pub default_texture: Texture,
 }
 
 impl Renderer {
@@ -128,14 +136,31 @@ impl Renderer {
         // -- Depth texture --
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
 
+        // -- Material + Texture bind group layouts --
+        let material_bind_group_layout = Material::bind_group_layout(&device);
+        let texture_bind_group_layout = Texture::bind_group_layout(&device);
+
+        // -- Default material (white, roughness=0.5, metallic=0) --
+        let default_material =
+            Material::new(&device, &material_bind_group_layout, "Default");
+
+        // -- Default 1×1 white texture --
+        let default_texture =
+            Texture::white(&device, &queue, &texture_bind_group_layout);
+
         // -- Render pipeline --
         let shader_source = include_str!("../../../assets/shaders/basic.wgsl");
         let render_pipeline = pipeline::create_render_pipeline(
             &device,
             format,
             &camera_bind_group_layout,
+            &material_bind_group_layout,
+            &texture_bind_group_layout,
             shader_source,
         );
+
+        // Upload default material data.
+        default_material.update(&queue);
 
         Self {
             device,
@@ -149,6 +174,10 @@ impl Renderer {
             camera_bind_group,
             camera_bind_group_layout,
             camera_uniform,
+            material_bind_group_layout,
+            texture_bind_group_layout,
+            default_material,
+            default_texture,
         }
     }
 
@@ -175,6 +204,98 @@ impl Renderer {
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
     }
+
+    // ── Split-phase rendering API ────────────────────────────────
+
+    /// Acquire the next surface frame and create a fresh command encoder.
+    ///
+    /// Use together with [`render_3d_pass`](Self::render_3d_pass) and
+    /// [`finish_frame`](Self::finish_frame) when you need to inject
+    /// additional render passes (e.g. egui) between the 3D draw and
+    /// presentation.
+    pub fn begin_frame(
+        &self,
+    ) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), wgpu::SurfaceError>
+    {
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+        Ok((output, view, encoder))
+    }
+
+    /// Perform the 3D clear + draw pass using an externally-owned encoder.
+    pub fn render_3d_pass(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4)],
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("3D Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.render_pipeline);
+
+            for (mesh, model) in objects {
+                self.camera_uniform.update(camera, *model);
+                self.queue.write_buffer(
+                    &self.camera_buffer,
+                    0,
+                    bytemuck::cast_slice(&[self.camera_uniform]),
+                );
+
+                pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                pass.set_bind_group(1, &self.default_material.bind_group, &[]);
+                pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Submit the encoder and present the frame.
+    pub fn finish_frame(
+        &self,
+        encoder: wgpu::CommandEncoder,
+        output: wgpu::SurfaceTexture,
+    ) {
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+    }
+
+    // ── Legacy one-shot rendering ────────────────────────────────
 
     /// Render a single frame: clear the screen and draw all provided meshes.
     pub fn render(&self, meshes: &[&Mesh]) -> Result<(), wgpu::SurfaceError> {
@@ -219,6 +340,8 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.default_material.bind_group, &[]);
+            render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
 
             for mesh in meshes {
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -295,6 +418,8 @@ impl Renderer {
                 );
 
                 render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.default_material.bind_group, &[]);
+                render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 render_pass
                     .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

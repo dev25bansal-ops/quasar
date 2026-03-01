@@ -7,5 +7,9 @@ license.workspace = true
 
 [dependencies]
 quasar-core = { workspace = true }
+quasar-math = { workspace = true }
+quasar-window = { workspace = true }
 mlua = { workspace = true }
+glam = { workspace = true }
+winit = { workspace = true }
 log = { workspace = true }

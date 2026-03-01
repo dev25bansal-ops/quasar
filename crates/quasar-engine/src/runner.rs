@@ -23,6 +23,7 @@ use winit::{
 };
 
 use quasar_core::App;
+use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{Camera, Renderer};
 use quasar_window::{Input, QuasarWindow, WindowConfig};
 
@@ -31,6 +32,8 @@ struct RunnerState {
     window: Arc<Window>,
     renderer: Renderer,
     camera: Camera,
+    editor: Editor,
+    editor_renderer: EditorRenderer,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -91,6 +94,13 @@ impl ApplicationHandler for QuasarRunner {
 
         let camera = Camera::new(size.width, size.height);
 
+        let editor = Editor::new();
+        let editor_renderer = EditorRenderer::new(
+            &window,
+            &renderer.device,
+            renderer.config.format,
+        );
+
         // Insert Input as a world resource so user systems can read it.
         self.app.world.insert_resource(Input::new());
 
@@ -98,6 +108,8 @@ impl ApplicationHandler for QuasarRunner {
             window,
             renderer,
             camera,
+            editor,
+            editor_renderer,
         });
 
         log::info!(
@@ -117,6 +129,10 @@ impl ApplicationHandler for QuasarRunner {
             return;
         };
 
+        // ── Let egui have first crack at the event ────────────────
+        let egui_consumed =
+            state.editor_renderer.handle_event(&state.window, &event);
+
         match event {
             // ── Close ─────────────────────────────────────────────
             WindowEvent::CloseRequested => {
@@ -127,24 +143,64 @@ impl ApplicationHandler for QuasarRunner {
             // ── Keyboard ──────────────────────────────────────────
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
-                    if let Some(input) = self.app.world.resource_mut::<Input>() {
-                        if event.state.is_pressed() {
-                            input.key_pressed(key);
-                        } else {
-                            input.key_released(key);
-                        }
+                    // F12 toggles the editor regardless.
+                    if key == KeyCode::F12 && event.state.is_pressed() {
+                        state.editor.toggle();
                     }
-                    // ESC closes the application.
-                    if key == KeyCode::Escape && event.state.is_pressed() {
-                        event_loop.exit();
+
+                    // Only forward to game input if egui didn't consume.
+                    if !egui_consumed {
+                        if let Some(input) = self.app.world.resource_mut::<Input>() {
+                            if event.state.is_pressed() {
+                                input.key_pressed(key);
+                            } else {
+                                input.key_released(key);
+                            }
+                        }
+                        // ESC closes the application.
+                        if key == KeyCode::Escape && event.state.is_pressed() {
+                            event_loop.exit();
+                        }
                     }
                 }
             }
 
             // ── Mouse movement ────────────────────────────────────
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(input) = self.app.world.resource_mut::<Input>() {
-                    input.cursor_position = Some((position.x, position.y));
+                if !egui_consumed {
+                    if let Some(input) = self.app.world.resource_mut::<Input>() {
+                        input.cursor_position = Some((position.x, position.y));
+                    }
+                }
+            }
+
+            // ── Mouse buttons ─────────────────────────────────────
+            WindowEvent::MouseInput { state: btn_state, button, .. } => {
+                if !egui_consumed {
+                    if let Some(input) = self.app.world.resource_mut::<Input>() {
+                        let btn = quasar_window::MouseButton::from(button);
+                        if btn_state.is_pressed() {
+                            input.mouse_button_pressed(btn);
+                        } else {
+                            input.mouse_button_released(btn);
+                        }
+                    }
+                }
+            }
+
+            // ── Mouse scroll ──────────────────────────────────────
+            WindowEvent::MouseWheel { delta, .. } => {
+                if !egui_consumed {
+                    if let Some(input) = self.app.world.resource_mut::<Input>() {
+                        match delta {
+                            winit::event::MouseScrollDelta::LineDelta(x, y) => {
+                                input.mouse_scrolled(x, y);
+                            }
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                                input.mouse_scrolled(pos.x as f32, pos.y as f32);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -166,12 +222,11 @@ impl ApplicationHandler for QuasarRunner {
                 // Run one full ECS frame (updates time, runs all systems).
                 self.app.tick();
 
-                // Render: collect meshes + model matrices from the world.
+                // Collect meshes + model matrices from the world.
                 let objects: Vec<(quasar_render::Mesh, glam::Mat4)> = {
                     use quasar_math::Transform;
                     use quasar_render::MeshData;
 
-                    // Collect (entity_index, model_matrix) for entities that have a Transform.
                     let transforms: Vec<(u32, glam::Mat4)> = self
                         .app
                         .world
@@ -179,15 +234,15 @@ impl ApplicationHandler for QuasarRunner {
                         .map(|(e, t)| (e.index(), t.matrix()))
                         .collect();
 
-                    // For now, render the default cube for every entity with a Transform.
-                    // This is a placeholder — a proper Mesh component system will replace this.
                     if !transforms.is_empty() {
                         let mesh_data = MeshData::cube();
                         transforms
                             .into_iter()
                             .map(|(_, model)| {
-                                let mesh =
-                                    quasar_render::Mesh::from_data(&state.renderer.device, &mesh_data);
+                                let mesh = quasar_render::Mesh::from_data(
+                                    &state.renderer.device,
+                                    &mesh_data,
+                                );
                                 (mesh, model)
                             })
                             .collect()
@@ -196,35 +251,67 @@ impl ApplicationHandler for QuasarRunner {
                     }
                 };
 
-                if !objects.is_empty() {
-                    let refs: Vec<(&quasar_render::Mesh, glam::Mat4)> =
-                        objects.iter().map(|(m, mat)| (m, *mat)).collect();
-                    match state.renderer.render_objects(&state.camera, &refs) {
-                        Ok(_) => {}
-                        Err(wgpu::SurfaceError::Lost) => {
+                // ── Split-phase rendering: 3D → egui → present ───
+                let frame_result = state.renderer.begin_frame();
+                match frame_result {
+                    Ok((output, view, mut encoder)) => {
+                        // 3D pass.
+                        let refs: Vec<(&quasar_render::Mesh, glam::Mat4)> =
+                            objects.iter().map(|(m, mat)| (m, *mat)).collect();
+                        state
+                            .renderer
+                            .render_3d_pass(&state.camera, &refs, &view, &mut encoder);
+
+                        // egui pass (editor overlay).
+                        let egui_commands = if state.editor.enabled {
+                            // Build entity name list for the hierarchy panel.
+                            let entity_names: Vec<(quasar_core::ecs::Entity, String)> = self
+                                .app
+                                .world
+                                .query::<quasar_math::Transform>()
+                                .map(|(e, _)| (e, format!("Entity {}", e.index())))
+                                .collect();
+
+                            state.editor_renderer.begin_frame(&state.window);
+                            state.editor.ui(
+                                &state.editor_renderer.egui_ctx,
+                                &entity_names,
+                            );
+
                             let size = state.window.inner_size();
-                            state.renderer.resize(size.width, size.height);
+                            let screen = egui_wgpu::ScreenDescriptor {
+                                size_in_pixels: [size.width, size.height],
+                                pixels_per_point: state.window.scale_factor() as f32,
+                            };
+
+                            Some(state.editor_renderer.end_frame_and_render(
+                                &state.renderer.device,
+                                &state.renderer.queue,
+                                &view,
+                                screen,
+                                &state.window,
+                            ))
+                        } else {
+                            None
+                        };
+
+                        // Submit 3D + egui command buffers, then present.
+                        let mut buffers = vec![encoder.finish()];
+                        if let Some(egui_buf) = egui_commands {
+                            buffers.push(egui_buf);
                         }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("GPU out of memory!");
-                            event_loop.exit();
-                        }
-                        Err(e) => log::warn!("Render error: {e:?}"),
+                        state.renderer.queue.submit(buffers);
+                        output.present();
                     }
-                } else {
-                    // No objects — render an empty frame (just clears the screen).
-                    match state.renderer.render(&[]) {
-                        Ok(_) => {}
-                        Err(wgpu::SurfaceError::Lost) => {
-                            let size = state.window.inner_size();
-                            state.renderer.resize(size.width, size.height);
-                        }
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("GPU out of memory!");
-                            event_loop.exit();
-                        }
-                        Err(e) => log::warn!("Render error: {e:?}"),
+                    Err(wgpu::SurfaceError::Lost) => {
+                        let size = state.window.inner_size();
+                        state.renderer.resize(size.width, size.height);
                     }
+                    Err(wgpu::SurfaceError::OutOfMemory) => {
+                        log::error!("GPU out of memory!");
+                        event_loop.exit();
+                    }
+                    Err(e) => log::warn!("Render error: {e:?}"),
                 }
 
                 state.window.request_redraw();

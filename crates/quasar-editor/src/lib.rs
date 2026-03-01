@@ -8,6 +8,7 @@
 pub mod console;
 pub mod hierarchy;
 pub mod inspector;
+pub mod renderer;
 
 use quasar_core::ecs::Entity;
 
