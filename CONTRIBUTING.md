@@ -85,4 +85,4 @@ engine written in Rust!
 ## License
 
 By contributing, you agree that your contributions will be licensed under
-the project's dual MIT / Apache-2.0 license.
+the MIT license.

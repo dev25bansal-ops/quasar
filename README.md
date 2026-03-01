@@ -4,7 +4,7 @@
 
 Built for [FOSS Hack 2026](https://fossunited.org/fosshack/2026) — the month-long open source hackathon by FOSS United.
 
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-34%20passing-brightgreen.svg)](#testing)
 
@@ -157,14 +157,13 @@ quasar/
 │   ├── showcase/          # Multi-feature demo
 │   └── spinning_cube/     # Basic cube demo
 ├── Cargo.toml             # Workspace definition
-├── LICENSE-MIT
-├── LICENSE-APACHE
+├── LICENSE
 └── README.md
 ```
 
 ## Contributing
 
-Contributions welcome! This project is dual-licensed under MIT / Apache-2.0.
+Contributions welcome! This project is licensed under MIT.
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feat/my-feature`)
@@ -174,7 +173,7 @@ Contributions welcome! This project is dual-licensed under MIT / Apache-2.0.
 
 ## License
 
-Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Licensed under the [MIT License](LICENSE).
 
 ---
 
