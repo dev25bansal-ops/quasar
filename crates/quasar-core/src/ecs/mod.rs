@@ -14,6 +14,6 @@ mod system;
 
 pub use entity::Entity;
 pub use component::Component;
-pub use world::World;
+pub use world::{World, EntityBuilder};
 pub use query::{Query, QueryIter};
 pub use system::{System, SystemStage, Schedule};

@@ -101,6 +101,49 @@ impl Default for Transform {
     }
 }
 
+/// Computed world-space transform after hierarchy propagation.
+///
+/// This is a read-only component written by the transform propagation system.
+/// It combines the entity's local [`Transform`] with all ancestor transforms
+/// in the scene graph to produce the final world-space matrix.
+#[derive(Debug, Clone, Copy)]
+pub struct GlobalTransform {
+    /// The final world-space 4×4 matrix.
+    pub matrix: Mat4,
+}
+
+impl GlobalTransform {
+    /// Identity global transform.
+    pub const IDENTITY: Self = Self {
+        matrix: Mat4::IDENTITY,
+    };
+
+    /// Create a global transform from a matrix.
+    pub fn from_matrix(matrix: Mat4) -> Self {
+        Self { matrix }
+    }
+
+    /// Extract the translation from the global matrix.
+    #[inline]
+    pub fn translation(&self) -> Vec3 {
+        self.matrix.col(3).truncate()
+    }
+}
+
+impl Default for GlobalTransform {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+impl From<Transform> for GlobalTransform {
+    fn from(t: Transform) -> Self {
+        Self {
+            matrix: t.matrix(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,12 +21,12 @@ pub use quasar_editor as editor;
 /// Commonly used types — star-import this in your game code.
 pub mod prelude {
     // Core ECS
-    pub use quasar_core::{App, World, Entity, Component, Events, Time, Plugin};
+    pub use quasar_core::{App, World, Entity, Component, Events, Time, Plugin, EntityBuilder};
     pub use quasar_core::ecs::{Schedule, SystemStage, System};
     pub use quasar_core::{SceneGraph, Scene};
 
     // Math
-    pub use quasar_math::{Transform, Color, Vec2, Vec3, Vec4, Mat4, Quat};
+    pub use quasar_math::{Transform, GlobalTransform, Color, Vec2, Vec3, Vec4, Mat4, Quat};
 
     // Rendering
     pub use quasar_render::{

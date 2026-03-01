@@ -13,5 +13,5 @@ pub use glam::{
     vec2, vec3, vec4,
 };
 
-pub use transform::Transform;
+pub use transform::{Transform, GlobalTransform};
 pub use color::Color;

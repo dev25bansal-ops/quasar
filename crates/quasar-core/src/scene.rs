@@ -5,10 +5,13 @@
 //! - Scene trees with arbitrary depth
 //! - Scene lifecycle (create, activate, deactivate)
 //! - Named entities for easy lookup
+//! - Transform propagation (local → global)
 
 use std::collections::HashMap;
 
 use crate::Entity;
+use crate::ecs::World;
+use quasar_math::{Transform, GlobalTransform, Mat4};
 
 /// Tracks parent → children and child → parent relationships.
 ///
@@ -138,6 +141,47 @@ impl SceneGraph {
     /// Look up an entity by name.
     pub fn find_by_name(&self, name: &str) -> Option<Entity> {
         self.name_lookup.get(name).copied()
+    }
+
+    // ------------------------------------------------------------------
+    // Transform propagation
+    // ------------------------------------------------------------------
+
+    /// Propagate local [`Transform`] components through the hierarchy,
+    /// writing [`GlobalTransform`] components with the accumulated
+    /// world-space matrices.
+    ///
+    /// Call this once per frame (typically in `PostUpdate`) to keep global
+    /// transforms in sync with the hierarchy.
+    pub fn propagate_transforms(&self, world: &mut World) {
+        // Collect all entity indices that have a Transform.
+        let entities_with_transform: Vec<u32> = world
+            .query::<Transform>()
+            .map(|(e, _)| e.index())
+            .collect();
+
+        for &idx in &entities_with_transform {
+            let entity = Entity::new(idx, 0);
+            // Walk the parent chain to compute accumulated matrix.
+            let global_mat = self.compute_global_matrix(entity, world);
+            world.insert(entity, GlobalTransform::from_matrix(global_mat));
+        }
+    }
+
+    /// Compute the global (world-space) matrix for an entity by walking
+    /// its parent chain. Each ancestor's local Transform is accumulated.
+    fn compute_global_matrix(&self, entity: Entity, world: &World) -> Mat4 {
+        let local = world
+            .get::<Transform>(entity)
+            .map(|t| t.matrix())
+            .unwrap_or(Mat4::IDENTITY);
+
+        if let Some(parent) = self.parents.get(&entity.index()) {
+            let parent_global = self.compute_global_matrix(*parent, world);
+            parent_global * local
+        } else {
+            local
+        }
     }
 
     // ------------------------------------------------------------------
@@ -273,5 +317,39 @@ mod tests {
         graph.unparent(child);
         assert_eq!(graph.parent(child), None);
         assert_eq!(graph.children(parent).len(), 0);
+    }
+
+    #[test]
+    fn propagate_transforms_accumulates_hierarchy() {
+        use quasar_math::Vec3;
+
+        let mut world = World::new();
+        let mut graph = SceneGraph::new();
+
+        // Root at (10, 0, 0)
+        let root = world.spawn();
+        world.insert(root, Transform::from_position(Vec3::new(10.0, 0.0, 0.0)));
+
+        // Child at local (5, 0, 0) → global should be (15, 0, 0)
+        let child = world.spawn();
+        world.insert(child, Transform::from_position(Vec3::new(5.0, 0.0, 0.0)));
+        graph.set_parent(child, root);
+
+        // Grandchild at local (0, 3, 0) → global should be (15, 3, 0)
+        let grandchild = world.spawn();
+        world.insert(grandchild, Transform::from_position(Vec3::new(0.0, 3.0, 0.0)));
+        graph.set_parent(grandchild, child);
+
+        graph.propagate_transforms(&mut world);
+
+        let root_global = world.get::<GlobalTransform>(root).unwrap();
+        let child_global = world.get::<GlobalTransform>(child).unwrap();
+        let gc_global = world.get::<GlobalTransform>(grandchild).unwrap();
+
+        let eps = 1e-5;
+        assert!((root_global.translation().x - 10.0).abs() < eps);
+        assert!((child_global.translation().x - 15.0).abs() < eps);
+        assert!((gc_global.translation().x - 15.0).abs() < eps);
+        assert!((gc_global.translation().y - 3.0).abs() < eps);
     }
 }

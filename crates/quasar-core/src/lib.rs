@@ -15,7 +15,7 @@ pub mod app;
 pub mod scene;
 
 pub use app::App;
-pub use ecs::{World, Entity, Component};
+pub use ecs::{World, Entity, Component, EntityBuilder};
 pub use event::Events;
 pub use time::Time;
 pub use plugin::Plugin;
