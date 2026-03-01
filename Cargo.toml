@@ -11,6 +11,7 @@ members = [
     "crates/quasar-editor",
     "crates/quasar-engine",
     "examples/spinning_cube",
+    "examples/showcase",
 ]
 
 [workspace.package]

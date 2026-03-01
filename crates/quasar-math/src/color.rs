@@ -68,3 +68,62 @@ impl From<[f32; 3]> for Color {
         Self::rgb(arr[0], arr[1], arr[2])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgb_sets_alpha_to_one() {
+        let c = Color::rgb(0.5, 0.6, 0.7);
+        assert_eq!(c.a, 1.0);
+        assert_eq!(c.r, 0.5);
+    }
+
+    #[test]
+    fn rgba_preserves_all_channels() {
+        let c = Color::rgba(0.1, 0.2, 0.3, 0.4);
+        assert_eq!(c.to_array(), [0.1, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn from_u8_converts_correctly() {
+        let c = Color::from_u8(255, 0, 128, 255);
+        assert!((c.r - 1.0).abs() < 1e-6);
+        assert!((c.g - 0.0).abs() < 1e-6);
+        assert!((c.b - 128.0 / 255.0).abs() < 1e-6);
+        assert!((c.a - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn to_f64_tuple_matches() {
+        let c = Color::RED;
+        let (r, g, b, a) = c.to_f64_tuple();
+        assert_eq!(r, 1.0);
+        assert_eq!(g, 0.0);
+        assert_eq!(b, 0.0);
+        assert_eq!(a, 1.0);
+    }
+
+    #[test]
+    fn from_array4() {
+        let c: Color = [0.1, 0.2, 0.3, 0.4].into();
+        assert_eq!(c.r, 0.1);
+        assert_eq!(c.a, 0.4);
+    }
+
+    #[test]
+    fn from_array3_alpha_is_one() {
+        let c: Color = [0.1, 0.2, 0.3].into();
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn constant_colors_are_opaque() {
+        for c in [Color::WHITE, Color::BLACK, Color::RED, Color::GREEN, Color::BLUE,
+                   Color::YELLOW, Color::CYAN, Color::MAGENTA, Color::CORNFLOWER_BLUE] {
+            assert_eq!(c.a, 1.0, "constant color should be opaque");
+        }
+        assert_eq!(Color::TRANSPARENT.a, 0.0);
+    }
+}

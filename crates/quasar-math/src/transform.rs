@@ -100,3 +100,68 @@ impl Default for Transform {
         Self::IDENTITY
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_matrix_is_identity() {
+        let tf = Transform::IDENTITY;
+        let mat = tf.matrix();
+        let expected = Mat4::IDENTITY;
+        for i in 0..16 {
+            assert!(
+                (mat.to_cols_array()[i] - expected.to_cols_array()[i]).abs() < 1e-6,
+                "matrix element {} differs",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn from_position_sets_translation() {
+        let tf = Transform::from_position(Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(tf.position, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(tf.rotation, Quat::IDENTITY);
+        assert_eq!(tf.scale, Vec3::ONE);
+    }
+
+    #[test]
+    fn translate_adds_offset() {
+        let mut tf = Transform::IDENTITY;
+        tf.translate(Vec3::new(5.0, 0.0, 0.0));
+        assert!((tf.position.x - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rotate_changes_forward() {
+        let mut tf = Transform::IDENTITY;
+        let original_forward = tf.forward();
+        tf.rotate(Vec3::Y, std::f32::consts::FRAC_PI_2);
+        let new_forward = tf.forward();
+        // After 90° rotation around Y, forward should change significantly
+        assert!((original_forward - new_forward).length() > 0.5);
+    }
+
+    #[test]
+    fn scale_affects_matrix() {
+        let tf = Transform::from_scale(2.0);
+        let mat = tf.matrix();
+        // The scale should be encoded in the matrix diagonal-ish
+        let col0_len = Vec3::new(mat.x_axis.x, mat.x_axis.y, mat.x_axis.z).length();
+        assert!((col0_len - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn forward_right_up_orthogonal() {
+        let tf = Transform::IDENTITY;
+        let f = tf.forward();
+        let r = tf.right();
+        let u = tf.up();
+        // Should be orthogonal
+        assert!(f.dot(r).abs() < 1e-6);
+        assert!(f.dot(u).abs() < 1e-6);
+        assert!(r.dot(u).abs() < 1e-6);
+    }
+}
