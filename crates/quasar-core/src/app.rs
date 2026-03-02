@@ -5,6 +5,19 @@ use crate::event::Events;
 use crate::plugin::Plugin;
 use crate::time::Time;
 
+/// A lightweight, clonable snapshot of frame timing data.
+///
+/// Inserted into the [`World`] every frame so systems can access timing
+/// information via `world.resource::<TimeSnapshot>()`.
+pub struct TimeSnapshot {
+    /// Duration of the last frame in seconds.
+    pub delta_seconds: f32,
+    /// Total elapsed time since engine startup in seconds.
+    pub elapsed_seconds: f32,
+    /// Number of frames rendered so far.
+    pub frame_count: u64,
+}
+
 /// The top-level application that ties the ECS, systems, and plugins together.
 ///
 /// # Examples
@@ -68,11 +81,21 @@ impl App {
     ///
     /// This is called by the windowing backend each frame. It:
     /// 1. Updates the time
-    /// 2. Runs all scheduled systems
-    /// 3. Clears frame events
+    /// 2. Inserts the current `Time` snapshot into the World as a resource
+    /// 3. Runs all scheduled systems
+    /// 4. Clears frame events
     pub fn tick(&mut self) {
         self.time.update();
+
+        // Make time accessible to systems via `world.resource::<Time>()`.
+        self.world.insert_resource(TimeSnapshot {
+            delta_seconds: self.time.delta_seconds(),
+            elapsed_seconds: self.time.elapsed_seconds(),
+            frame_count: self.time.frame_count(),
+        });
+
         self.schedule.run(&mut self.world);
+        self.events.clear_all();
     }
 }
 

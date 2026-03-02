@@ -32,20 +32,21 @@ pub mod prelude {
     // Core ECS
     pub use quasar_core::asset::{Asset, AssetHandle, AssetManager};
     pub use quasar_core::ecs::{Schedule, System, SystemStage};
-    pub use quasar_core::{App, Component, Entity, EntityBuilder, Events, Plugin, Time, World};
+    pub use quasar_core::{App, Component, Entity, EntityBuilder, Events, Plugin, Time, TimeSnapshot, World};
     pub use quasar_core::{Scene, SceneGraph};
 
     // Math
-    pub use quasar_math::{Color, GlobalTransform, Mat4, Quat, Transform, Vec2, Vec3, Vec4};
+    pub use quasar_math::{Color, EulerRot, GlobalTransform, Mat4, Quat, Transform, Vec2, Vec3, Vec4};
 
     // Rendering
     pub use quasar_render::{
-        Camera, FpsCameraController, LightUniform, Material, MaterialUniform, Mesh, MeshData,
-        OrbitController, Renderer, Texture, Vertex,
+        Aabb, Camera, FpsCameraController, Frustum, LightUniform, Material, MaterialOverride,
+        MaterialUniform, Mesh, MeshCache, MeshData, MeshShape, OrbitController, Renderer, Texture,
+        Vertex,
     };
 
     // Window & Input
-    pub use quasar_window::{Input, KeyState, QuasarWindow, WindowConfig};
+    pub use quasar_window::{ActionMap, Input, InputBinding, KeyState, QuasarWindow, WindowConfig};
 
     // Physics
     pub use quasar_physics::{
@@ -54,7 +55,9 @@ pub mod prelude {
     };
 
     // Audio
-    pub use quasar_audio::{AudioListener, AudioPlugin, AudioResource, AudioSource, AudioSystem};
+    pub use quasar_audio::{
+        AudioListener, AudioPlugin, AudioResource, AudioSource, AudioSystem, SpatialAudioSystem,
+    };
 
     // Scripting
     pub use quasar_scripting::{ScriptComponent, ScriptEngine, ScriptingPlugin, ScriptingResource};

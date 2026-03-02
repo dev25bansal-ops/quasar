@@ -13,6 +13,8 @@
 
 pub mod camera;
 pub mod camera_controller;
+pub mod culling;
+pub mod loader;
 pub mod material;
 pub mod mesh;
 pub mod pipeline;
@@ -22,8 +24,10 @@ pub mod vertex;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
-pub use material::{LightUniform, Material, MaterialUniform};
-pub use mesh::{Mesh, MeshData};
+pub use culling::{Aabb, Frustum};
+pub use loader::load_obj;
+pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
+pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
 pub use renderer::Renderer;
 pub use texture::Texture;
 pub use vertex::Vertex;

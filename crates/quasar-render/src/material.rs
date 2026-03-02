@@ -4,6 +4,52 @@
 //! The material uniform is uploaded to the GPU and accessed in the fragment shader.
 
 use bytemuck::{Pod, Zeroable};
+use serde::{Deserialize, Serialize};
+
+/// Per-entity material override (ECS component).
+///
+/// Attach this to an entity alongside [`MeshShape`](super::mesh::MeshShape)
+/// to give it a custom surface appearance.  Entities without this component
+/// fall back to the renderer's default white material.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MaterialOverride {
+    /// Base color (RGB 0–1).
+    pub base_color: [f32; 3],
+    /// Roughness (0 = mirror, 1 = fully diffuse).
+    pub roughness: f32,
+    /// Metallic (0 = dielectric, 1 = metallic).
+    pub metallic: f32,
+    /// Emissive strength.
+    pub emissive: f32,
+}
+
+impl Default for MaterialOverride {
+    fn default() -> Self {
+        Self {
+            base_color: [1.0, 1.0, 1.0],
+            roughness: 0.5,
+            metallic: 0.0,
+            emissive: 0.0,
+        }
+    }
+}
+
+impl MaterialOverride {
+    /// Convert to GPU-ready [`MaterialUniform`].
+    pub fn to_uniform(&self) -> MaterialUniform {
+        MaterialUniform {
+            base_color: [
+                self.base_color[0],
+                self.base_color[1],
+                self.base_color[2],
+                1.0,
+            ],
+            roughness_metallic: [self.roughness, self.metallic],
+            emissive: self.emissive,
+            _pad: 0.0,
+        }
+    }
+}
 
 /// GPU-side material uniform data.
 ///
@@ -43,7 +89,29 @@ pub struct Material {
 impl Material {
     /// Create a new material with default properties.
     pub fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, name: &str) -> Self {
-        let uniform = MaterialUniform::default();
+        Self::from_uniform(device, layout, name, MaterialUniform::default())
+    }
+
+    /// Create a material from a [`MaterialOverride`] component.
+    pub fn from_override(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        name: &str,
+        material_override: &MaterialOverride,
+    ) -> Self {
+        let mat = Self::from_uniform(device, layout, name, material_override.to_uniform());
+        mat.update(queue);
+        mat
+    }
+
+    /// Create a material from a raw [`MaterialUniform`].
+    pub fn from_uniform(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        name: &str,
+        uniform: MaterialUniform,
+    ) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("Material Buffer: {}", name)),
             size: std::mem::size_of::<MaterialUniform>() as u64,

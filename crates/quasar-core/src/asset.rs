@@ -223,7 +223,7 @@ impl<T: Asset> AssetSlab<T> {
 /// Each asset type gets its own internal slab, keyed by `TypeId`.  You can
 /// store any type that implements [`Asset`].
 pub struct AssetManager {
-    slabs: HashMap<TypeId, Box<dyn Any>>,
+    slabs: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl Default for AssetManager {

@@ -10,7 +10,7 @@
 //! - [`RigidBodyComponent`] — links to a Rapier rigid body.
 //! - [`Transform`] — the spatial data read/written by the sync.
 
-use quasar_core::ecs::{System, World};
+use quasar_core::ecs::{Entity, System, World};
 use quasar_math::Transform;
 
 use crate::rigidbody::RigidBodyComponent;
@@ -56,10 +56,10 @@ impl System for PhysicsStepSystem {
             resource.physics.step();
         }
 
-        // Pass 1: collect (entity_index, body_handle) pairs from ECS.
-        let handles: Vec<(u32, rapier3d::prelude::RigidBodyHandle)> = world
+        // Pass 1: collect (entity, body_handle) pairs from ECS.
+        let handles: Vec<(Entity, rapier3d::prelude::RigidBodyHandle)> = world
             .query::<RigidBodyComponent>()
-            .map(|(e, rbc)| (e.index(), rbc.handle))
+            .map(|(e, rbc)| (e, rbc.handle))
             .collect();
 
         if handles.is_empty() {
@@ -67,25 +67,22 @@ impl System for PhysicsStepSystem {
         }
 
         // Pass 2: read positions from physics resource (immutable borrow).
-        let mut positions_to_write: Vec<(u32, [f32; 3], [f32; 4])> = Vec::new();
+        let mut positions_to_write: Vec<(Entity, [f32; 3], [f32; 4])> = Vec::new();
         if let Some(resource) = world.resource::<PhysicsResource>() {
-            for &(entity_idx, handle) in &handles {
+            for &(entity, handle) in &handles {
                 if let Some(pos) = resource.physics.body_position(handle) {
                     if let Some(rot) = resource.physics.body_rotation(handle) {
-                        positions_to_write.push((entity_idx, pos, rot));
+                        positions_to_write.push((entity, pos, rot));
                     }
                 }
             }
         }
 
-        // Pass 3: write-back transforms (no aliasing — PhysicsResource not borrowed).
-        for (entity_idx, pos, rot) in positions_to_write {
-            for (entity, transform) in world.query_mut::<Transform>() {
-                if entity.index() == entity_idx {
-                    transform.position = glam::Vec3::new(pos[0], pos[1], pos[2]);
-                    transform.rotation = glam::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
-                    break;
-                }
+        // Pass 3: write-back transforms — O(n) direct entity lookup.
+        for (entity, pos, rot) in positions_to_write {
+            if let Some(transform) = world.get_mut::<Transform>(entity) {
+                transform.position = glam::Vec3::new(pos[0], pos[1], pos[2]);
+                transform.rotation = glam::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
             }
         }
     }

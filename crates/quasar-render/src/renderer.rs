@@ -1,12 +1,16 @@
 //! Core renderer — manages the wgpu device, surface, and draw calls.
 
-use wgpu::util::DeviceExt;
+use quasar_core::error::{QuasarError, QuasarResult};
 
 use super::camera::{Camera, CameraUniform};
-use super::material::Material;
+use super::material::{Material, MaterialOverride};
 use super::mesh::Mesh;
 use super::pipeline;
 use super::texture::Texture;
+
+/// Maximum number of objects that can be rendered in a single pass with
+/// unique model matrices.
+const MAX_RENDER_OBJECTS: usize = 4096;
 
 /// The main GPU renderer for Quasar Engine.
 ///
@@ -30,6 +34,8 @@ pub struct Renderer {
     pub default_material: Material,
     /// Default 1×1 white texture used when no texture is specified.
     pub default_texture: Texture,
+    /// Minimum uniform buffer offset alignment (bytes), from device limits.
+    pub uniform_alignment: u32,
 }
 
 impl Renderer {
@@ -41,7 +47,7 @@ impl Renderer {
         window: std::sync::Arc<winit::window::Window>,
         width: u32,
         height: u32,
-    ) -> Self {
+    ) -> QuasarResult<Self> {
         // Create wgpu instance with default backends.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -51,7 +57,7 @@ impl Renderer {
         // Create the rendering surface from the window.
         let surface = instance
             .create_surface(window.clone())
-            .expect("Failed to create surface");
+            .map_err(|e| QuasarError::Render(format!("Failed to create surface: {e}")))?;
 
         // Request a GPU adapter compatible with our surface.
         let adapter = instance
@@ -61,7 +67,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .expect("No suitable GPU adapter found");
+            .ok_or_else(|| QuasarError::Render("No suitable GPU adapter found".into()))?;
 
         log::info!("GPU adapter: {:?}", adapter.get_info().name);
 
@@ -77,7 +83,7 @@ impl Renderer {
                 None,
             )
             .await
-            .expect("Failed to request device");
+            .map_err(|e| QuasarError::Render(format!("Failed to request device: {e}")))?;
 
         // Configure the surface.
         let surface_caps = surface.get_capabilities(&adapter);
@@ -100,13 +106,18 @@ impl Renderer {
         };
         surface.configure(&device, &config);
 
-        // -- Camera uniform buffer + bind group --
+        // -- Camera uniform buffer + bind group (dynamic offsets) --
         let camera_uniform = CameraUniform::new();
+        let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment;
+        let uniform_size = std::mem::size_of::<CameraUniform>() as u32;
+        let aligned_size = uniform_size.div_ceil(uniform_alignment) * uniform_alignment;
+        let camera_buffer_size = aligned_size as u64 * MAX_RENDER_OBJECTS as u64;
 
-        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Camera Uniform Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
+            size: camera_buffer_size,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let camera_bind_group_layout =
@@ -117,8 +128,8 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: true,
+                        min_binding_size: std::num::NonZeroU64::new(uniform_size as u64),
                     },
                     count: None,
                 }],
@@ -129,7 +140,11 @@ impl Renderer {
             layout: &camera_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: camera_buffer.as_entire_binding(),
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &camera_buffer,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(uniform_size as u64),
+                }),
             }],
         });
 
@@ -162,7 +177,7 @@ impl Renderer {
         // Upload default material data.
         default_material.update(&queue);
 
-        Self {
+        Ok(Self {
             device,
             queue,
             surface,
@@ -178,7 +193,8 @@ impl Renderer {
             texture_bind_group_layout,
             default_material,
             default_texture,
-        }
+            uniform_alignment,
+        })
     }
 
     /// Handle window resize — reconfigure surface and depth buffer.
@@ -230,13 +246,39 @@ impl Renderer {
     }
 
     /// Perform the 3D clear + draw pass using an externally-owned encoder.
+    ///
+    /// All per-object camera uniforms are written to the GPU buffer **before**
+    /// the render pass begins, using dynamic offsets to index each object's
+    /// data during drawing.
+    ///
+    /// Each tuple may carry an optional material bind group.  When `Some`, the
+    /// per-entity material is used; otherwise the default white material is
+    /// applied.
     pub fn render_3d_pass(
         &mut self,
         camera: &Camera,
-        objects: &[(&Mesh, glam::Mat4)],
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>)],
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        // Pre-write all per-object uniforms to the buffer at aligned offsets.
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _)) in objects.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, *model);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("3D Render Pass"),
@@ -267,16 +309,11 @@ impl Renderer {
 
             pass.set_pipeline(&self.render_pipeline);
 
-            for (mesh, model) in objects {
-                self.camera_uniform.update(camera, *model);
-                self.queue.write_buffer(
-                    &self.camera_buffer,
-                    0,
-                    bytemuck::cast_slice(&[self.camera_uniform]),
-                );
-
-                pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                pass.set_bind_group(1, &self.default_material.bind_group, &[]);
+            for (i, (mesh, _, mat_bg)) in objects.iter().enumerate() {
+                let dyn_offset = (i * aligned_size) as u32;
+                pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
+                pass.set_bind_group(1, material_bg, &[]);
                 pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -339,7 +376,7 @@ impl Renderer {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.camera_bind_group, &[0]);
             render_pass.set_bind_group(1, &self.default_material.bind_group, &[]);
             render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
 
@@ -359,13 +396,16 @@ impl Renderer {
 
     /// Render a frame with multiple objects, each with its own model matrix.
     ///
-    /// This is the multi-object variant — it clears the screen, then draws each
-    /// `(mesh, model_matrix)` pair sequentially, updating the camera uniform
-    /// between draws.
+    /// Pre-writes all per-object camera uniforms to the GPU buffer before the
+    /// render pass, then uses dynamic offsets to select each object's data.
+    ///
+    /// Each tuple may carry an optional material bind group.  When `Some`, the
+    /// per-entity material is used; otherwise the default white material is
+    /// applied.
     pub fn render_objects(
         &mut self,
         camera: &Camera,
-        objects: &[(&Mesh, glam::Mat4)],
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>)],
     ) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -377,6 +417,24 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        // Pre-write all per-object uniforms.
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _)) in objects.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, *model);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -408,17 +466,11 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.render_pipeline);
 
-            for (mesh, model) in objects {
-                // Update camera uniform with this object's model matrix.
-                self.camera_uniform.update(camera, *model);
-                self.queue.write_buffer(
-                    &self.camera_buffer,
-                    0,
-                    bytemuck::cast_slice(&[self.camera_uniform]),
-                );
-
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.default_material.bind_group, &[]);
+            for (i, (mesh, _, mat_bg)) in objects.iter().enumerate() {
+                let dyn_offset = (i * aligned_size) as u32;
+                render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
+                render_pass.set_bind_group(1, material_bg, &[]);
                 render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 render_pass
@@ -431,6 +483,26 @@ impl Renderer {
         output.present();
 
         Ok(())
+    }
+
+    /// Create a [`Material`] from a [`MaterialOverride`] component.
+    ///
+    /// The returned material has its GPU buffer already uploaded and is ready
+    /// to be passed as a bind group to
+    /// [`render_3d_pass`](Self::render_3d_pass) /
+    /// [`render_objects`](Self::render_objects).
+    pub fn create_material_from_override(
+        &self,
+        name: &str,
+        material_override: &MaterialOverride,
+    ) -> Material {
+        Material::from_override(
+            &self.device,
+            &self.queue,
+            &self.material_bind_group_layout,
+            name,
+            material_override,
+        )
     }
 
     /// Create a depth texture and its view.

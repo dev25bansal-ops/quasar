@@ -7,14 +7,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-quasar-core = { workspace = true }
-quasar-math = { workspace = true }
-quasar-render = { workspace = true }
-quasar-window = { workspace = true }
-pollster = { workspace = true }
+quasar-engine = { path = "../../crates/quasar-engine" }
 env_logger = { workspace = true }
 log = { workspace = true }
-winit = { workspace = true }
-wgpu = { workspace = true }
-glam = { workspace = true }
-bytemuck = { workspace = true }

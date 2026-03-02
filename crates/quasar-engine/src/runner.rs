@@ -23,17 +23,21 @@ use winit::{
 };
 
 use quasar_core::App;
+use quasar_core::asset::AssetManager;
+use quasar_core::scene::SceneGraph;
 use quasar_editor::{renderer::EditorRenderer, Editor};
-use quasar_render::{Camera, Renderer};
-use quasar_window::{Input, QuasarWindow, WindowConfig};
+use quasar_render::{Camera, MeshCache, MeshShape, OrbitController, Renderer};
+use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
 /// Runtime state created once the window is available.
 struct RunnerState {
     window: Arc<Window>,
     renderer: Renderer,
     camera: Camera,
+    orbit: OrbitController,
     editor: Editor,
     editor_renderer: EditorRenderer,
+    mesh_cache: MeshCache,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -90,7 +94,8 @@ impl ApplicationHandler for QuasarRunner {
             window.clone(),
             size.width,
             size.height,
-        ));
+        ))
+        .expect("Failed to initialise GPU renderer");
 
         let camera = Camera::new(size.width, size.height);
 
@@ -101,15 +106,19 @@ impl ApplicationHandler for QuasarRunner {
             renderer.config.format,
         );
 
-        // Insert Input as a world resource so user systems can read it.
+        // Insert engine resources into the world.
         self.app.world.insert_resource(Input::new());
+        self.app.world.insert_resource(AssetManager::new());
+        self.app.world.insert_resource(SceneGraph::new());
 
         self.state = Some(RunnerState {
             window,
             renderer,
             camera,
+            orbit: OrbitController::new(5.0),
             editor,
             editor_renderer,
+            mesh_cache: MeshCache::new(),
         });
 
         log::info!(
@@ -169,6 +178,13 @@ impl ApplicationHandler for QuasarRunner {
             WindowEvent::CursorMoved { position, .. } => {
                 if !egui_consumed {
                     if let Some(input) = self.app.world.resource_mut::<Input>() {
+                        // Compute per-frame delta from absolute position.
+                        if let Some(prev) = input.cursor_position {
+                            input.mouse_moved(
+                                position.x - prev.0,
+                                position.y - prev.1,
+                            );
+                        }
                         input.cursor_position = Some((position.x, position.y));
                     }
                 }
@@ -222,61 +238,164 @@ impl ApplicationHandler for QuasarRunner {
                 // Run one full ECS frame (updates time, runs all systems).
                 self.app.tick();
 
-                // Collect meshes + model matrices from the world.
-                let objects: Vec<(quasar_render::Mesh, glam::Mat4)> = {
-                    use quasar_math::Transform;
-                    use quasar_render::MeshData;
+                // Propagate scene-graph transforms (if user built a hierarchy).
+                if let Some(scene) = self.app.world.remove_resource::<SceneGraph>() {
+                    scene.propagate_transforms(&mut self.app.world);
+                    self.app.world.insert_resource(scene);
+                }
 
-                    let transforms: Vec<(u32, glam::Mat4)> = self
+                // Drive orbit controller from input.
+                {
+                    let (mouse_dx, mouse_dy, scroll_y, rmb_held) =
+                        if let Some(input) = self.app.world.resource::<Input>() {
+                            (
+                                input.mouse_delta.0 as f32,
+                                input.mouse_delta.1 as f32,
+                                input.scroll_delta.1,
+                                input.is_mouse_pressed(MouseButton::Right),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, false)
+                        };
+
+                    if rmb_held {
+                        state.orbit.rotate(mouse_dx, mouse_dy);
+                    }
+                    if scroll_y.abs() > 0.001 {
+                        state.orbit.zoom(-scroll_y);
+                    }
+                    state.orbit.apply(&mut state.camera);
+                }
+
+                // Collect meshes + model matrices from the world.
+                // Entities with a MeshShape component get that shape;
+                // entities with only a Transform default to Cube.
+                let shape_mats: Vec<(MeshShape, glam::Mat4)> = {
+                    use quasar_math::Transform;
+
+                    // Entities with both MeshShape + Transform
+                    let with_shape: Vec<(MeshShape, glam::Mat4)> = self
                         .app
                         .world
-                        .query::<Transform>()
-                        .map(|(e, t)| (e.index(), t.matrix()))
+                        .query2::<MeshShape, Transform>()
+                        .map(|(_, shape, t)| (*shape, t.matrix()))
                         .collect();
 
-                    if !transforms.is_empty() {
-                        let mesh_data = MeshData::cube();
-                        transforms
-                            .into_iter()
-                            .map(|(_, model)| {
-                                let mesh = quasar_render::Mesh::from_data(
-                                    &state.renderer.device,
-                                    &mesh_data,
-                                );
-                                (mesh, model)
-                            })
-                            .collect()
+                    if !with_shape.is_empty() {
+                        with_shape
                     } else {
-                        Vec::new()
+                        // Fallback: render all Transform entities as cubes
+                        self.app
+                            .world
+                            .query::<Transform>()
+                            .map(|(_, t)| (MeshShape::Cube, t.matrix()))
+                            .collect()
                     }
                 };
+
+                // Ensure all needed meshes are uploaded (cached).
+                for (shape, _) in &shape_mats {
+                    state.mesh_cache.get_or_create(&state.renderer.device, *shape);
+                }
 
                 // ── Split-phase rendering: 3D → egui → present ───
                 let frame_result = state.renderer.begin_frame();
                 match frame_result {
                     Ok((output, view, mut encoder)) => {
+                        // Build references for the 3D pass (after begin_frame
+                        // to keep borrow lifetimes local).
+                        let objects: Vec<(
+                            &quasar_render::Mesh,
+                            glam::Mat4,
+                            Option<&wgpu::BindGroup>,
+                        )> = shape_mats
+                            .iter()
+                            .filter_map(|(shape, model)| {
+                                state
+                                    .mesh_cache
+                                    .cache
+                                    .get(shape)
+                                    .map(|m| (m, *model, None))
+                            })
+                            .collect();
+
                         // 3D pass.
-                        let refs: Vec<(&quasar_render::Mesh, glam::Mat4)> =
-                            objects.iter().map(|(m, mat)| (m, *mat)).collect();
                         state
                             .renderer
-                            .render_3d_pass(&state.camera, &refs, &view, &mut encoder);
+                            .render_3d_pass(&state.camera, &objects, &view, &mut encoder);
 
                         // egui pass (editor overlay).
                         let egui_commands = if state.editor.enabled {
                             // Build entity name list for the hierarchy panel.
-                            let entity_names: Vec<(quasar_core::ecs::Entity, String)> = self
-                                .app
-                                .world
-                                .query::<quasar_math::Transform>()
-                                .map(|(e, _)| (e, format!("Entity {}", e.index())))
-                                .collect();
+                            // Use SceneGraph names when available, fall back to generic.
+                            let entity_names: Vec<(quasar_core::ecs::Entity, String)> = {
+                                let scene_opt = self.app.world.remove_resource::<SceneGraph>();
+                                let names: Vec<_> = self
+                                    .app
+                                    .world
+                                    .query::<quasar_math::Transform>()
+                                    .map(|(e, _)| {
+                                        let name = scene_opt
+                                            .as_ref()
+                                            .and_then(|s| s.name(e))
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_else(|| format!("Entity {}", e.index()));
+                                        (e, name)
+                                    })
+                                    .collect();
+                                if let Some(scene) = scene_opt {
+                                    self.app.world.insert_resource(scene);
+                                }
+                                names
+                            };
 
                             state.editor_renderer.begin_frame(&state.window);
-                            state.editor.ui(
+
+                            // Build inspector data for the selected entity.
+                            let mut inspector_data = state
+                                .editor
+                                .selected_entity
+                                .and_then(|e| {
+                                    let transform =
+                                        self.app.world.get::<quasar_math::Transform>(e)?;
+                                    let material = self
+                                        .app
+                                        .world
+                                        .get::<quasar_render::MaterialOverride>(e)
+                                        .copied();
+                                    Some(quasar_editor::InspectorData {
+                                        transform: *transform,
+                                        material,
+                                    })
+                                });
+
+                            let inspector_changed = state.editor.ui(
                                 &state.editor_renderer.egui_ctx,
                                 &entity_names,
+                                inspector_data.as_mut(),
                             );
+
+                            // Write back edited values.
+                            if inspector_changed {
+                                if let (Some(entity), Some(data)) =
+                                    (state.editor.selected_entity, &inspector_data)
+                                {
+                                    if let Some(t) =
+                                        self.app.world.get_mut::<quasar_math::Transform>(entity)
+                                    {
+                                        *t = data.transform;
+                                    }
+                                    if let Some(mat) = &data.material {
+                                        if let Some(m) = self
+                                            .app
+                                            .world
+                                            .get_mut::<quasar_render::MaterialOverride>(entity)
+                                        {
+                                            *m = *mat;
+                                        }
+                                    }
+                                }
+                            }
 
                             let size = state.window.inner_size();
                             let screen = egui_wgpu::ScreenDescriptor {

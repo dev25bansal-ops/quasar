@@ -116,6 +116,38 @@ impl AudioSystem {
     pub fn active_sounds(&self) -> usize {
         self.handles.len()
     }
+
+    /// Update volume and panning of a spatial sound.
+    ///
+    /// `distance` — world-space distance between source and listener.
+    /// `panning`  — stereo pan in \[0.0 (left) .. 1.0 (right)\], 0.5 = centre.
+    /// The `source` component provides base volume, ref_distance, max_distance,
+    /// and rolloff_factor.
+    pub fn update_spatial(
+        &mut self,
+        id: SoundId,
+        source: &AudioSource,
+        distance: f32,
+        panning: f64,
+    ) {
+        let handle = match self.handles.get_mut(&id) {
+            Some(h) => h,
+            None => return,
+        };
+
+        // Inverse-distance clamped attenuation.
+        let gain = if distance >= source.max_distance {
+            0.0
+        } else {
+            let d = distance.max(source.ref_distance);
+            let g = source.ref_distance
+                / (source.ref_distance + source.rolloff_factor * (d - source.ref_distance));
+            (g * source.volume).clamp(0.0, 1.0)
+        };
+
+        handle.set_volume(kira::Volume::Amplitude(gain as f64), Tween::default());
+        handle.set_panning(panning, Tween::default());
+    }
 }
 
 impl Default for AudioSystem {
@@ -135,6 +167,14 @@ pub struct AudioSource {
     pub volume: f32,
     /// If Some, the sound is currently playing with this id.
     pub playing_id: Option<SoundId>,
+    /// Enable spatial (3D positional) audio for this source.
+    pub spatial: bool,
+    /// Reference distance — distance at which volume is unattenuated (default 1.0).
+    pub ref_distance: f32,
+    /// Maximum distance beyond which the source is silent (default 50.0).
+    pub max_distance: f32,
+    /// Rolloff factor controlling how quickly volume falls off (default 1.0).
+    pub rolloff_factor: f32,
 }
 
 impl AudioSource {
@@ -144,6 +184,10 @@ impl AudioSource {
             looping: false,
             volume: 1.0,
             playing_id: None,
+            spatial: false,
+            ref_distance: 1.0,
+            max_distance: 50.0,
+            rolloff_factor: 1.0,
         }
     }
 
@@ -156,10 +200,36 @@ impl AudioSource {
         self.volume = volume;
         self
     }
+
+    /// Enable spatial audio with default spatial parameters.
+    pub fn spatial(mut self) -> Self {
+        self.spatial = true;
+        self
+    }
+
+    /// Set the reference distance for spatial fall-off.
+    pub fn with_ref_distance(mut self, d: f32) -> Self {
+        self.ref_distance = d;
+        self
+    }
+
+    /// Set the maximum audible distance.
+    pub fn with_max_distance(mut self, d: f32) -> Self {
+        self.max_distance = d;
+        self
+    }
+
+    /// Set the rolloff factor.
+    pub fn with_rolloff(mut self, r: f32) -> Self {
+        self.rolloff_factor = r;
+        self
+    }
 }
 
 /// ECS component for the audio listener (usually the camera/player).
+///
+/// Attach to the entity whose [`Transform`] represents the player / camera.
 #[derive(Debug, Clone, Copy)]
 pub struct AudioListener;
 
-pub use plugin::{AudioPlugin, AudioResource};
+pub use plugin::{AudioPlugin, AudioResource, SpatialAudioSystem};

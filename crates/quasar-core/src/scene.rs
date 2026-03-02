@@ -151,13 +151,11 @@ impl SceneGraph {
     /// Call this once per frame (typically in `PostUpdate`) to keep global
     /// transforms in sync with the hierarchy.
     pub fn propagate_transforms(&self, world: &mut World) {
-        // Collect all entity indices that have a Transform.
-        let entities_with_transform: Vec<u32> =
-            world.query::<Transform>().map(|(e, _)| e.index()).collect();
+        // Collect all entities that have a Transform (with correct generations).
+        let entities_with_transform: Vec<Entity> =
+            world.query::<Transform>().map(|(e, _)| e).collect();
 
-        for &idx in &entities_with_transform {
-            let entity = Entity::new(idx, 0);
-            // Walk the parent chain to compute accumulated matrix.
+        for entity in entities_with_transform {
             let global_mat = self.compute_global_matrix(entity, world);
             world.insert(entity, GlobalTransform::from_matrix(global_mat));
         }

@@ -14,22 +14,31 @@ use quasar_math::Transform;
 use quasar_window::Input;
 
 use crate::bridge;
-use crate::ScriptEngine;
+use crate::{ScriptComponent, ScriptEngine};
 
 /// Resource wrapper so the scripting engine lives in the ECS as a global resource.
 pub struct ScriptingResource {
     pub engine: ScriptEngine,
     /// Frame counter for hot-reload checks (every N frames).
     frame_counter: u64,
+    /// Registry key of the Lua table that maps entity_index → per-entity
+    /// behaviour table (the table returned by each script file).
+    entity_scripts_key: Option<mlua::RegistryKey>,
 }
 
 impl ScriptingResource {
     pub fn new() -> Self {
         let engine = ScriptEngine::new().expect("failed to create Lua scripting engine");
         bridge::register_bridge(engine.lua()).expect("failed to register Lua bridge");
+        let entity_scripts_key = engine
+            .lua()
+            .create_table()
+            .and_then(|t| engine.lua().create_registry_value(t))
+            .ok();
         Self {
             engine,
             frame_counter: 0,
+            entity_scripts_key,
         }
     }
 }
@@ -163,7 +172,7 @@ impl ScriptingSystem {
             return commands;
         };
 
-        let len = cmd_table.len().unwrap_or(0) as i64;
+        let len = cmd_table.len().unwrap_or(0);
         for i in 1..=len {
             let Ok(cmd) = cmd_table.get::<LuaTable>(i) else {
                 continue;
@@ -235,6 +244,96 @@ impl ScriptingSystem {
         }
 
         commands
+    }
+
+    /// Load and run per-entity scripts.
+    ///
+    /// Each entity's script file (pointed to by [`ScriptComponent::path`]) is
+    /// expected to return a Lua table.  If the table contains an `on_init`
+    /// function it is called once after loading.  Every frame, `on_update`
+    /// is called with `(entity_id, dt)`.
+    fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
+        // Collect (entity_index, path, loaded) for entities with a ScriptComponent.
+        let scripts: Vec<(u32, String, bool)> = world
+            .query::<ScriptComponent>()
+            .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
+            .collect();
+
+        if scripts.is_empty() {
+            return;
+        }
+
+        // Get or create the entity_scripts registry table.
+        let registry_key = {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            match &resource.entity_scripts_key {
+                Some(k) => lua.registry_value::<LuaTable>(k).ok(),
+                None => None,
+            }
+        };
+        let Some(entity_table) = registry_key else {
+            return;
+        };
+
+        for (eid, path, loaded) in &scripts {
+            // ── First-time load ──────────────────────────────────
+            if !loaded {
+                match std::fs::read_to_string(path) {
+                    Ok(source) => {
+                        match lua.load(&source).eval::<LuaTable>() {
+                            Ok(behaviour) => {
+                                // Call on_init(entity_id) if present.
+                                if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
+                                    if let Err(e) = init_fn.call::<()>(*eid) {
+                                        log::error!(
+                                            "[lua] {}: on_init error: {}",
+                                            path,
+                                            e
+                                        );
+                                    }
+                                }
+                                let _ = entity_table.set(*eid, behaviour);
+                            }
+                            Err(e) => {
+                                log::error!("[lua] Failed to load {}: {}", path, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("[lua] Cannot read {}: {}", path, e);
+                    }
+                }
+
+                // Mark as loaded — need mutable access.
+                if let Some(sc) = world.get_mut::<ScriptComponent>(
+                    // Reconstruct Entity from index — query to find it.
+                    // We already collected the index above.
+                    {
+                        let found: Option<Entity> = world
+                            .query::<ScriptComponent>()
+                            .find(|(e, _)| e.index() == *eid)
+                            .map(|(e, _)| e);
+                        match found {
+                            Some(e) => e,
+                            None => continue,
+                        }
+                    },
+                ) {
+                    sc.loaded = true;
+                }
+            }
+
+            // ── Per-frame update ─────────────────────────────────
+            if let Ok(behaviour) = entity_table.get::<LuaTable>(*eid) {
+                if let Ok(update_fn) = behaviour.get::<LuaFunction>("on_update") {
+                    if let Err(e) = update_fn.call::<()>((*eid, dt)) {
+                        log::error!("[lua] entity {}: on_update error: {}", eid, e);
+                    }
+                }
+            }
+        }
     }
 
     /// Apply queued commands to the world.
@@ -350,6 +449,12 @@ impl System for ScriptingSystem {
             // Call the global `on_update(dt)` if it exists.
             let _ = resource.engine.call_function::<_, ()>("on_update", dt);
         }
+
+        // ── Phase 2b: Per-entity script execution ─────────────────
+        //
+        // Entities with a ScriptComponent get their script loaded (once) and
+        // then their per-entity `on_update(entity_id, dt)` called every frame.
+        Self::run_entity_scripts(lua, world, dt);
 
         // ── Phase 3: Apply queued commands ────────────────────────
         let commands = Self::read_commands(lua);

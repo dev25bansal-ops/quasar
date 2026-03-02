@@ -10,6 +10,7 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod renderer;
 
+pub use inspector::InspectorData;
 use quasar_core::ecs::Entity;
 
 /// Editor state — tracks visible panels and the selected entity.
@@ -49,9 +50,19 @@ impl Editor {
     }
 
     /// Render the full editor UI. Call this from your egui integration each frame.
-    pub fn ui(&mut self, ctx: &egui::Context, entity_names: &[(Entity, String)]) {
+    ///
+    /// `inspector_data` should be `Some` when an entity is selected and the
+    /// caller has read its components.  Edited values are written in-place;
+    /// the function returns `true` if anything was changed so the caller can
+    /// write the data back to the ECS.
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        entity_names: &[(Entity, String)],
+        inspector_data: Option<&mut InspectorData>,
+    ) -> bool {
         if !self.enabled {
-            return;
+            return false;
         }
 
         // Top menu bar
@@ -72,8 +83,10 @@ impl Editor {
         }
 
         // Inspector panel
+        let mut inspector_changed = false;
         if self.show_inspector {
-            inspector::inspector_panel(ctx, self.selected_entity);
+            inspector_changed =
+                inspector::inspector_panel(ctx, self.selected_entity, inspector_data);
         }
 
         // Console panel
@@ -93,6 +106,8 @@ impl Editor {
                     ui.label("Press F12 to toggle editor");
                 });
         }
+
+        inspector_changed
     }
 }
 

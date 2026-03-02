@@ -21,6 +21,8 @@ pub struct PhysicsWorld {
     impulse_joints: ImpulseJointSet,
     multibody_joints: MultibodyJointSet,
     ccd_solver: CCDSolver,
+    query_pipeline: QueryPipeline,
+    query_pipeline_dirty: bool,
 }
 
 impl PhysicsWorld {
@@ -38,6 +40,8 @@ impl PhysicsWorld {
             impulse_joints: ImpulseJointSet::new(),
             multibody_joints: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
+            query_pipeline: QueryPipeline::new(),
+            query_pipeline_dirty: true,
         }
     }
 
@@ -132,6 +136,7 @@ impl PhysicsWorld {
             .restitution(restitution)
             .friction(friction)
             .build();
+        self.query_pipeline_dirty = true;
         self.colliders
             .insert_with_parent(collider, parent, &mut self.bodies)
     }
@@ -146,6 +151,7 @@ impl PhysicsWorld {
         let collider = ColliderBuilder::new(shared)
             .translation(nalgebra::vector![position[0], position[1], position[2]])
             .build();
+        self.query_pipeline_dirty = true;
         self.colliders.insert(collider)
     }
 
@@ -153,6 +159,7 @@ impl PhysicsWorld {
     pub fn remove_collider(&mut self, handle: ColliderHandle) {
         self.colliders
             .remove(handle, &mut self.island_manager, &mut self.bodies, true);
+        self.query_pipeline_dirty = true;
     }
 
     // ------------------------------------------------------------------
@@ -161,19 +168,22 @@ impl PhysicsWorld {
 
     /// Cast a ray into the physics world.  Returns `Some((collider, toi))` on hit.
     pub fn cast_ray(
-        &self,
+        &mut self,
         origin: [f32; 3],
         direction: [f32; 3],
         max_toi: f32,
     ) -> Option<(ColliderHandle, f32)> {
+        // Rebuild the query pipeline only if something changed.
+        if self.query_pipeline_dirty {
+            self.query_pipeline.update(&self.colliders);
+            self.query_pipeline_dirty = false;
+        }
         let ray = Ray::new(
             nalgebra::point![origin[0], origin[1], origin[2]],
             nalgebra::vector![direction[0], direction[1], direction[2]],
         );
         let filter = QueryFilter::default();
-        let mut query_pipeline = QueryPipeline::new();
-        query_pipeline.update(&self.colliders);
-        query_pipeline.cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
+        self.query_pipeline.cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
     }
 
     // ------------------------------------------------------------------
@@ -197,6 +207,7 @@ impl PhysicsWorld {
             &(),
             &(),
         );
+        self.query_pipeline_dirty = true;
     }
 
     /// Step with a custom delta-time by temporarily overriding `dt`.

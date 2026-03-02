@@ -1,8 +1,65 @@
 //! Mesh — GPU-side vertex and index buffers.
 
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
 
+use serde::{Deserialize, Serialize};
+
 use super::vertex::Vertex;
+
+/// Specifies what kind of geometry an entity should render.
+///
+/// Attach this as a component on entities that should be visible.
+/// The engine's render loop reads this and looks up or creates the
+/// corresponding GPU [`Mesh`] from a [`MeshCache`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MeshShape {
+    Cube,
+    Sphere { sectors: u32, stacks: u32 },
+    Plane,
+    Cylinder { segments: u32 },
+}
+
+impl MeshShape {
+    /// Generate the CPU-side [`MeshData`] for this shape.
+    pub fn to_mesh_data(&self) -> MeshData {
+        match *self {
+            MeshShape::Cube => MeshData::cube(),
+            MeshShape::Sphere { sectors, stacks } => MeshData::sphere(1.0, sectors, stacks),
+            MeshShape::Plane => MeshData::plane(10.0),
+            MeshShape::Cylinder { segments } => MeshData::cylinder(0.5, 1.0, segments),
+        }
+    }
+}
+
+/// Caches uploaded GPU [`Mesh`] objects keyed by [`MeshShape`].
+///
+/// Prevents re-uploading the same geometry every frame.
+pub struct MeshCache {
+    pub cache: HashMap<MeshShape, Mesh>,
+}
+
+impl MeshCache {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Get or create the GPU mesh for the given shape.
+    pub fn get_or_create(&mut self, device: &wgpu::Device, shape: MeshShape) -> &Mesh {
+        self.cache.entry(shape).or_insert_with(|| {
+            let data = shape.to_mesh_data();
+            Mesh::from_data(device, &data)
+        })
+    }
+}
+
+impl Default for MeshCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Raw mesh data on the CPU side (before upload to GPU).
 pub struct MeshData {

@@ -1,11 +1,12 @@
 //! 3D transform — position, rotation, and scale.
 
 use glam::{Mat4, Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 /// A 3D transform representing position, rotation, and uniform scale.
 ///
 /// Used as a component on entities to define where they exist in the world.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Transform {
     /// World-space position.
     pub position: Vec3,
@@ -107,7 +108,7 @@ impl Default for Transform {
 /// This is a read-only component written by the transform propagation system.
 /// It combines the entity's local [`Transform`] with all ancestor transforms
 /// in the scene graph to produce the final world-space matrix.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct GlobalTransform {
     /// The final world-space 4×4 matrix.
     pub matrix: Mat4,

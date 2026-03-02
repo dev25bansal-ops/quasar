@@ -155,7 +155,7 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     fn push_command(lua: &Lua, cmd: LuaTable) -> LuaResult<()> {
         let quasar: LuaTable = lua.globals().get("quasar")?;
         let commands: LuaTable = quasar.get("_commands")?;
-        let len = commands.len()? as i64;
+        let len = commands.len()?;
         commands.set(len + 1, cmd)?;
         Ok(())
     }
