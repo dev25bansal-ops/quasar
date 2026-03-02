@@ -19,8 +19,6 @@ use crate::{ScriptComponent, ScriptEngine};
 /// Resource wrapper so the scripting engine lives in the ECS as a global resource.
 pub struct ScriptingResource {
     pub engine: ScriptEngine,
-    /// Frame counter for hot-reload checks (every N frames).
-    frame_counter: u64,
     /// Registry key of the Lua table that maps entity_index → per-entity
     /// behaviour table (the table returned by each script file).
     entity_scripts_key: Option<mlua::RegistryKey>,
@@ -37,7 +35,6 @@ impl ScriptingResource {
             .ok();
         Self {
             engine,
-            frame_counter: 0,
             entity_scripts_key,
         }
     }
@@ -227,9 +224,7 @@ impl ScriptingSystem {
                 }
                 "despawn" => {
                     if let Ok(eid) = cmd.get::<u32>("entity") {
-                        commands.push(ScriptCommand::Despawn {
-                            entity_index: eid,
-                        });
+                        commands.push(ScriptCommand::Despawn { entity_index: eid });
                     }
                 }
                 _ => {
@@ -287,11 +282,7 @@ impl ScriptingSystem {
                                 // Call on_init(entity_id) if present.
                                 if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
                                     if let Err(e) = init_fn.call::<()>(*eid) {
-                                        log::error!(
-                                            "[lua] {}: on_init error: {}",
-                                            path,
-                                            e
-                                        );
+                                        log::error!("[lua] {}: on_init error: {}", path, e);
                                     }
                                 }
                                 let _ = entity_table.set(*eid, behaviour);
@@ -439,12 +430,8 @@ impl System for ScriptingSystem {
                 return;
             };
 
-            resource.frame_counter += 1;
-
-            // Hot-reload check every 120 frames (~2 seconds at 60 fps).
-            if resource.frame_counter % 120 == 0 {
-                let _reloaded = resource.engine.hot_reload();
-            }
+            // Hot-reload check using file events.
+            let _reloaded = resource.engine.hot_reload();
 
             // Call the global `on_update(dt)` if it exists.
             let _ = resource.engine.call_function::<_, ()>("on_update", dt);

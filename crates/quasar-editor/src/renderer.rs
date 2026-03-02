@@ -24,16 +24,9 @@ impl EditorRenderer {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let egui_ctx = egui::Context::default();
-        let egui_state = egui_winit::State::new(
-            egui_ctx.clone(),
-            ViewportId::ROOT,
-            window,
-            None,
-            None,
-            None,
-        );
-        let egui_renderer =
-            egui_wgpu::Renderer::new(device, surface_format, None, 1, false);
+        let egui_state =
+            egui_winit::State::new(egui_ctx.clone(), ViewportId::ROOT, window, None, None, None);
+        let egui_renderer = egui_wgpu::Renderer::new(device, surface_format, None, 1, false);
 
         Self {
             egui_state,
@@ -43,11 +36,7 @@ impl EditorRenderer {
     }
 
     /// Forward a winit window event to egui. Returns `true` if egui consumed it.
-    pub fn handle_event(
-        &mut self,
-        window: &Window,
-        event: &winit::event::WindowEvent,
-    ) -> bool {
+    pub fn handle_event(&mut self, window: &Window, event: &winit::event::WindowEvent) -> bool {
         let response = self.egui_state.on_window_event(window, event);
         response.consumed
     }
@@ -73,15 +62,12 @@ impl EditorRenderer {
         let full_output = self.egui_ctx.end_pass();
 
         // Handle platform output (cursor, clipboard, etc.)
-        self.egui_state.handle_platform_output(
-            window,
-            full_output.platform_output.clone(),
-        );
+        self.egui_state
+            .handle_platform_output(window, full_output.platform_output.clone());
 
-        let paint_jobs = self.egui_ctx.tessellate(
-            full_output.shapes,
-            self.egui_ctx.pixels_per_point(),
-        );
+        let paint_jobs = self
+            .egui_ctx
+            .tessellate(full_output.shapes, self.egui_ctx.pixels_per_point());
 
         // Upload textures.
         for (id, image_delta) in &full_output.textures_delta.set {
@@ -89,10 +75,9 @@ impl EditorRenderer {
                 .update_texture(device, queue, *id, image_delta);
         }
 
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("egui Encoder"),
-            });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("egui Encoder"),
+        });
 
         self.egui_renderer.update_buffers(
             device,

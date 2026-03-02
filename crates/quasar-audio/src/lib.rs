@@ -22,6 +22,7 @@ pub struct AudioSystem {
     manager: Option<AudioManager>,
     next_id: SoundId,
     handles: HashMap<SoundId, StaticSoundHandle>,
+    sound_cache: HashMap<String, StaticSoundData>,
 }
 
 impl AudioSystem {
@@ -35,6 +36,7 @@ impl AudioSystem {
             manager,
             next_id: 1,
             handles: HashMap::new(),
+            sound_cache: HashMap::new(),
         }
     }
 
@@ -50,7 +52,14 @@ impl AudioSystem {
     /// Load and immediately play a sound file. Returns a [`SoundId`] handle.
     pub fn play<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let data = StaticSoundData::from_file(path).ok()?;
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let data = if let Some(cached) = self.sound_cache.get(&path_str) {
+            cached.clone()
+        } else {
+            let loaded = StaticSoundData::from_file(&path_str).ok()?;
+            self.sound_cache.insert(path_str.clone(), loaded.clone());
+            loaded
+        };
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
@@ -61,7 +70,14 @@ impl AudioSystem {
     /// Play a sound in a loop.
     pub fn play_looped<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let mut data = StaticSoundData::from_file(path).ok()?;
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
+            cached.clone()
+        } else {
+            let loaded = StaticSoundData::from_file(&path_str).ok()?;
+            self.sound_cache.insert(path_str.clone(), loaded.clone());
+            loaded
+        };
         data.settings.loop_region = Some(kira::sound::Region::default());
         let handle = manager.play(data).ok()?;
         let id = self.next_id;

@@ -1,6 +1,6 @@
 //! Audio plugin — integrates the audio system with the ECS.
 
-use quasar_core::ecs::{System, World};
+use quasar_core::ecs::{Entity, System, World};
 use quasar_math::{Quat, Transform, Vec3};
 
 use crate::{AudioListener, AudioSource, AudioSystem};
@@ -60,12 +60,11 @@ impl System for AudioPlaybackSystem {
 
         // Pass 3: write back the playing_id to each AudioSource component.
         for (entity_idx, sound_id) in play_results {
-            for (entity, src) in world.query_mut::<AudioSource>() {
+            world.for_each_mut(|entity: Entity, src: &mut AudioSource| {
                 if entity.index() == entity_idx {
                     src.playing_id = sound_id;
-                    break;
                 }
-            }
+            });
         }
     }
 }

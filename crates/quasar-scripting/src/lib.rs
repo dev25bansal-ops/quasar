@@ -9,15 +9,16 @@ pub mod bridge;
 pub mod plugin;
 
 use mlua::prelude::*;
-use std::collections::HashMap;
-use std::path::Path;
-use std::time::SystemTime;
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver};
 
 /// The scripting engine — manages a Lua VM and script execution.
 pub struct ScriptEngine {
     lua: Lua,
-    /// Track file modification times for hot-reload.
-    file_timestamps: HashMap<String, SystemTime>,
+    event_rx: Receiver<PathBuf>,
+    watcher: Option<RecommendedWatcher>,
+    watched_files: Vec<String>,
 }
 
 // SAFETY: Our ECS is single-threaded. The Lua VM is only accessed from
@@ -56,11 +57,29 @@ impl ScriptEngine {
         log_table.set("error", log_error)?;
         lua.globals().set("log", log_table)?;
 
-        log::info!("Lua scripting engine initialized");
+        // Setup file watcher.
+        let (event_tx, event_rx) = channel();
+        let watcher: RecommendedWatcher = Watcher::new(
+            move |res: Result<Event, _>| {
+                if let Ok(event) = res {
+                    if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
+                        if let Some(path) = event.paths.first() {
+                            let _ = event_tx.send(path.clone());
+                        }
+                    }
+                }
+            },
+            notify::Config::default(),
+        )
+        .expect("Failed to create file watcher");
+
+        log::info!("Lua scripting engine initialized with file watching");
 
         Ok(Self {
             lua,
-            file_timestamps: HashMap::new(),
+            event_rx,
+            watcher: Some(watcher),
+            watched_files: Vec::new(),
         })
     }
 
@@ -80,11 +99,12 @@ impl ScriptEngine {
         let source = std::fs::read_to_string(&path_str)
             .map_err(|e| mlua::Error::ExternalError(std::sync::Arc::new(e)))?;
 
-        // Track modification time for hot-reload.
-        if let Ok(metadata) = std::fs::metadata(&path_str) {
-            if let Ok(modified) = metadata.modified() {
-                self.file_timestamps.insert(path_str, modified);
+        // Watch the file for changes.
+        if !self.watched_files.contains(&path_str) {
+            if let Some(ref mut watcher) = self.watcher {
+                let _ = watcher.watch(path.as_ref(), RecursiveMode::NonRecursive);
             }
+            self.watched_files.push(path_str.clone());
         }
 
         self.exec(&source)
@@ -93,13 +113,10 @@ impl ScriptEngine {
     /// Check if any tracked script files have been modified since last load.
     pub fn check_hot_reload(&self) -> Vec<String> {
         let mut changed = Vec::new();
-        for (path, &last_modified) in &self.file_timestamps {
-            if let Ok(metadata) = std::fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified > last_modified {
-                        changed.push(path.clone());
-                    }
-                }
+        while let Ok(path) = self.event_rx.try_recv() {
+            let path_str = path.to_string_lossy().to_string();
+            if self.watched_files.contains(&path_str) {
+                changed.push(path_str);
             }
         }
         changed

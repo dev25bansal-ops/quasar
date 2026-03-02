@@ -182,28 +182,27 @@ impl World {
         iter
     }
 
-    /// Iterate over all `(Entity, &mut T)` pairs.
-    pub fn query_mut<T: Component>(&mut self) -> impl Iterator<Item = (Entity, &mut T)> {
+    /// Iterate over all `(Entity, &mut T)` pairs using a callback.
+    pub fn for_each_mut<T, F>(&mut self, mut f: F)
+    where
+        T: Component,
+        F: FnMut(Entity, &mut T),
+    {
         let type_id = TypeId::of::<T>();
-        // SAFETY: We take a shared ref to the allocator's generation data
-        // while mutably borrowing the storage. These are disjoint fields
-        // of World, but the borrow checker can't see that. We use a pointer
-        // to the allocator to split the borrow.
-        let alloc_ptr = &self.allocator as *const EntityAllocator;
-        let iter = self
+        if let Some(storage) = self
             .storages
             .get_mut(&type_id)
             .and_then(|s| s.as_any_mut().downcast_mut::<TypedStorage<T>>())
-            .into_iter()
-            .flat_map(move |storage| {
-                storage.data.iter_mut().map(move |(&index, component)| {
-                    // SAFETY: allocator is only read (generation_of), storage is
-                    // the only thing mutably borrowed. No aliasing.
-                    let generation = unsafe { (*alloc_ptr).generation_of(index) };
-                    (Entity::new(index, generation), component)
-                })
-            });
-        iter
+        {
+            let indices: Vec<u32> = storage.data.keys().copied().collect();
+
+            for index in indices {
+                let generation = self.allocator.generation_of(index);
+                if let Some(component) = storage.data.get_mut(&index) {
+                    f(Entity::new(index, generation), component);
+                }
+            }
+        }
     }
 
     /// Query entities that have **both** components `A` and `B`.
@@ -300,6 +299,7 @@ impl<'w> EntityBuilder<'w> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query;
 
     #[derive(Debug, PartialEq)]
     struct Position {
@@ -355,6 +355,37 @@ mod tests {
     }
 
     #[test]
+    fn for_each_mut_modifies_components() {
+        let mut world = World::new();
+        for i in 0..5 {
+            let e = world.spawn();
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                },
+            );
+        }
+
+        world.for_each_mut(|_entity, pos: &mut Position| {
+            pos.x += 10.0;
+        });
+
+        for i in 0..5 {
+            let e = i as u32;
+            let pos = world.get::<Position>(Entity::new(e, 0));
+            assert_eq!(
+                pos,
+                Some(&Position {
+                    x: (i as f32) + 10.0,
+                    y: 0.0
+                })
+            );
+        }
+    }
+
+    #[test]
     fn query2_intersects_components() {
         let mut world = World::new();
 
@@ -392,6 +423,36 @@ mod tests {
         world.insert(e2, Velocity { dx: 7.0, dy: 8.0 });
 
         let results: Vec<_> = world.query3::<Position, Velocity, Health>().collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].3, &Health(100));
+    }
+
+    #[test]
+    fn query_macro_tuple_syntax() {
+        let mut world = World::new();
+
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 2.0 });
+        world.insert(e1, Velocity { dx: 3.0, dy: 4.0 });
+
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 5.0, y: 6.0 });
+        world.insert(e2, Velocity { dx: 7.0, dy: 8.0 });
+
+        let results: Vec<_> = query!(world, (Position, Velocity)).collect();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn query_macro_simple_syntax() {
+        let mut world = World::new();
+
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 2.0 });
+        world.insert(e1, Velocity { dx: 3.0, dy: 4.0 });
+        world.insert(e1, Health(100));
+
+        let results: Vec<_> = query!(world, Position, Velocity, Health).collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].3, &Health(100));
     }

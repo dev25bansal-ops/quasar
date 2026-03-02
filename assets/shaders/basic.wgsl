@@ -1,18 +1,25 @@
 // Quasar Engine — Basic 3D shader with materials, textures, and lighting.
 //
 // Bind groups:
-//   group(0) = camera  (view_proj + model)
+//   group(0) = camera  (view_proj + model + normal_matrix)
 //   group(1) = material (base_color, roughness, metallic, emissive)
-//   group(2) = texture  (albedo texture + sampler)
+//   group(2) = lights   (directional + ambient)
+//   group(3) = texture  (albedo texture + sampler)
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
     model: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+};
+
+struct LightUniform {
+    direction: vec4<f32>,
+    color: vec4<f32>,
+    ambient: vec4<f32>,
 };
 
 struct MaterialUniform {
     base_color: vec4<f32>,
-    // x = roughness, y = metallic
     roughness_metallic: vec2<f32>,
     emissive: f32,
     _pad: f32,
@@ -25,8 +32,11 @@ var<uniform> camera: CameraUniform;
 var<uniform> material: MaterialUniform;
 
 @group(2) @binding(0)
+var<uniform> lights: LightUniform;
+
+@group(3) @binding(0)
 var t_albedo: texture_2d<f32>;
-@group(2) @binding(1)
+@group(3) @binding(1)
 var s_albedo: sampler;
 
 struct VertexInput {
@@ -52,10 +62,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.clip_position = camera.view_proj * world_pos;
     out.world_position = world_pos.xyz;
 
-    // Transform normal to world space (using the model matrix).
-    // For correct normal transformation with non-uniform scale, we'd use
-    // the inverse-transpose — but for now this works for uniform scale.
-    out.world_normal = normalize((camera.model * vec4<f32>(in.normal, 0.0)).xyz);
+    out.world_normal = normalize((camera.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
 
     out.uv = in.uv;
     out.color = in.color;
@@ -71,10 +78,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Combine: texture * material base_color * vertex color.
     let base = tex_color * material.base_color * in.color;
 
-    // Simple directional light from upper-right-front.
-    let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.7));
-    let light_color = vec3<f32>(1.0, 0.98, 0.92);
-    let ambient = vec3<f32>(0.15, 0.15, 0.2);
+    // Directional light from uniform.
+    let light_dir = normalize(lights.direction.xyz);
+    let light_color = lights.color.rgb;
+    let ambient = lights.ambient.rgb;
 
     let n = normalize(in.world_normal);
     let ndotl = max(dot(n, light_dir), 0.0);

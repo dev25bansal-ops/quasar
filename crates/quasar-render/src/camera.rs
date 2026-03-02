@@ -73,6 +73,7 @@ impl Camera {
 pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub model: [[f32; 4]; 4],
+    pub normal_matrix: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
@@ -80,12 +81,20 @@ impl CameraUniform {
         Self {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             model: Mat4::IDENTITY.to_cols_array_2d(),
+            normal_matrix: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
 
     pub fn update(&mut self, camera: &Camera, model: Mat4) {
         self.view_proj = camera.view_projection().to_cols_array_2d();
         self.model = model.to_cols_array_2d();
+        self.normal_matrix = model.inverse().transpose().to_cols_array_2d();
+    }
+
+    pub fn from_camera(camera: &Camera) -> Self {
+        let mut uniform = Self::new();
+        uniform.view_proj = camera.view_projection().to_cols_array_2d();
+        uniform
     }
 }
 

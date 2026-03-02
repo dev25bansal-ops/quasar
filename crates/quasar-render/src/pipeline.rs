@@ -5,14 +5,16 @@ use super::vertex::Vertex;
 /// Create the main forward-rendering pipeline.
 ///
 /// Bind group layouts (in order):
-/// - `camera_layout` — group 0: camera uniform (view_proj + model)
+/// - `camera_layout` — group 0: camera uniform (view_proj + model + normal_matrix)
 /// - `material_layout` — group 1: material uniform (base_color, roughness, etc.)
-/// - `texture_layout` — group 2: albedo texture + sampler
+/// - `light_layout` — group 2: light uniform (directional + ambient)
+/// - `texture_layout` — group 3: albedo texture + sampler
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
     camera_layout: &wgpu::BindGroupLayout,
     material_layout: &wgpu::BindGroupLayout,
+    light_layout: &wgpu::BindGroupLayout,
     texture_layout: &wgpu::BindGroupLayout,
     shader_source: &str,
 ) -> wgpu::RenderPipeline {
@@ -23,7 +25,7 @@ pub fn create_render_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[camera_layout, material_layout, texture_layout],
+        bind_group_layouts: &[camera_layout, material_layout, light_layout, texture_layout],
         push_constant_ranges: &[],
     });
 

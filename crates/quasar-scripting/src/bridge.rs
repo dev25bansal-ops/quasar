@@ -161,17 +161,16 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     }
 
     // quasar.set_position(entity_id, x, y, z)
-    let set_pos_fn =
-        lua.create_function(|lua, (entity_id, x, y, z): (u32, f32, f32, f32)| {
-            let cmd = lua.create_table()?;
-            cmd.set("type", "set_position")?;
-            cmd.set("entity", entity_id)?;
-            cmd.set("x", x)?;
-            cmd.set("y", y)?;
-            cmd.set("z", z)?;
-            push_command(lua, cmd)?;
-            Ok(())
-        })?;
+    let set_pos_fn = lua.create_function(|lua, (entity_id, x, y, z): (u32, f32, f32, f32)| {
+        let cmd = lua.create_table()?;
+        cmd.set("type", "set_position")?;
+        cmd.set("entity", entity_id)?;
+        cmd.set("x", x)?;
+        cmd.set("y", y)?;
+        cmd.set("z", z)?;
+        push_command(lua, cmd)?;
+        Ok(())
+    })?;
     quasar.set("set_position", set_pos_fn)?;
 
     // quasar.set_rotation(entity_id, x, y, z, w)
@@ -190,17 +189,16 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("set_rotation", set_rot_fn)?;
 
     // quasar.set_scale(entity_id, x, y, z)
-    let set_scale_fn =
-        lua.create_function(|lua, (entity_id, x, y, z): (u32, f32, f32, f32)| {
-            let cmd = lua.create_table()?;
-            cmd.set("type", "set_scale")?;
-            cmd.set("entity", entity_id)?;
-            cmd.set("x", x)?;
-            cmd.set("y", y)?;
-            cmd.set("z", z)?;
-            push_command(lua, cmd)?;
-            Ok(())
-        })?;
+    let set_scale_fn = lua.create_function(|lua, (entity_id, x, y, z): (u32, f32, f32, f32)| {
+        let cmd = lua.create_table()?;
+        cmd.set("type", "set_scale")?;
+        cmd.set("entity", entity_id)?;
+        cmd.set("x", x)?;
+        cmd.set("y", y)?;
+        cmd.set("z", z)?;
+        push_command(lua, cmd)?;
+        Ok(())
+    })?;
     quasar.set("set_scale", set_scale_fn)?;
 
     // quasar.spawn() -> pushes a spawn command
@@ -314,10 +312,7 @@ mod tests {
             .exec()
             .unwrap();
 
-        let commands: LuaTable = lua
-            .load("return quasar._commands")
-            .eval()
-            .unwrap();
+        let commands: LuaTable = lua.load("return quasar._commands").eval().unwrap();
         let cmd: LuaTable = commands.get(1).unwrap();
         assert_eq!(cmd.get::<String>("type").unwrap(), "set_position");
         assert_eq!(cmd.get::<u32>("entity").unwrap(), 1);

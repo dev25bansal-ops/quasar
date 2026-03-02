@@ -14,6 +14,7 @@ Built for [FOSS Hack 2026](https://fossunited.org/fosshack/2026) — the month-l
 
 - **Custom ECS** — generational entity IDs, typed component storage, system scheduling
 - **GPU Rendering** — wgpu-powered forward renderer with depth buffering and directional lighting
+- **GPU Instancing** — batched rendering for identical meshes with significant performance gains
 - **Scene Graph** — parent-child entity hierarchies with named entities and traversal
 - **Rigid Body Physics** — full Rapier3D integration (bodies, colliders, forces, raycasting)
 - **Audio Playback** — Kira-backed audio with play/pause/stop/volume/looping
@@ -50,6 +51,20 @@ quasar-engine (meta-crate / prelude)
 ├── quasar-scripting  # Lua 5.4 VM, hot-reload, ECS bridge
 └── quasar-editor     # egui hierarchy, inspector, console panels
 ```
+
+## Screenshots
+
+<div align="center">
+  <!-- TODO: Add screenshot or GIF of showcase demo here 
+       Run `cargo run -p showcase` and capture a screenshot to 
+       `assets/screenshots/showcase.png` 
+  -->
+  <img src="assets/screenshots/showcase.png" alt="Quasar Engine Showcase Demo" width="800">
+  
+  <p>
+    <em>Multi-shape scene with orbiting objects, animations, and camera orbit controls</em>
+  </p>
+</div>
 
 ## Quick Start
 

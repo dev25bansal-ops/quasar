@@ -4,6 +4,11 @@ use quasar_core::ecs::Entity;
 use quasar_math::{EulerRot, Quat, Transform};
 use quasar_render::MaterialOverride;
 
+pub enum InspectorAction {
+    Despawn(Entity),
+    Spawn,
+}
+
 /// Data bundle passed into the inspector for display and editing.
 ///
 /// The caller (runner) fills this with the entity's current component values.
@@ -18,13 +23,16 @@ pub struct InspectorData {
 
 /// Draw the inspector panel for the selected entity.
 ///
-/// Returns `true` if any value was changed (so the caller knows to write back).
+/// Returns `(bool, Option<InspectorAction>)` where:
+/// - `bool` indicates if any value was changed (so the caller knows to write back)
+/// - `Option<InspectorAction>` contains any action requested (despawn/spawn)
 pub fn inspector_panel(
     ctx: &egui::Context,
     selected: Option<Entity>,
     data: Option<&mut InspectorData>,
-) -> bool {
+) -> (bool, Option<InspectorAction>) {
     let mut changed = false;
+    let mut action = None;
 
     egui::SidePanel::right("inspector")
         .default_width(280.0)
@@ -65,13 +73,25 @@ pub fn inspector_panel(
                         .horizontal(|ui| {
                             let mut c = false;
                             c |= ui
-                                .add(egui::DragValue::new(&mut t.position.x).speed(0.05).prefix("X "))
+                                .add(
+                                    egui::DragValue::new(&mut t.position.x)
+                                        .speed(0.05)
+                                        .prefix("X "),
+                                )
                                 .changed();
                             c |= ui
-                                .add(egui::DragValue::new(&mut t.position.y).speed(0.05).prefix("Y "))
+                                .add(
+                                    egui::DragValue::new(&mut t.position.y)
+                                        .speed(0.05)
+                                        .prefix("Y "),
+                                )
                                 .changed();
                             c |= ui
-                                .add(egui::DragValue::new(&mut t.position.z).speed(0.05).prefix("Z "))
+                                .add(
+                                    egui::DragValue::new(&mut t.position.z)
+                                        .speed(0.05)
+                                        .prefix("Z "),
+                                )
                                 .changed();
                             c
                         })
@@ -194,34 +214,25 @@ pub fn inspector_panel(
                             .inner;
 
                         changed |= ui
-                            .add(
-                                egui::Slider::new(&mut mat.roughness, 0.0..=1.0)
-                                    .text("Roughness"),
-                            )
+                            .add(egui::Slider::new(&mut mat.roughness, 0.0..=1.0).text("Roughness"))
                             .changed();
                         changed |= ui
-                            .add(
-                                egui::Slider::new(&mut mat.metallic, 0.0..=1.0).text("Metallic"),
-                            )
+                            .add(egui::Slider::new(&mut mat.metallic, 0.0..=1.0).text("Metallic"))
                             .changed();
                         changed |= ui
-                            .add(
-                                egui::Slider::new(&mut mat.emissive, 0.0..=10.0)
-                                    .text("Emissive"),
-                            )
+                            .add(egui::Slider::new(&mut mat.emissive, 0.0..=10.0).text("Emissive"))
                             .changed();
                     });
             }
 
             ui.separator();
             if ui.button("🗑 Despawn Entity").clicked() {
-                log::info!(
-                    "Despawn requested for entity [{}:{}]",
-                    entity.index(),
-                    entity.generation()
-                );
+                action = Some(InspectorAction::Despawn(entity));
+            }
+            if ui.button("➕ Spawn Entity").clicked() {
+                action = Some(InspectorAction::Spawn);
             }
         });
 
-    changed
+    (changed, action)
 }

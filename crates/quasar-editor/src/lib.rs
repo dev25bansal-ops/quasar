@@ -10,7 +10,7 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod renderer;
 
-pub use inspector::InspectorData;
+pub use inspector::{InspectorAction, InspectorData};
 use quasar_core::ecs::Entity;
 
 /// Editor state — tracks visible panels and the selected entity.
@@ -53,16 +53,17 @@ impl Editor {
     ///
     /// `inspector_data` should be `Some` when an entity is selected and the
     /// caller has read its components.  Edited values are written in-place;
-    /// the function returns `true` if anything was changed so the caller can
-    /// write the data back to the ECS.
+    /// the function returns `(bool, Option<InspectorAction>)` where:
+    /// - `bool` indicates if anything was changed so the caller can write back to ECS.
+    /// - `Option<InspectorAction>` contains any action requested (despawn/spawn).
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
         entity_names: &[(Entity, String)],
         inspector_data: Option<&mut InspectorData>,
-    ) -> bool {
+    ) -> (bool, Option<InspectorAction>) {
         if !self.enabled {
-            return false;
+            return (false, None);
         }
 
         // Top menu bar
@@ -84,9 +85,12 @@ impl Editor {
 
         // Inspector panel
         let mut inspector_changed = false;
+        let mut inspector_action = None;
         if self.show_inspector {
-            inspector_changed =
+            let (changed, action) =
                 inspector::inspector_panel(ctx, self.selected_entity, inspector_data);
+            inspector_changed = changed;
+            inspector_action = action;
         }
 
         // Console panel
@@ -107,7 +111,7 @@ impl Editor {
                 });
         }
 
-        inspector_changed
+        (inspector_changed, inspector_action)
     }
 }
 

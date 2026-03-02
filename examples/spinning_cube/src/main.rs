@@ -27,10 +27,10 @@ fn main() {
             .map(|t| t.delta_seconds)
             .unwrap_or(1.0 / 60.0);
 
-        for (_entity, transform) in world.query_mut::<Transform>() {
+        world.for_each_mut(|_entity: Entity, transform: &mut Transform| {
             transform.rotate(Vec3::Y, dt * 1.2);
             transform.rotate(Vec3::X, dt * 0.4);
-        }
+        });
     });
 
     run(

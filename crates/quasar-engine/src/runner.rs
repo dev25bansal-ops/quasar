@@ -22,11 +22,11 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use quasar_core::App;
 use quasar_core::asset::AssetManager;
 use quasar_core::scene::SceneGraph;
+use quasar_core::App;
 use quasar_editor::{renderer::EditorRenderer, Editor};
-use quasar_render::{Camera, MeshCache, MeshShape, OrbitController, Renderer};
+use quasar_render::{Camera, MeshCache, MeshShape, OrbitController, RenderConfig, Renderer};
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
 /// Runtime state created once the window is available.
@@ -94,17 +94,15 @@ impl ApplicationHandler for QuasarRunner {
             window.clone(),
             size.width,
             size.height,
+            RenderConfig::default(),
         ))
         .expect("Failed to initialise GPU renderer");
 
         let camera = Camera::new(size.width, size.height);
 
         let editor = Editor::new();
-        let editor_renderer = EditorRenderer::new(
-            &window,
-            &renderer.device,
-            renderer.config.format,
-        );
+        let editor_renderer =
+            EditorRenderer::new(&window, &renderer.device, renderer.config.format);
 
         // Insert engine resources into the world.
         self.app.world.insert_resource(Input::new());
@@ -139,8 +137,7 @@ impl ApplicationHandler for QuasarRunner {
         };
 
         // ── Let egui have first crack at the event ────────────────
-        let egui_consumed =
-            state.editor_renderer.handle_event(&state.window, &event);
+        let egui_consumed = state.editor_renderer.handle_event(&state.window, &event);
 
         match event {
             // ── Close ─────────────────────────────────────────────
@@ -180,10 +177,7 @@ impl ApplicationHandler for QuasarRunner {
                     if let Some(input) = self.app.world.resource_mut::<Input>() {
                         // Compute per-frame delta from absolute position.
                         if let Some(prev) = input.cursor_position {
-                            input.mouse_moved(
-                                position.x - prev.0,
-                                position.y - prev.1,
-                            );
+                            input.mouse_moved(position.x - prev.0, position.y - prev.1);
                         }
                         input.cursor_position = Some((position.x, position.y));
                     }
@@ -191,7 +185,11 @@ impl ApplicationHandler for QuasarRunner {
             }
 
             // ── Mouse buttons ─────────────────────────────────────
-            WindowEvent::MouseInput { state: btn_state, button, .. } => {
+            WindowEvent::MouseInput {
+                state: btn_state,
+                button,
+                ..
+            } => {
                 if !egui_consumed {
                     if let Some(input) = self.app.world.resource_mut::<Input>() {
                         let btn = quasar_window::MouseButton::from(button);
@@ -295,7 +293,9 @@ impl ApplicationHandler for QuasarRunner {
 
                 // Ensure all needed meshes are uploaded (cached).
                 for (shape, _) in &shape_mats {
-                    state.mesh_cache.get_or_create(&state.renderer.device, *shape);
+                    state
+                        .mesh_cache
+                        .get_or_create(&state.renderer.device, *shape);
                 }
 
                 // ── Split-phase rendering: 3D → egui → present ───
@@ -308,6 +308,7 @@ impl ApplicationHandler for QuasarRunner {
                             &quasar_render::Mesh,
                             glam::Mat4,
                             Option<&wgpu::BindGroup>,
+                            Option<u32>,
                         )> = shape_mats
                             .iter()
                             .filter_map(|(shape, model)| {
@@ -315,7 +316,7 @@ impl ApplicationHandler for QuasarRunner {
                                     .mesh_cache
                                     .cache
                                     .get(shape)
-                                    .map(|m| (m, *model, None))
+                                    .map(|m| (m, *model, None, None))
                             })
                             .collect();
 
@@ -352,28 +353,39 @@ impl ApplicationHandler for QuasarRunner {
                             state.editor_renderer.begin_frame(&state.window);
 
                             // Build inspector data for the selected entity.
-                            let mut inspector_data = state
-                                .editor
-                                .selected_entity
-                                .and_then(|e| {
-                                    let transform =
-                                        self.app.world.get::<quasar_math::Transform>(e)?;
-                                    let material = self
-                                        .app
-                                        .world
-                                        .get::<quasar_render::MaterialOverride>(e)
-                                        .copied();
-                                    Some(quasar_editor::InspectorData {
-                                        transform: *transform,
-                                        material,
-                                    })
-                                });
+                            let mut inspector_data = state.editor.selected_entity.and_then(|e| {
+                                let transform = self.app.world.get::<quasar_math::Transform>(e)?;
+                                let material = self
+                                    .app
+                                    .world
+                                    .get::<quasar_render::MaterialOverride>(e)
+                                    .copied();
+                                Some(quasar_editor::InspectorData {
+                                    transform: *transform,
+                                    material,
+                                })
+                            });
 
-                            let inspector_changed = state.editor.ui(
+                            let (inspector_changed, inspector_action) = state.editor.ui(
                                 &state.editor_renderer.egui_ctx,
                                 &entity_names,
                                 inspector_data.as_mut(),
                             );
+
+                            // Handle inspector actions.
+                            if let Some(action) = inspector_action {
+                                match action {
+                                    quasar_editor::InspectorAction::Despawn(entity) => {
+                                        self.app.world.despawn(entity);
+                                        state.editor.selected_entity = None;
+                                        inspector_data = None;
+                                    }
+                                    quasar_editor::InspectorAction::Spawn => {
+                                        let entity = self.app.world.spawn();
+                                        state.editor.selected_entity = Some(entity);
+                                    }
+                                }
+                            }
 
                             // Write back edited values.
                             if inspector_changed {
@@ -386,10 +398,10 @@ impl ApplicationHandler for QuasarRunner {
                                         *t = data.transform;
                                     }
                                     if let Some(mat) = &data.material {
-                                        if let Some(m) = self
-                                            .app
-                                            .world
-                                            .get_mut::<quasar_render::MaterialOverride>(entity)
+                                        if let Some(m) =
+                                            self.app
+                                                .world
+                                                .get_mut::<quasar_render::MaterialOverride>(entity)
                                         {
                                             *m = *mat;
                                         }

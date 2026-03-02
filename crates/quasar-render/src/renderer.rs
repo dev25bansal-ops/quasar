@@ -3,7 +3,7 @@
 use quasar_core::error::{QuasarError, QuasarResult};
 
 use super::camera::{Camera, CameraUniform};
-use super::material::{Material, MaterialOverride};
+use super::material::{LightUniform, Material, MaterialOverride};
 use super::mesh::Mesh;
 use super::pipeline;
 use super::texture::Texture;
@@ -11,6 +11,21 @@ use super::texture::Texture;
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
 const MAX_RENDER_OBJECTS: usize = 4096;
+
+/// Rendering configuration options.
+#[derive(Debug, Clone, Copy)]
+pub struct RenderConfig {
+    /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
+    pub msaa_sample_count: u32,
+}
+
+impl Default for RenderConfig {
+    fn default() -> Self {
+        Self {
+            msaa_sample_count: 1,
+        }
+    }
+}
 
 /// The main GPU renderer for Quasar Engine.
 ///
@@ -21,6 +36,7 @@ pub struct Renderer {
     pub queue: wgpu::Queue,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
+    pub render_config: RenderConfig,
     pub render_pipeline: wgpu::RenderPipeline,
     pub depth_texture: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
@@ -29,13 +45,27 @@ pub struct Renderer {
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_uniform: CameraUniform,
     pub material_bind_group_layout: wgpu::BindGroupLayout,
+    pub light_buffer: wgpu::Buffer,
+    pub light_bind_group: wgpu::BindGroup,
+    pub light_bind_group_layout: wgpu::BindGroupLayout,
+    pub light_uniform: LightUniform,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     /// Default white material used when no material is specified.
     pub default_material: Material,
     /// Default 1×1 white texture used when no texture is specified.
     pub default_texture: Texture,
+    /// Textures that can be used by entities.
+    pub textures: Vec<Texture>,
+    /// Texture bind groups for quick access.
+    pub texture_bind_groups: Vec<wgpu::BindGroup>,
     /// Minimum uniform buffer offset alignment (bytes), from device limits.
     pub uniform_alignment: u32,
+    /// Instance data buffer for GPU instancing (model matrices).
+    pub instance_buffer: wgpu::Buffer,
+    /// Bind group for instance data (storage buffer with model matrices).
+    pub instance_bind_group: wgpu::BindGroup,
+    /// Bind group layout for instance data.
+    pub instance_bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl Renderer {
@@ -47,6 +77,7 @@ impl Renderer {
         window: std::sync::Arc<winit::window::Window>,
         width: u32,
         height: u32,
+        render_config: RenderConfig,
     ) -> QuasarResult<Self> {
         // Create wgpu instance with default backends.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -149,11 +180,45 @@ impl Renderer {
         });
 
         // -- Depth texture --
-        let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height);
+        let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height, render_config.msaa_sample_count);
 
-        // -- Material + Texture bind group layouts --
+        // -- Material + Light + Texture bind group layouts --
         let material_bind_group_layout = Material::bind_group_layout(&device);
+        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Light Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
         let texture_bind_group_layout = Texture::bind_group_layout(&device);
+
+        // -- Light uniform --
+        let light_uniform = LightUniform::default();
+        let light_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Light Buffer"),
+            size: std::mem::size_of::<LightUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Light Bind Group"),
+            layout: &light_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &light_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
 
         // -- Default material (white, roughness=0.5, metallic=0) --
         let default_material =
@@ -163,6 +228,43 @@ impl Renderer {
         let default_texture =
             Texture::white(&device, &queue, &texture_bind_group_layout);
 
+        // -- Instance buffer for GPU instancing --
+        let max_instances = MAX_RENDER_OBJECTS;
+        let matrix_size = std::mem::size_of::<glam::Mat4>() as u64;
+        let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: matrix_size * max_instances as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let instance_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Instance Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(matrix_size),
+                },
+                count: None,
+            }],
+        });
+
+        let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Instance Bind Group"),
+            layout: &instance_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &instance_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
         // -- Render pipeline --
         let shader_source = include_str!("../../../assets/shaders/basic.wgsl");
         let render_pipeline = pipeline::create_render_pipeline(
@@ -170,6 +272,7 @@ impl Renderer {
             format,
             &camera_bind_group_layout,
             &material_bind_group_layout,
+            &light_bind_group_layout,
             &texture_bind_group_layout,
             shader_source,
         );
@@ -177,11 +280,15 @@ impl Renderer {
         // Upload default material data.
         default_material.update(&queue);
 
+        // Upload light data.
+        queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&[light_uniform]));
+
         Ok(Self {
             device,
             queue,
             surface,
             config,
+            render_config,
             render_pipeline,
             depth_texture,
             depth_view,
@@ -190,10 +297,19 @@ impl Renderer {
             camera_bind_group_layout,
             camera_uniform,
             material_bind_group_layout,
+            light_buffer,
+            light_bind_group,
+            light_bind_group_layout,
+            light_uniform,
             texture_bind_group_layout,
             default_material,
             default_texture,
+            textures: Vec::new(),
+            texture_bind_groups: Vec::new(),
             uniform_alignment,
+            instance_buffer,
+            instance_bind_group,
+            instance_bind_group_layout,
         })
     }
 
@@ -206,7 +322,7 @@ impl Renderer {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
 
-        let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, width, height);
+        let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, width, height, self.render_config.msaa_sample_count);
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
     }
@@ -219,6 +335,39 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+    }
+
+    /// Add a texture to the renderer and return its index.
+    ///
+    /// The returned index can be used with `TextureHandle` to specify which
+    /// texture an entity should use.
+    pub fn add_texture(&mut self, texture: Texture) -> u32 {
+        let index = self.textures.len() as u32;
+        self.texture_bind_groups.push(texture.bind_group.clone());
+        self.textures.push(texture);
+        index
+    }
+
+    /// Add a texture from a file path.
+    pub fn add_texture_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<u32, String> {
+        let texture = Texture::from_file(
+            &self.device,
+            &self.queue,
+            &self.texture_bind_group_layout,
+            path,
+        )?;
+        Ok(self.add_texture(texture))
+    }
+
+    /// Get a texture bind group by index.
+    ///
+    /// Returns the default texture if the index is out of bounds.
+    pub fn get_texture_bind_group(&self, index: u32) -> &wgpu::BindGroup {
+        if index == 0 || index as usize > self.texture_bind_groups.len() {
+            &self.default_texture.bind_group
+        } else {
+            &self.texture_bind_groups[index as usize - 1]
+        }
     }
 
     // ── Split-phase rendering API ────────────────────────────────
@@ -254,10 +403,13 @@ impl Renderer {
     /// Each tuple may carry an optional material bind group.  When `Some`, the
     /// per-entity material is used; otherwise the default white material is
     /// applied.
+    ///
+    /// Each tuple may carry an optional texture index.  When `Some`, the
+    /// texture at that index is used; otherwise the default texture is applied.
     pub fn render_3d_pass(
         &mut self,
         camera: &Camera,
-        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>)],
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
         view: &wgpu::TextureView,
         encoder: &mut wgpu::CommandEncoder,
     ) {
@@ -265,11 +417,10 @@ impl Renderer {
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let aligned_size = uniform_size.div_ceil(align) * align;
 
-        // Pre-write all per-object uniforms to the buffer at aligned offsets.
         if !objects.is_empty() {
             let total = aligned_size * objects.len();
             let mut data = vec![0u8; total];
-            for (i, (_, model, _)) in objects.iter().enumerate() {
+            for (i, (_, model, _, _)) in objects.iter().enumerate() {
                 let mut uniform = CameraUniform::new();
                 uniform.update(camera, *model);
                 let bytes = bytemuck::bytes_of(&uniform);
@@ -309,15 +460,127 @@ impl Renderer {
 
             pass.set_pipeline(&self.render_pipeline);
 
-            for (i, (mesh, _, mat_bg)) in objects.iter().enumerate() {
+            pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+            for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
                 let dyn_offset = (i * aligned_size) as u32;
                 pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
                 let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
                 pass.set_bind_group(1, material_bg, &[]);
-                pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
+                let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                pass.set_bind_group(3, texture_bg, &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Perform the 3D clear + draw pass with mesh/material batching.
+    ///
+    /// Groups objects by (mesh, material) to minimize state changes.
+    ///
+    /// Each tuple may carry an optional material bind group.  When `Some`, the
+    /// per-entity material is used; otherwise the default white material is
+    /// applied.
+    pub fn render_3d_pass_batched(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        use std::collections::HashMap;
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _, _)) in objects.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, *model);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
+        type BatchKey = (usize, usize, usize);
+        struct Batch {
+            mesh: &'static Mesh,
+            indices: Vec<usize>,
+            material: Option<&'static wgpu::BindGroup>,
+            texture: &'static wgpu::BindGroup,
+        }
+
+        let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
+
+        for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
+            let mesh_key = *mesh as *const Mesh as usize;
+            let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+                .unwrap_or(usize::MAX);
+            let tex_key = tex_index.unwrap_or(0) as usize;
+
+            let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
+                let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                Batch {
+                    mesh: unsafe { &*(*mesh as *const Mesh) },
+                    indices: Vec::new(),
+                    material: mat_bg.map(|bg| unsafe { &*(&*bg as *const wgpu::BindGroup) }),
+                    texture: unsafe { &*(&*texture_bg as *const wgpu::BindGroup) },
+                }
+            });
+            entry.indices.push(i);
+        }
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("3D Render Pass (Batched)"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.render_pipeline);
+
+            pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+            for batch in batches.values() {
+                let material_bg = batch.material.unwrap_or(&self.default_material.bind_group);
+                pass.set_bind_group(1, material_bg, &[]);
+                pass.set_bind_group(3, batch.texture, &[]);
+                pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+                for &idx in &batch.indices {
+                    let dyn_offset = (idx * aligned_size) as u32;
+                    pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                    pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
+                }
             }
         }
     }
@@ -378,7 +641,8 @@ impl Renderer {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[0]);
             render_pass.set_bind_group(1, &self.default_material.bind_group, &[]);
-            render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            render_pass.set_bind_group(3, &self.default_texture.bind_group, &[]);
 
             for mesh in meshes {
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
@@ -402,10 +666,31 @@ impl Renderer {
     /// Each tuple may carry an optional material bind group.  When `Some`, the
     /// per-entity material is used; otherwise the default white material is
     /// applied.
+    ///
+    /// Each tuple may carry an optional texture index.  When `Some`, the
+    /// texture at that index is used; otherwise the default texture is used.
     pub fn render_objects(
         &mut self,
         camera: &Camera,
-        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>)],
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
+    ) -> Result<(), wgpu::SurfaceError> {
+        self.render_objects_internal(camera, objects, false)
+    }
+
+    /// Render a frame with GPU instancing for objects sharing the same mesh.
+    ///
+    /// Groups objects by (mesh, material) to minimize draw calls.  For each group,
+    /// all instances are drawn in a single instanced draw call.
+    ///
+    /// Each tuple may carry an optional material bind group.  When `Some`, the
+    /// per-entity material is used; otherwise the default white material is used.
+    ///
+    /// Each tuple may carry an optional texture index.  When `Some`, the
+    /// texture at that index is used; otherwise the default texture is used.
+    pub fn render_objects_instanced(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
     ) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -422,11 +707,137 @@ impl Renderer {
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let aligned_size = uniform_size.div_ceil(align) * align;
 
-        // Pre-write all per-object uniforms.
         if !objects.is_empty() {
             let total = aligned_size * objects.len();
             let mut data = vec![0u8; total];
-            for (i, (_, model, _)) in objects.iter().enumerate() {
+            let mut uniform = CameraUniform::new();
+            uniform.view_proj = camera.view_projection().to_cols_array_2d();
+            uniform.normal_matrix = glam::Mat4::IDENTITY.to_cols_array_2d();
+            let bytes = bytemuck::bytes_of(&uniform);
+            for i in 0..objects.len() {
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
+        use std::collections::HashMap;
+
+        type BatchKey = (usize, usize, usize);
+        struct Batch {
+            mesh: *const Mesh,
+            materials: Vec<glam::Mat4>,
+            material: Option<*const wgpu::BindGroup>,
+            texture: *const wgpu::BindGroup,
+        }
+
+        let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
+
+        for (mesh, model, mat_bg, tex_index) in objects.iter() {
+            let mesh_key = *mesh as *const Mesh as usize;
+            let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+                .unwrap_or(usize::MAX);
+            let tex_key = tex_index.unwrap_or(0) as usize;
+
+            let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
+                let texture_bg: *const wgpu::BindGroup = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                let mat_ptr: Option<*const wgpu::BindGroup> = mat_bg.map(|bg| bg as *const wgpu::BindGroup);
+                Batch {
+                    mesh: *mesh as *const Mesh,
+                    materials: Vec::new(),
+                    material: mat_ptr,
+                    texture: texture_bg,
+                }
+            });
+            entry.materials.push(*model);
+        }
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Main Render Pass (Instanced)"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+            render_pass.set_bind_group(4, &self.instance_bind_group, &[]);
+
+            for batch in batches.values() {
+                let material_bg = batch.material.unwrap_or(&self.default_material.bind_group as *const wgpu::BindGroup);
+                render_pass.set_bind_group(1, unsafe { &*material_bg }, &[]);
+                render_pass.set_bind_group(3, unsafe { &*batch.texture }, &[]);
+                render_pass.set_vertex_buffer(0, unsafe { &(*batch.mesh).vertex_buffer }.slice(..));
+                render_pass.set_index_buffer(unsafe { &(*batch.mesh).index_buffer }.slice(..), wgpu::IndexFormat::Uint32);
+
+                if !batch.materials.is_empty() {
+                    let matrix_bytes: Vec<u8> = batch.materials
+                        .iter()
+                        .flat_map(|m| bytemuck::bytes_of(m).iter().copied())
+                        .collect();
+                    self.queue.write_buffer(&self.instance_buffer, 0, &matrix_bytes);
+
+                    render_pass.draw_indexed(
+                        0..unsafe { (*batch.mesh).index_count },
+                        0,
+                        0..batch.materials.len() as u32,
+                    );
+                }
+            }
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+
+    fn render_objects_internal(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
+        use_instancing: bool,
+    ) -> Result<(), wgpu::SurfaceError> {
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _, _)) in objects.iter().enumerate() {
                 let mut uniform = CameraUniform::new();
                 uniform.update(camera, *model);
                 let bytes = bytemuck::bytes_of(&uniform);
@@ -466,16 +877,65 @@ impl Renderer {
 
             render_pass.set_pipeline(&self.render_pipeline);
 
-            for (i, (mesh, _, mat_bg)) in objects.iter().enumerate() {
-                let dyn_offset = (i * aligned_size) as u32;
-                render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
-                let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
-                render_pass.set_bind_group(1, material_bg, &[]);
-                render_pass.set_bind_group(2, &self.default_texture.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass
-                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            if use_instancing {
+                use std::collections::HashMap;
+
+                type BatchKey = (usize, usize, usize);
+                struct Batch {
+                    mesh: &'static Mesh,
+                    indices: Vec<usize>,
+                    material: Option<&'static wgpu::BindGroup>,
+                    texture: &'static wgpu::BindGroup,
+                }
+
+                let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
+
+                for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
+                    let mesh_key = *mesh as *const Mesh as usize;
+                    let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+                        .unwrap_or(usize::MAX);
+                    let tex_key = tex_index.unwrap_or(0) as usize;
+
+                    let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
+                        let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                        Batch {
+                            mesh: unsafe { &*(*mesh as *const Mesh) },
+                            indices: Vec::new(),
+                            material: mat_bg.map(|bg| unsafe { &*(&*bg as *const wgpu::BindGroup) }),
+                            texture: unsafe { &*(&*texture_bg as *const wgpu::BindGroup) },
+                        }
+                    });
+                    entry.indices.push(i);
+                }
+
+                for batch in batches.values() {
+                    let material_bg = batch.material.unwrap_or(&self.default_material.bind_group);
+                    render_pass.set_bind_group(1, material_bg, &[]);
+                    render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+                    render_pass.set_bind_group(3, batch.texture, &[]);
+                    render_pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+                    for &idx in &batch.indices {
+                        let dyn_offset = (idx * aligned_size) as u32;
+                        render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                        render_pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
+                    }
+                }
+            } else {
+                render_pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+                for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
+                    let dyn_offset = (i * aligned_size) as u32;
+                    render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                    let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
+                    render_pass.set_bind_group(1, material_bg, &[]);
+                    let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                    render_pass.set_bind_group(3, texture_bg, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                }
             }
         }
 
@@ -510,6 +970,7 @@ impl Renderer {
         device: &wgpu::Device,
         width: u32,
         height: u32,
+        sample_count: u32,
     ) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
             width,
@@ -520,7 +981,7 @@ impl Renderer {
             label: Some("Depth Texture"),
             size,
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth32Float,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
