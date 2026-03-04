@@ -6,6 +6,38 @@
 use egui::ViewportId;
 use winit::window::Window;
 
+pub struct GizmoVertex {
+    pub position: [f32; 3],
+    pub color: [f32; 4],
+}
+
+impl GizmoVertex {
+    pub fn buffer_layout() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<GizmoVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 12,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+            ],
+        }
+    }
+}
+
+pub struct GizmoMesh {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+}
+
 /// Manages the egui render state: input translation and GPU painting.
 pub struct EditorRenderer {
     /// egui ↔ winit input state.

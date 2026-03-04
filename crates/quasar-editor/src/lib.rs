@@ -6,10 +6,17 @@
 //! and tweaking component values — press F12 to toggle.
 
 pub mod console;
+pub mod editor_state;
+pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
 pub mod renderer;
 
+pub use editor_state::{
+    EditCommand, EditorMode, EditorState, SetMaterialCommand, SetPositionCommand,
+    SetRotationCommand, SetScaleCommand, UndoStack, WorldSnapshot,
+};
+pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
 use quasar_core::ecs::Entity;
 

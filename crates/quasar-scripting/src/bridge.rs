@@ -8,6 +8,13 @@
 //! Lua globals (`quasar._transforms`, `quasar._pressed_keys`). Bridge
 //! functions read from these tables. Mutations are queued in
 //! `quasar._commands` and applied by the plugin after `on_update` returns.
+//!
+//! **Extended API (task 15):**
+//! - `quasar.get_input(action_name)` — query ActionMap bindings
+//! - `quasar.play_audio(path)` — queue audio playback
+//! - `quasar.raycast(origin, dir, max_dist)` — physics raycast
+//! - `quasar.get_component(entity, type_name)` — get component data
+//! - `quasar.apply_force(entity, x, y, z)` — apply physics force
 
 use mlua::prelude::*;
 
@@ -31,6 +38,11 @@ use mlua::prelude::*;
 /// - `quasar.is_key_pressed(key_name)` — check keyboard key
 /// - `quasar.is_mouse_pressed(button_name)` — check mouse button
 /// - `quasar.get_entity_count()` — how many entities have transforms
+/// - `quasar.get_input(action_name)` — query ActionMap (returns value 0-1)
+/// - `quasar.play_audio(path)` — queue audio playback
+/// - `quasar.raycast(ox, oy, oz, dx, dy, dz, max_dist)` — physics raycast
+/// - `quasar.get_component(entity_id, type_name)` — get component data
+/// - `quasar.apply_force(entity_id, x, y, z)` — apply physics force
 pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     let quasar: LuaTable = lua.globals().get("quasar")?;
 
@@ -39,6 +51,10 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("_pressed_keys", lua.create_table()?)?;
     quasar.set("_pressed_mouse", lua.create_table()?)?;
     quasar.set("_commands", lua.create_table()?)?;
+    quasar.set("_action_values", lua.create_table()?)?;
+    quasar.set("_raycast_results", lua.create_table()?)?;
+    quasar.set("_audio_queue", lua.create_table()?)?;
+    quasar.set("_physics_components", lua.create_table()?)?;
 
     // ── Utilities ─────────────────────────────────────────────────
 
@@ -231,7 +247,7 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     })?;
     quasar.set("is_key_pressed", key_fn)?;
 
-    // quasar.is_mouse_pressed(button_name) -> bool  ("left", "right", "middle")
+    // quasar.is_mouse_pressed(button_name) -> bool ("left", "right", "middle")
     let mouse_fn = lua.create_function(|lua, button_name: String| -> LuaResult<bool> {
         let quasar: LuaTable = lua.globals().get("quasar")?;
         let buttons: LuaTable = quasar.get("_pressed_mouse")?;
@@ -239,6 +255,116 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
         Ok(pressed)
     })?;
     quasar.set("is_mouse_pressed", mouse_fn)?;
+
+    // ── Extended API (task 15) ─────────────────────────────────────
+
+    // quasar.get_input(action_name) -> number (0.0-1.0)
+    let get_input_fn = lua.create_function(|lua, action_name: String| -> LuaResult<f32> {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let actions: LuaTable = quasar.get("_action_values")?;
+        let value: f32 = actions.get(action_name.as_str()).unwrap_or(0.0);
+        Ok(value)
+    })?;
+    quasar.set("get_input", get_input_fn)?;
+
+    // quasar.play_audio(path)
+    let play_audio_fn = lua.create_function(|lua, path: String| {
+        let cmd = lua.create_table()?;
+        cmd.set("type", "play_audio")?;
+        cmd.set("path", path)?;
+        push_command(lua, cmd)?;
+        Ok(())
+    })?;
+    quasar.set("play_audio", play_audio_fn)?;
+
+    // quasar.raycast(ox, oy, oz, dx, dy, dz, max_dist) -> table or nil
+    let raycast_fn = lua.create_function(
+        |lua,
+         (ox, oy, oz, dx, dy, dz, max_dist): (f32, f32, f32, f32, f32, f32, f32)|
+         -> LuaResult<LuaValue> {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let results: LuaTable = quasar.get("_raycast_results")?;
+
+            let key = format!(
+                "{:.2},{:.2},{:.2}|{:.2},{:.2},{:.2}|{:.2}",
+                ox, oy, oz, dx, dy, dz, max_dist
+            );
+            match results.get::<Option<LuaTable>>(key.as_str())? {
+                Some(hit) => {
+                    let result = lua.create_table()?;
+                    result.set("entity", hit.get::<u32>("entity")?)?;
+                    result.set("distance", hit.get::<f32>("distance")?)?;
+                    let point = hit.get::<LuaTable>("point")?;
+                    let pt_result = lua.create_table()?;
+                    pt_result.set("x", point.get::<f32>("x")?)?;
+                    pt_result.set("y", point.get::<f32>("y")?)?;
+                    pt_result.set("z", point.get::<f32>("z")?)?;
+                    result.set("point", pt_result)?;
+                    Ok(LuaValue::Table(result))
+                }
+                None => Ok(LuaValue::Nil),
+            }
+        },
+    )?;
+    quasar.set("raycast", raycast_fn)?;
+
+    // quasar.get_component(entity_id, type_name) -> table or nil
+    let get_component_fn = lua.create_function(
+        |lua, (entity_id, type_name): (u32, String)| -> LuaResult<LuaValue> {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let components: LuaTable = quasar.get("_physics_components")?;
+
+            let entity_key = entity_id.to_string();
+            match components.get::<Option<LuaTable>>(entity_key.as_str())? {
+                Some(entity_components) => {
+                    match entity_components.get::<Option<LuaTable>>(type_name.as_str())? {
+                        Some(comp) => Ok(LuaValue::Table(comp)),
+                        None => Ok(LuaValue::Nil),
+                    }
+                }
+                None => Ok(LuaValue::Nil),
+            }
+        },
+    )?;
+    quasar.set("get_component", get_component_fn)?;
+
+    // quasar.apply_force(entity_id, x, y, z)
+    let apply_force_fn =
+        lua.create_function(|lua, (entity_id, x, y, z): (u32, f32, f32, f32)| {
+            let cmd = lua.create_table()?;
+            cmd.set("type", "apply_force")?;
+            cmd.set("entity", entity_id)?;
+            cmd.set("x", x)?;
+            cmd.set("y", y)?;
+            cmd.set("z", z)?;
+            push_command(lua, cmd)?;
+            Ok(())
+        })?;
+    quasar.set("apply_force", apply_force_fn)?;
+
+    // quasar.get_velocity(entity_id) -> table or nil
+    let get_velocity_fn = lua.create_function(|lua, entity_id: u32| -> LuaResult<LuaValue> {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let components: LuaTable = quasar.get("_physics_components")?;
+
+        let entity_key = entity_id.to_string();
+        match components.get::<Option<LuaTable>>(entity_key.as_str())? {
+            Some(entity_components) => {
+                match entity_components.get::<Option<LuaTable>>("RigidBody")? {
+                    Some(rb) => {
+                        let result = lua.create_table()?;
+                        result.set("x", rb.get::<f32>("vx")?)?;
+                        result.set("y", rb.get::<f32>("vy")?)?;
+                        result.set("z", rb.get::<f32>("vz")?)?;
+                        Ok(LuaValue::Table(result))
+                    }
+                    None => Ok(LuaValue::Nil),
+                }
+            }
+            None => Ok(LuaValue::Nil),
+        }
+    })?;
+    quasar.set("get_velocity", get_velocity_fn)?;
 
     Ok(())
 }
@@ -355,5 +481,104 @@ mod tests {
         let despawn_cmd: LuaTable = commands.get(2).unwrap();
         assert_eq!(despawn_cmd.get::<String>("type").unwrap(), "despawn");
         assert_eq!(despawn_cmd.get::<u32>("entity").unwrap(), 42);
+    }
+
+    #[test]
+    fn bridge_get_input() {
+        let lua = setup_lua();
+
+        lua.load(r#"quasar._action_values["jump"] = 1.0"#)
+            .exec()
+            .unwrap();
+
+        let value: f32 = lua
+            .load(r#"return quasar.get_input("jump")"#)
+            .eval()
+            .unwrap();
+        assert!((value - 1.0).abs() < 0.001);
+
+        let missing: f32 = lua
+            .load(r#"return quasar.get_input("nonexistent")"#)
+            .eval()
+            .unwrap();
+        assert!((missing - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn bridge_play_audio_queues_command() {
+        let lua = setup_lua();
+
+        lua.load(r#"quasar.play_audio("assets/sounds/jump.ogg")"#)
+            .exec()
+            .unwrap();
+
+        let commands: LuaTable = lua.load("return quasar._commands").eval().unwrap();
+        let cmd: LuaTable = commands.get(1).unwrap();
+        assert_eq!(cmd.get::<String>("type").unwrap(), "play_audio");
+        assert_eq!(cmd.get::<String>("path").unwrap(), "assets/sounds/jump.ogg");
+    }
+
+    #[test]
+    fn bridge_apply_force_queues_command() {
+        let lua = setup_lua();
+
+        lua.load("quasar.apply_force(1, 10.0, 20.0, 30.0)")
+            .exec()
+            .unwrap();
+
+        let commands: LuaTable = lua.load("return quasar._commands").eval().unwrap();
+        let cmd: LuaTable = commands.get(1).unwrap();
+        assert_eq!(cmd.get::<String>("type").unwrap(), "apply_force");
+        assert_eq!(cmd.get::<u32>("entity").unwrap(), 1);
+        assert!((cmd.get::<f32>("x").unwrap() - 10.0).abs() < 0.001);
+        assert!((cmd.get::<f32>("y").unwrap() - 20.0).abs() < 0.001);
+        assert!((cmd.get::<f32>("z").unwrap() - 30.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn bridge_raycast_returns_result() {
+        let lua = setup_lua();
+
+        lua.load(
+            r#"
+            quasar._raycast_results["0.00,0.00,0.00|1.00,0.00,0.00|100.00"] = {
+                entity = 42,
+                distance = 10.5,
+                point = { x = 10.5, y = 0.0, z = 0.0 }
+            }
+        "#,
+        )
+        .exec()
+        .unwrap();
+
+        let result: LuaTable = lua
+            .load(r#"return quasar.raycast(0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 100.0)"#)
+            .eval()
+            .unwrap();
+        assert_eq!(result.get::<u32>("entity").unwrap(), 42);
+        assert!((result.get::<f32>("distance").unwrap() - 10.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn bridge_get_component() {
+        let lua = setup_lua();
+
+        lua.load(
+            r#"
+            quasar._physics_components["1"] = {
+                RigidBody = { vx = 1.0, vy = 2.0, vz = 3.0 }
+            }
+        "#,
+        )
+        .exec()
+        .unwrap();
+
+        let rb: LuaTable = lua
+            .load(r#"return quasar.get_component(1, "RigidBody")"#)
+            .eval()
+            .unwrap();
+        assert!((rb.get::<f32>("vx").unwrap() - 1.0).abs() < 0.001);
+        assert!((rb.get::<f32>("vy").unwrap() - 2.0).abs() < 0.001);
+        assert!((rb.get::<f32>("vz").unwrap() - 3.0).abs() < 0.001);
     }
 }
