@@ -98,6 +98,29 @@ impl PhysicsWorld {
         })
     }
 
+    /// Set the position of a rigid body.
+    pub fn set_body_position(&mut self, handle: RigidBodyHandle, position: [f32; 3]) {
+        if let Some(rb) = self.bodies.get_mut(handle) {
+            rb.set_translation(
+                nalgebra::vector![position[0], position[1], position[2]],
+                true,
+            );
+        }
+    }
+
+    /// Set the rotation of a rigid body from a quaternion `[x, y, z, w]`.
+    pub fn set_body_rotation(&mut self, handle: RigidBodyHandle, rotation: [f32; 4]) {
+        if let Some(rb) = self.bodies.get_mut(handle) {
+            let quat = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+                rotation[3],
+                rotation[0],
+                rotation[1],
+                rotation[2],
+            ));
+            rb.set_rotation(quat, true);
+        }
+    }
+
     /// Apply a force to a dynamic rigid body.
     pub fn apply_force(&mut self, handle: RigidBodyHandle, force: [f32; 3]) {
         if let Some(rb) = self.bodies.get_mut(handle) {

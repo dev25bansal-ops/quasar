@@ -140,31 +140,3 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     return vec4<f32>(final_color, base.a);
 }
-
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Sample the albedo texture.
-    let tex_color = textureSample(t_albedo, s_albedo, in.uv);
-
-    // Combine: texture * material base_color * vertex color.
-    let base = tex_color * material.base_color * in.color;
-
-    // Directional light from uniform.
-    let light_dir = normalize(lights.direction.xyz);
-    let light_color = lights.color.rgb;
-    let ambient = lights.ambient.rgb;
-
-    let n = normalize(in.world_normal);
-    let ndotl = max(dot(n, light_dir), 0.0);
-
-    let diffuse = light_color * ndotl;
-    let lighting = ambient + diffuse;
-
-    // Apply lighting to the base color.
-    var final_color = base.rgb * lighting;
-
-    // Add emissive contribution.
-    final_color = final_color + base.rgb * material.emissive;
-
-    return vec4<f32>(final_color, base.a);
-}

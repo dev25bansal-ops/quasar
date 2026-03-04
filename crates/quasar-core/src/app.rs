@@ -81,11 +81,16 @@ impl App {
     ///
     /// This is called by the windowing backend each frame. It:
     /// 1. Updates the time
-    /// 2. Inserts the current `Time` snapshot into the World as a resource
-    /// 3. Runs all scheduled systems
-    /// 4. Clears frame events
+    /// 2. Syncs events from App.events into World as a resource
+    /// 3. Inserts the current `Time` snapshot into the World as a resource
+    /// 4. Runs all scheduled systems
+    /// 5. Syncs events back from World to App.events
+    /// 6. Clears frame events
     pub fn tick(&mut self) {
         self.time.update();
+
+        // Sync events to world so systems can use world.resource::<Events>()
+        self.world.insert_resource(std::mem::take(&mut self.events));
 
         // Make time accessible to systems via `world.resource::<Time>()`.
         self.world.insert_resource(TimeSnapshot {
@@ -95,6 +100,12 @@ impl App {
         });
 
         self.schedule.run(&mut self.world);
+
+        // Sync events back from world (systems may have added events)
+        if let Some(events) = self.world.resource_mut::<Events>() {
+            self.events = std::mem::take(events);
+        }
+
         self.events.clear_all();
     }
 }
