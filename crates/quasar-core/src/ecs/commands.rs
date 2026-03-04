@@ -48,7 +48,7 @@ impl Commands {
     }
 
     /// Queue spawning a new entity.
-    pub fn spawn(&mut self) -> EntitySpawnBuilder {
+    pub fn spawn(&mut self) -> EntitySpawnBuilder<'_> {
         EntitySpawnBuilder {
             commands: self,
             components: Vec::new(),

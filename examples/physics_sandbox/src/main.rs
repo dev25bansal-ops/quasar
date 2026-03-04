@@ -71,7 +71,7 @@ fn main() {
 
         // Physics components
         let body_handle = {
-            let mut phys = app
+            let phys = app
                 .world
                 .resource_mut::<quasar_physics::PhysicsResource>()
                 .unwrap();
@@ -87,7 +87,7 @@ fn main() {
         );
 
         let collider_handle = {
-            let mut phys = app
+            let phys = app
                 .world
                 .resource_mut::<quasar_physics::PhysicsResource>()
                 .unwrap();

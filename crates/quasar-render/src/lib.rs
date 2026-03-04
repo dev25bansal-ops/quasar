@@ -10,6 +10,9 @@
 //! - Material system (PBR-lite)
 //! - Multi-light support (directional, point, spot)
 //! - Shadow mapping
+//! - HDR rendering with tonemapping
+//! - Render graph for pass composition
+//! - Instanced rendering for batching
 //! - Basic WGSL shader compilation
 
 pub mod camera;
@@ -17,11 +20,14 @@ pub mod camera_controller;
 pub mod culling;
 pub mod components;
 pub mod gltf_loader;
+pub mod hdr;
+pub mod instanced;
 pub mod light;
 pub mod loader;
 pub mod material;
 pub mod mesh;
 pub mod pipeline;
+pub mod render_graph;
 pub mod renderer;
 pub mod shadow;
 pub mod texture;
@@ -33,10 +39,13 @@ pub use camera_controller::{FpsCameraController, OrbitController};
 pub use components::TextureHandle;
 pub use culling::{Aabb, Frustum};
 pub use gltf_loader::load_gltf;
+pub use hdr::{HdrRenderTarget, TonemappingPass, Tonemapping, ColorGrading};
+pub use instanced::{InstancedMesh, InstanceData, InstanceBatch, InstanceCollector, MAX_INSTANCES};
 pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData, LightsUniform, MAX_LIGHTS};
 pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
+pub use render_graph::{RenderGraph, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids};
 pub use renderer::{RenderConfig, Renderer};
 pub use shadow::{ShadowMap, ShadowCamera};
 pub use texture::Texture;
