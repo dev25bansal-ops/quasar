@@ -8,7 +8,8 @@
 //! - Mesh and vertex buffer management
 //! - Texture loading (PNG, JPEG)
 //! - Material system (PBR-lite)
-//! - Directional lighting
+//! - Multi-light support (directional, point, spot)
+//! - Shadow mapping
 //! - Basic WGSL shader compilation
 
 pub mod camera;
@@ -16,6 +17,7 @@ pub mod camera_controller;
 pub mod culling;
 pub mod components;
 pub mod gltf_loader;
+pub mod light;
 pub mod loader;
 pub mod material;
 pub mod mesh;
@@ -31,6 +33,7 @@ pub use camera_controller::{FpsCameraController, OrbitController};
 pub use components::TextureHandle;
 pub use culling::{Aabb, Frustum};
 pub use gltf_loader::load_gltf;
+pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData, LightsUniform, MAX_LIGHTS};
 pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};

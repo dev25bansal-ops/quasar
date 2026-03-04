@@ -33,7 +33,7 @@ pub enum InputBinding {
 /// as the action being active.
 #[derive(Debug, Clone)]
 pub struct ActionMap {
-    bindings: HashMap<String, Vec<InputBinding>>,
+    pub bindings: HashMap<String, Vec<InputBinding>>,
 }
 
 impl ActionMap {
@@ -42,6 +42,11 @@ impl ActionMap {
         Self {
             bindings: HashMap::new(),
         }
+    }
+
+    /// Get a reference to the bindings map.
+    pub fn bindings(&self) -> &HashMap<String, Vec<InputBinding>> {
+        &self.bindings
     }
 
     /// Bind an action name to a physical input.
@@ -62,11 +67,7 @@ impl ActionMap {
     }
 
     /// Convenience — bind a mouse button to an action.
-    pub fn bind_mouse(
-        &mut self,
-        action: impl Into<String>,
-        button: MouseButton,
-    ) -> &mut Self {
+    pub fn bind_mouse(&mut self, action: impl Into<String>, button: MouseButton) -> &mut Self {
         self.bind(action, InputBinding::Mouse(button))
     }
 
@@ -100,21 +101,16 @@ impl ActionMap {
 
     /// Was the action released this frame?
     pub fn just_released(&self, action: &str, input: &Input) -> bool {
-        self.bindings.get(action).is_some_and(|bs| {
-            bs.iter().any(|b| binding_just_released(b, input))
-        })
+        self.bindings
+            .get(action)
+            .is_some_and(|bs| bs.iter().any(|b| binding_just_released(b, input)))
     }
 
     /// Get the raw axis value for a 1-D action defined by two bindings
     /// (negative and positive). Returns a value in \[-1.0, 1.0\].
     ///
     /// Example: `axis("strafe", "move_left", "move_right", &input)`
-    pub fn axis(
-        &self,
-        negative_action: &str,
-        positive_action: &str,
-        input: &Input,
-    ) -> f32 {
+    pub fn axis(&self, negative_action: &str, positive_action: &str, input: &Input) -> f32 {
         let neg = if self.is_pressed(negative_action, input) {
             -1.0
         } else {
