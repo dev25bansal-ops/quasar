@@ -65,8 +65,7 @@ impl SceneData {
     /// Load a scene from a file.
     pub fn load(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Self::from_json(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 }
 
@@ -98,5 +97,104 @@ mod tests {
         assert_eq!(loaded.entities[0].name.as_deref(), Some("Player"));
         assert_eq!(loaded.entities[1].name.as_deref(), Some("Weapon"));
         assert_eq!(loaded.entities[0].children, vec![1]);
+    }
+
+    #[test]
+    fn integration_spawn_serialize_deserialize_verify() {
+        use crate::ecs::World;
+        use crate::scene::SceneGraph;
+
+        let mut world = World::new();
+        let mut graph = SceneGraph::new();
+
+        let parent = world.spawn();
+        world.insert(
+            parent,
+            Transform::from_position(quasar_math::Vec3::new(10.0, 0.0, 0.0)),
+        );
+        graph.set_name(parent, "Parent");
+
+        let child1 = world.spawn();
+        world.insert(
+            child1,
+            Transform::from_position(quasar_math::Vec3::new(1.0, 2.0, 3.0)),
+        );
+        graph.set_name(child1, "Child1");
+        graph.set_parent(child1, parent);
+
+        let child2 = world.spawn();
+        world.insert(
+            child2,
+            Transform::from_position(quasar_math::Vec3::new(4.0, 5.0, 6.0)),
+        );
+        graph.set_name(child2, "Child2");
+        graph.set_parent(child2, parent);
+
+        let mut scene_data = SceneData::new("IntegrationTest");
+
+        fn collect_entity_data(
+            entity: crate::Entity,
+            world: &World,
+            graph: &SceneGraph,
+            entities: &mut Vec<EntityData>,
+        ) {
+            let transform = world
+                .get::<Transform>(entity)
+                .copied()
+                .unwrap_or(Transform::IDENTITY);
+            let name = graph.name(entity).map(|s| s.to_string());
+
+            let children: Vec<crate::Entity> = graph.children(entity).to_vec();
+            let child_start_idx = entities.len() + 1;
+
+            let mesh_shape = None;
+
+            let child_indices: Vec<usize> =
+                (0..children.len()).map(|i| child_start_idx + i).collect();
+
+            entities.push(EntityData {
+                name,
+                transform,
+                mesh_shape,
+                children: child_indices,
+            });
+
+            for child in children {
+                collect_entity_data(child, world, graph, entities);
+            }
+        }
+
+        let roots = graph.roots(&[parent, child1, child2]);
+        for root in roots {
+            collect_entity_data(root, &world, &graph, &mut scene_data.entities);
+        }
+
+        let json = scene_data.to_json().unwrap();
+        let loaded = SceneData::from_json(&json).unwrap();
+
+        assert_eq!(loaded.name, "IntegrationTest");
+        assert_eq!(loaded.entities.len(), 3);
+
+        let loaded_parent = &loaded.entities[0];
+        assert_eq!(loaded_parent.name.as_deref(), Some("Parent"));
+        assert!((loaded_parent.transform.position.x - 10.0).abs() < 1e-5);
+        assert_eq!(loaded_parent.children.len(), 2);
+
+        let child_indices = &loaded_parent.children;
+        for &idx in child_indices {
+            let child = &loaded.entities[idx];
+            assert!(
+                child.name.as_deref() == Some("Child1") || child.name.as_deref() == Some("Child2")
+            );
+            if child.name.as_deref() == Some("Child1") {
+                assert!((child.transform.position.x - 1.0).abs() < 1e-5);
+                assert!((child.transform.position.y - 2.0).abs() < 1e-5);
+                assert!((child.transform.position.z - 3.0).abs() < 1e-5);
+            } else {
+                assert!((child.transform.position.x - 4.0).abs() < 1e-5);
+                assert!((child.transform.position.y - 5.0).abs() < 1e-5);
+                assert!((child.transform.position.z - 6.0).abs() < 1e-5);
+            }
+        }
     }
 }

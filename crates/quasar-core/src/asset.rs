@@ -5,15 +5,15 @@
 //! ## Design
 //!
 //! - **Handles**: Lightweight, copyable references (`AssetHandle<T>`) that point
-//!   into internal storage. Handles use generational indices to detect stale
-//!   references after an asset is freed.
+//! into internal storage. Handles use generational indices to detect stale
+//! references after an asset is freed.
 //! - **Type-erased storage**: Each concrete asset type (`T: Asset`) gets its own
-//!   typed slab, but `AssetManager` keeps a single map from `TypeId` to the
-//!   corresponding storage via `Box<dyn Any>`.
+//! typed slab, but `AssetManager` keeps a single map from `TypeId` to the
+//! corresponding storage via `Box<dyn Any>`.
 //! - **Path-based de-duplication**: Assets loaded from the same path are returned
-//!   from cache.
-//! - **Eager loading**: Assets are loaded synchronously on `load()`. Future work
-//!   can extend this to async / streaming loads.
+//! from cache.
+//! - **Async loading**: Assets can be loaded in background threads with
+//! `LoadingState` tracking (Pending/Ready/Failed).
 //!
 //! ## Usage
 //!
@@ -24,7 +24,7 @@
 //! struct MyTexture { width: u32, height: u32 }
 //!
 //! impl Asset for MyTexture {
-//!     fn asset_type_name() -> &'static str { "MyTexture" }
+//! fn asset_type_name() -> &'static str { "MyTexture" }
 //! }
 //!
 //! let mut assets = AssetManager::new();
@@ -37,6 +37,64 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+/// Loading state for async assets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadingState<T> {
+    /// Asset is currently being loaded in background.
+    Pending,
+    /// Asset has finished loading successfully.
+    Ready(T),
+    /// Asset failed to load with the given error message.
+    Failed(String),
+}
+
+impl<T> LoadingState<T> {
+    pub fn is_pending(&self) -> bool {
+        matches!(self, LoadingState::Pending)
+    }
+
+    pub fn is_ready(&self) -> bool {
+        matches!(self, LoadingState::Ready(_))
+    }
+
+    pub fn is_failed(&self) -> bool {
+        matches!(self, LoadingState::Failed(_))
+    }
+
+    pub fn unwrap(self) -> T {
+        match self {
+            LoadingState::Ready(v) => v,
+            LoadingState::Pending => panic!("called unwrap on Pending state"),
+            LoadingState::Failed(e) => panic!("called unwrap on Failed state: {}", e),
+        }
+    }
+
+    pub fn unwrap_or_else<E>(self, f: impl FnOnce(String) -> T) -> T {
+        match self {
+            LoadingState::Ready(v) => v,
+            LoadingState::Pending => f("Asset still loading".into()),
+            LoadingState::Failed(e) => f(e),
+        }
+    }
+}
+
+/// A handle to an async loading operation.
+#[derive(Debug, Clone)]
+pub struct AsyncHandle<T: Asset> {
+    pub(crate) path: PathBuf,
+    _marker: PhantomData<T>,
+}
+
+impl<T: Asset> AsyncHandle<T> {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// Type alias for a thread-safe loading state container.
+pub type AsyncState<T> = Arc<Mutex<LoadingState<T>>>;
 
 // ---------------------------------------------------------------------------
 // Asset trait
@@ -220,10 +278,12 @@ impl<T: Asset> AssetSlab<T> {
 
 /// Centralized asset store.
 ///
-/// Each asset type gets its own internal slab, keyed by `TypeId`.  You can
+/// Each asset type gets its own internal slab, keyed by `TypeId`. You can
 /// store any type that implements [`Asset`].
 pub struct AssetManager {
     slabs: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    #[allow(dead_code)]
+    async_states: HashMap<TypeId, HashMap<PathBuf, Arc<Mutex<Box<dyn Any + Send>>>>>,
 }
 
 impl Default for AssetManager {
@@ -237,6 +297,7 @@ impl AssetManager {
     pub fn new() -> Self {
         Self {
             slabs: HashMap::new(),
+            async_states: HashMap::new(),
         }
     }
 
@@ -279,7 +340,7 @@ impl AssetManager {
         self.slab_mut::<T>().insert_with_path(asset, path)
     }
 
-    /// Look up a cached handle by path.  Returns `None` if the asset was never
+    /// Look up a cached handle by path. Returns `None` if the asset was never
     /// loaded from that path (or has been freed).
     pub fn handle_for_path<T: Asset>(&self, path: impl AsRef<Path>) -> Option<AssetHandle<T>> {
         self.slab::<T>()
@@ -296,7 +357,7 @@ impl AssetManager {
         self.slab_mut::<T>().get_mut(handle)
     }
 
-    /// Free an asset, releasing the data.  Subsequent `get()` calls with this
+    /// Free an asset, releasing the data. Subsequent `get()` calls with this
     /// handle will return `None`.
     pub fn free<T: Asset>(&mut self, handle: &AssetHandle<T>) -> bool {
         self.slab_mut::<T>().free(handle)
@@ -305,6 +366,84 @@ impl AssetManager {
     /// How many live assets of this type?
     pub fn count<T: Asset>(&self) -> usize {
         self.slab::<T>().map_or(0, |s| s.len())
+    }
+
+    /// Begin an async load operation. Returns an `AsyncState` that can be polled.
+    ///
+    /// The `loader` closure is called in a background thread and should return
+    /// the loaded asset or an error string.
+    pub fn load_async<T, F>(&mut self, path: impl Into<PathBuf>, loader: F) -> AsyncState<T>
+    where
+        T: Asset,
+        F: FnOnce() -> Result<T, String> + Send + 'static,
+    {
+        let path = path.into();
+
+        // Check if already loaded
+        if let Some(_handle) = self.handle_for_path::<T>(&path) {
+            // Return a "ready" state - caller should check handle_for_path
+            return Arc::new(Mutex::new(LoadingState::Pending));
+        }
+
+        let state: Arc<Mutex<LoadingState<T>>> = Arc::new(Mutex::new(LoadingState::Pending));
+        let state_clone = state.clone();
+        let path_clone = path.clone();
+
+        std::thread::spawn(move || {
+            let result = loader();
+            let mut state = state_clone.lock().unwrap();
+            match result {
+                Ok(asset) => {
+                    *state = LoadingState::Ready(asset);
+                    log::trace!("Async load complete: {:?}", path_clone);
+                }
+                Err(e) => {
+                    *state = LoadingState::Failed(e.clone());
+                    log::warn!("Async load failed for {:?}: {}", path_clone, e);
+                }
+            }
+        });
+
+        state
+    }
+
+    /// Check if an async load has completed and insert the asset if ready.
+    ///
+    /// Returns `Some(handle)` if the asset was loaded and inserted,
+    /// `None` if still pending or failed.
+    pub fn poll_async<T: Asset>(
+        &mut self,
+        state: &mut LoadingState<T>,
+        path: impl Into<PathBuf>,
+    ) -> Option<AssetHandle<T>> {
+        match state {
+            LoadingState::Ready(_asset) => {
+                let path = path.into();
+                // Check if already inserted
+                if let Some(handle) = self.handle_for_path::<T>(&path) {
+                    return Some(handle);
+                }
+                let asset = std::mem::replace(state, LoadingState::Pending);
+                match asset {
+                    LoadingState::Ready(a) => {
+                        let handle = self.add_with_path(a, path);
+                        Some(handle)
+                    }
+                    _ => None,
+                }
+            }
+            LoadingState::Pending => None,
+            LoadingState::Failed(_) => None,
+        }
+    }
+
+    /// Check loading state without consuming it.
+    pub fn check_async<T: Asset>(state: &LoadingState<T>) -> LoadingState<()> {
+        match state {
+            LoadingState::Pending => LoadingState::Pending,
+            LoadingState::Ready(_) => LoadingState::Ready(()),
+            LoadingState::Failed(e) => LoadingState::Failed(e.clone()),
+        }
     }
 }
 

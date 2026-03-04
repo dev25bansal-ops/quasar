@@ -12,6 +12,10 @@ members = [
     "crates/quasar-engine",
     "examples/spinning_cube",
     "examples/showcase",
+    "examples/physics_sandbox",
+    "examples/audio_demo",
+    "examples/scripting_demo",
+    "examples/web_demo",
 ]
 
 [workspace.package]
@@ -69,6 +73,13 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 # 3D model loading
 gltf = { version = "1", features = ["import", "utils"] }
+
+# WASM/Web
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = "0.3"
+console_log = "1"
+console_error_panic_hook = "0.1"
 
 [profile.dev]
 opt-level = 1

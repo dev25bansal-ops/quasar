@@ -6,7 +6,9 @@
 //! - **Events**: A typed event bus for decoupled communication
 //! - **Time**: Delta time tracking and fixed timestep support
 //! - **Plugins**: Modular engine extension system
+//! - **Animation**: Keyframe-based animation system
 
+pub mod animation;
 pub mod app;
 pub mod asset;
 pub mod ecs;
@@ -17,8 +19,12 @@ pub mod scene;
 pub mod scene_serde;
 pub mod time;
 
+pub use animation::{
+    AnimationClip, AnimationPlayer, AnimationPlugin, AnimationResource, AnimationState,
+    SkeletalAnimationClip, TransformKeyframe,
+};
 pub use app::{App, TimeSnapshot};
-pub use asset::{Asset, AssetHandle, AssetManager};
+pub use asset::{Asset, AssetHandle, AssetManager, LoadingState, AsyncState, AsyncHandle};
 pub use ecs::{Component, Entity, EntityBuilder, World};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;

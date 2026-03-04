@@ -183,7 +183,8 @@ impl PhysicsWorld {
             nalgebra::vector![direction[0], direction[1], direction[2]],
         );
         let filter = QueryFilter::default();
-        self.query_pipeline.cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
+        self.query_pipeline
+            .cast_ray(&self.bodies, &self.colliders, &ray, max_toi, true, filter)
     }
 
     // ------------------------------------------------------------------

@@ -21,8 +21,10 @@ pub mod material;
 pub mod mesh;
 pub mod pipeline;
 pub mod renderer;
+pub mod shadow;
 pub mod texture;
 pub mod vertex;
+pub mod asset_loader;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
@@ -33,5 +35,7 @@ pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
 pub use renderer::{RenderConfig, Renderer};
+pub use shadow::{ShadowMap, ShadowCamera};
 pub use texture::Texture;
 pub use vertex::Vertex;
+pub use asset_loader::{AssetLoader, GpuTexture, GpuMesh, GpuMaterial, RenderAssetManager};

@@ -5,19 +5,17 @@
 //! 1. In **PostUpdate**, the plugin steps the Rapier simulation.
 //! 2. After stepping, it reads the new positions/rotations from Rapier and
 //!    writes them back into the ECS `Transform` components.
-//!
-//! Entities that should participate in physics must have:
-//! - [`RigidBodyComponent`] — links to a Rapier rigid body.
-//! - [`Transform`] — the spatial data read/written by the sync.
+//! 3. Collision events are collected and piped into the [`Events`] bus.
 
 use quasar_core::ecs::{Entity, System, World};
+use quasar_core::Events;
 use quasar_math::Transform;
 
+use crate::collider::ColliderComponent;
+use crate::events::{CollisionEvent, CollisionEventType};
 use crate::rigidbody::RigidBodyComponent;
 use crate::world::PhysicsWorld;
 
-/// A resource wrapper so the physics world can live inside the ECS [`World`]
-/// as a global resource via `insert_resource`.
 pub struct PhysicsResource {
     pub physics: PhysicsWorld,
 }
@@ -42,7 +40,6 @@ impl Default for PhysicsResource {
     }
 }
 
-/// System that steps the physics simulation and syncs transforms back to ECS.
 pub struct PhysicsStepSystem;
 
 impl System for PhysicsStepSystem {
@@ -51,12 +48,10 @@ impl System for PhysicsStepSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        // Step the physics simulation.
         if let Some(resource) = world.resource_mut::<PhysicsResource>() {
             resource.physics.step();
         }
 
-        // Pass 1: collect (entity, body_handle) pairs from ECS.
         let handles: Vec<(Entity, rapier3d::prelude::RigidBodyHandle)> = world
             .query::<RigidBodyComponent>()
             .map(|(e, rbc)| (e, rbc.handle))
@@ -66,7 +61,6 @@ impl System for PhysicsStepSystem {
             return;
         }
 
-        // Pass 2: read positions from physics resource (immutable borrow).
         let mut positions_to_write: Vec<(Entity, [f32; 3], [f32; 4])> = Vec::new();
         if let Some(resource) = world.resource::<PhysicsResource>() {
             for &(entity, handle) in &handles {
@@ -78,7 +72,6 @@ impl System for PhysicsStepSystem {
             }
         }
 
-        // Pass 3: write-back transforms — O(n) direct entity lookup.
         for (entity, pos, rot) in positions_to_write {
             if let Some(transform) = world.get_mut::<Transform>(entity) {
                 transform.position = glam::Vec3::new(pos[0], pos[1], pos[2]);
@@ -88,8 +81,104 @@ impl System for PhysicsStepSystem {
     }
 }
 
-/// Plugin that registers the physics step system into the PostUpdate stage.
-pub struct PhysicsPlugin;
+pub struct CollisionEventSystem {
+    sender: crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent>,
+    receiver: crossbeam::channel::Receiver<rapier3d::prelude::CollisionEvent>,
+}
+
+impl CollisionEventSystem {
+    pub fn new() -> Self {
+        let (sender, receiver) = crossbeam::channel::unbounded();
+        Self { sender, receiver }
+    }
+
+    pub fn channel(&self) -> crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent> {
+        self.sender.clone()
+    }
+}
+
+impl Default for CollisionEventSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl System for CollisionEventSystem {
+    fn name(&self) -> &str {
+        "collision_events"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        let collider_to_entity: std::collections::HashMap<
+            rapier3d::prelude::ColliderHandle,
+            Entity,
+        > = world
+            .query::<ColliderComponent>()
+            .map(|(e, collider)| (collider.handle, e))
+            .collect();
+
+        if let Some(events) = world.resource_mut::<Events>() {
+            use rapier3d::prelude::CollisionEvent as RapierCollisionEvent;
+
+            while let Ok(collision_event) = self.receiver.try_recv() {
+                match collision_event {
+                    RapierCollisionEvent::Started(collider1, collider2, _) => {
+                        if let (Some(&entity1), Some(&entity2)) = (
+                            collider_to_entity.get(&collider1),
+                            collider_to_entity.get(&collider2),
+                        ) {
+                            events.send(CollisionEvent {
+                                entity1,
+                                entity2,
+                                event_type: CollisionEventType::Started,
+                                contact_point: None,
+                                normal: None,
+                            });
+                        }
+                    }
+                    RapierCollisionEvent::Stopped(collider1, collider2, _) => {
+                        if let (Some(&entity1), Some(&entity2)) = (
+                            collider_to_entity.get(&collider1),
+                            collider_to_entity.get(&collider2),
+                        ) {
+                            events.send(CollisionEvent {
+                                entity1,
+                                entity2,
+                                event_type: CollisionEventType::Stopped,
+                                contact_point: None,
+                                normal: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub struct PhysicsPlugin {
+    enable_collision_events: bool,
+}
+
+impl PhysicsPlugin {
+    pub fn new() -> Self {
+        Self {
+            enable_collision_events: true,
+        }
+    }
+
+    pub fn without_collision_events() -> Self {
+        Self {
+            enable_collision_events: false,
+        }
+    }
+}
+
+impl Default for PhysicsPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl quasar_core::Plugin for PhysicsPlugin {
     fn name(&self) -> &str {
@@ -97,14 +186,20 @@ impl quasar_core::Plugin for PhysicsPlugin {
     }
 
     fn build(&self, app: &mut quasar_core::App) {
-        // Insert the physics resource as a World resource (not a component).
         app.world.insert_resource(PhysicsResource::new());
+        app.world.insert_resource(Events::new());
 
-        // Register the step system in PostUpdate.
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::PostUpdate,
             Box::new(PhysicsStepSystem),
         );
+
+        if self.enable_collision_events {
+            app.schedule.add_system(
+                quasar_core::ecs::SystemStage::PostUpdate,
+                Box::new(CollisionEventSystem::new()),
+            );
+        }
 
         log::info!("PhysicsPlugin loaded — Rapier3D simulation active");
     }

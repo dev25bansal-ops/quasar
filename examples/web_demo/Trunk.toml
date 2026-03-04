@@ -1,0 +1,11 @@
+[build]
+target = "index.html"
+release = true
+
+[watch]
+watch = ["src", "index.html", "../../crates"]
+
+[serve]
+address = "127.0.0.1"
+port = 8080
+open = false

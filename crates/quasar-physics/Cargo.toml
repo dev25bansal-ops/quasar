@@ -12,3 +12,4 @@ rapier3d = { workspace = true }
 glam = { workspace = true }
 nalgebra = "0.33"
 log = { workspace = true }
+crossbeam = "0.8"
