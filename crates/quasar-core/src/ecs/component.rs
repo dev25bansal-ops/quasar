@@ -26,6 +26,7 @@ pub(crate) trait ComponentStorage: Any + Send + Sync {
     fn remove(&mut self, entity: Entity) -> bool;
     fn has(&self, entity: Entity) -> bool;
     fn len(&self) -> usize;
+    fn insert_raw(&mut self, entity: Entity, component: Box<dyn Any + Send + Sync>);
 }
 
 /// Concrete storage for a specific component type `T`.
@@ -75,5 +76,11 @@ impl<T: Component> ComponentStorage for TypedStorage<T> {
 
     fn len(&self) -> usize {
         self.data.len()
+    }
+
+    fn insert_raw(&mut self, entity: Entity, component: Box<dyn Any + Send + Sync>) {
+        if let Ok(typed) = component.downcast::<T>() {
+            self.data.insert(entity.index, *typed);
+        }
     }
 }

@@ -267,6 +267,46 @@ impl World {
             .as_any()
             .downcast_ref::<TypedStorage<T>>()
     }
+
+    /// Insert a component using runtime type information (for Commands).
+    pub fn insert_raw(
+        &mut self,
+        entity: Entity,
+        type_id: TypeId,
+        component: Box<dyn std::any::Any + Send + Sync>,
+    ) {
+        debug_assert!(self.is_alive(entity), "inserting on a dead entity");
+        // We need to find or create storage, but we don't know the type.
+        // For now, we'll need the caller to ensure storage exists.
+        if let Some(storage) = self.storages.get_mut(&type_id) {
+            storage.insert_raw(entity, component);
+        } else {
+            log::warn!("insert_raw: no storage for type, component dropped");
+        }
+    }
+
+    /// Remove a component using runtime type information (for Commands).
+    pub fn remove_raw(&mut self, entity: Entity, type_id: TypeId) -> bool {
+        if let Some(storage) = self.storages.get_mut(&type_id) {
+            storage.remove(entity)
+        } else {
+            false
+        }
+    }
+
+    /// Insert a resource using runtime type information (for Commands).
+    pub fn insert_resource_raw(
+        &mut self,
+        type_id: TypeId,
+        resource: Box<dyn std::any::Any + Send + Sync>,
+    ) {
+        self.resources.insert(type_id, resource);
+    }
+
+    /// Remove a resource using runtime type information (for Commands).
+    pub fn remove_resource_raw(&mut self, type_id: TypeId) {
+        self.resources.remove(&type_id);
+    }
 }
 
 impl Default for World {

@@ -1,6 +1,6 @@
 //! System scheduling — defines how game logic runs each frame.
 
-use super::World;
+use super::{Commands, World};
 
 /// A system is a function that operates on the [`World`].
 ///
@@ -55,6 +55,8 @@ pub enum SystemStage {
 }
 
 /// An ordered collection of systems grouped by stage.
+///
+/// Commands are flushed between stages to apply deferred mutations.
 pub struct Schedule {
     stages: Vec<(SystemStage, Vec<Box<dyn System>>)>,
 }
@@ -91,11 +93,16 @@ impl Schedule {
         self.add_system(SystemStage::Update, Box::new(FnSystem::new(name, func)));
     }
 
-    /// Run all systems in stage order.
+    /// Run all systems in stage order, flushing Commands between stages.
     pub fn run(&mut self, world: &mut World) {
         for (_stage, systems) in &mut self.stages {
             for system in systems.iter_mut() {
                 system.run(world);
+            }
+            // Flush Commands between stages
+            if let Some(mut cmds) = world.remove_resource::<Commands>() {
+                cmds.apply(world);
+                world.insert_resource(cmds);
             }
         }
     }
