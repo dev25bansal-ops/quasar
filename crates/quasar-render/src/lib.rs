@@ -18,6 +18,7 @@
 //! - GPU skinning
 //! - Post-processing (FXAA, Bloom, SSAO)
 //! - Particle system
+//! - 2D sprite rendering and UI
 //! - Basic WGSL shader compilation
 
 pub mod camera;
@@ -43,6 +44,7 @@ pub mod cascade_shadow;
 pub mod skinning;
 pub mod post_process;
 pub mod particle;
+pub mod sprite;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
@@ -66,3 +68,4 @@ pub use cascade_shadow::{CascadeShadowMap, Cascade, CASCADE_COUNT, SHADOW_MAP_SI
 pub use skinning::{Skeleton, Bone, SkinnedVertex, BoneMatricesBuffer, SkinnedMesh, MAX_BONES, MAX_BONE_INFLUENCES};
 pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, SSAO_NOISE_SIZE};
 pub use particle::{ParticleEmitter, ParticleEmitterConfig, ParticleData, GpuParticleSystem, MAX_PARTICLES};
+pub use sprite::{SpriteBatch, Sprite, SpriteRect, SpriteVertex, OrthographicCamera, FontAtlas, TextRenderer};

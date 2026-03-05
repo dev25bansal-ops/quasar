@@ -10,3 +10,20 @@ log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 quasar-math = { path = "../quasar-math" }
+rayon = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam-channel = { workspace = true }
+notify = { workspace = true }
+
+[features]
+default = []
+puffin = ["dep:puffin"]
+tracy = ["dep:tracy-client"]
+
+[dependencies.puffin]
+version = "0.19"
+optional = true
+
+[dependencies.tracy-client]
+version = "0.17"
+optional = true

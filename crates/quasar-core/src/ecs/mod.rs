@@ -6,17 +6,25 @@
 //! - Query interface for iterating over entities with specific components
 //! - System scheduling with ordered execution
 //! - Commands for deferred mutations (spawn/despawn between stages)
+//! - Archetype-based storage for 5–50x query performance
+//! - Parallel system execution with dependency graph
 
+pub mod archetype;
 mod commands;
 mod component;
 mod entity;
+pub mod parallel;
 mod query;
 mod system;
 mod world;
 
+pub use archetype::{
+    Archetype, ArchetypeColumnTyped, ArchetypeGraph, ArchetypeId, ArchetypeSignature,
+};
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
 pub use entity::Entity;
+pub use parallel::{AccessMode, ComponentAccess, ParallelSchedule, SystemNode};
 pub use query::{Query, QueryIter};
 pub use system::{Schedule, System, SystemStage};
 pub use world::{EntityBuilder, World};
