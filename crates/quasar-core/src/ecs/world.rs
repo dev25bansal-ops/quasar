@@ -3,8 +3,10 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+use super::archetype::{ArchetypeGraph, ArchetypeId, ArchetypeSignature};
 use super::component::{Component, ComponentStorage, TypedStorage};
 use super::entity::{Entity, EntityAllocator};
+use parking_lot::RwLock;
 
 /// The central container holding all entities and their component data.
 ///
@@ -16,15 +18,24 @@ use super::entity::{Entity, EntityAllocator};
 ///
 /// // Spawn an entity with two components.
 /// let player = world.spawn();
-/// world.insert(player, 100_u32);  // health
-/// world.insert(player, "Hero");   // name tag
+/// world.insert(player, 100_u32); // health
+/// world.insert(player, "Hero"); // name tag
 ///
 /// assert_eq!(world.get::<u32>(player), Some(&100));
 /// ```
 pub struct World {
     allocator: EntityAllocator,
+    /// Legacy HashMap storage (kept for backward compatibility)
     storages: HashMap<TypeId, Box<dyn ComponentStorage>>,
     resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    /// Archetype-based storage for high-performance queries
+    archetype_graph: RwLock<ArchetypeGraph>,
+    /// Maps entity index to its archetype ID
+    entity_archetype: HashMap<u32, ArchetypeId>,
+    /// Maps entity index to its row within the archetype
+    entity_row: HashMap<u32, usize>,
+    /// Track which components each entity has (for archetype migration)
+    entity_components: HashMap<u32, Vec<TypeId>>,
 }
 
 impl World {
@@ -34,6 +45,10 @@ impl World {
             allocator: EntityAllocator::new(),
             storages: HashMap::new(),
             resources: HashMap::new(),
+            archetype_graph: RwLock::new(ArchetypeGraph::new()),
+            entity_archetype: HashMap::new(),
+            entity_row: HashMap::new(),
+            entity_components: HashMap::new(),
         }
     }
 
@@ -51,6 +66,20 @@ impl World {
         if !self.allocator.deallocate(entity) {
             return false;
         }
+
+        // Remove from archetype storage
+        if let Some(arch_id) = self.entity_archetype.remove(&entity.index()) {
+            let mut graph = self.archetype_graph.write();
+            if let Some(arch) = graph.get(arch_id) {
+                // Get mutable access through the graph
+                // For now, just mark as removed
+            }
+        }
+
+        self.entity_row.remove(&entity.index());
+        self.entity_components.remove(&entity.index());
+
+        // Also remove from legacy storage
         for storage in self.storages.values_mut() {
             storage.remove(entity);
         }
@@ -74,12 +103,64 @@ impl World {
     /// Attach (or replace) a component on an entity.
     pub fn insert<T: Component>(&mut self, entity: Entity, component: T) {
         debug_assert!(self.is_alive(entity), "inserting on a dead entity");
+
+        let type_id = TypeId::of::<T>();
+
+        // Track component for this entity
+        let components = self.entity_components.entry(entity.index()).or_default();
+        if !components.contains(&type_id) {
+            components.push(type_id);
+            components.sort();
+        }
+
+        // Get or create archetype for this component set
+        let mut sig = ArchetypeSignature::new();
+        for tid in components.iter() {
+            sig.add(*tid);
+        }
+
+        // Check if entity needs to migrate to new archetype
+        let needs_migration =
+            if let Some(current_arch_id) = self.entity_archetype.get(&entity.index()) {
+                let graph = self.archetype_graph.read();
+                if let Some(current_arch) = graph.get(*current_arch_id) {
+                    !current_arch.signature.contains(&type_id)
+                } else {
+                    true
+                }
+            } else {
+                true
+            };
+
+        if needs_migration {
+            // Get or create new archetype
+            let mut graph = self.archetype_graph.write();
+            let new_arch = graph.get_or_create(&sig);
+            let row = new_arch.entity_count();
+            drop(graph);
+
+            self.entity_archetype.insert(entity.index(), new_arch.id);
+            self.entity_row.insert(entity.index(), row);
+        }
+
+        // Store the component in legacy storage for now
+        // (full archetype integration requires more complex migration logic)
         self.storage_mut::<T>().insert(entity, component);
     }
 
     /// Remove a component from an entity, returning `true` if it existed.
     pub fn remove_component<T: Component>(&mut self, entity: Entity) -> bool {
-        if let Some(storage) = self.storages.get_mut(&TypeId::of::<T>()) {
+        let type_id = TypeId::of::<T>();
+
+        // Update entity's component list
+        if let Some(components) = self.entity_components.get_mut(&entity.index()) {
+            if let Ok(pos) = components.binary_search(&type_id) {
+                components.remove(pos);
+            }
+        }
+
+        // Remove from legacy storage
+        if let Some(storage) = self.storages.get_mut(&type_id) {
             storage.remove(entity)
         } else {
             false
@@ -88,11 +169,13 @@ impl World {
 
     /// Get a shared reference to a component on an entity.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
+        // Fallback to legacy storage
         self.storage::<T>()?.get(entity)
     }
 
     /// Get a mutable reference to a component on an entity.
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
+        // Fallback to legacy storage
         self.storage_mut::<T>().get_mut(entity)
     }
 
@@ -165,11 +248,12 @@ impl World {
     // ------------------------------------------------------------------
 
     /// Iterate over all `(Entity, &T)` pairs.
+    /// Uses legacy HashMap storage for now.
     pub fn query<T: Component>(&self) -> impl Iterator<Item = (Entity, &T)> {
         let type_id = TypeId::of::<T>();
         let allocator = &self.allocator;
-        let iter = self
-            .storages
+
+        self.storages
             .get(&type_id)
             .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())
             .into_iter()
@@ -178,8 +262,7 @@ impl World {
                     let generation = allocator.generation_of(index);
                     (Entity::new(index, generation), component)
                 })
-            });
-        iter
+            })
     }
 
     /// Iterate over all `(Entity, &mut T)` pairs using a callback.

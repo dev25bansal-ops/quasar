@@ -232,14 +232,36 @@ impl AssetServer {
     fn reload_asset(&self, path: &Path) {
         let handles = self.asset_handles.read().unwrap();
 
-        for (_id, meta) in handles.iter() {
+        for (id, meta) in handles.iter() {
             if &meta.path == path && meta.hot_reload_enabled {
-                if let Ok(_bytes) = std::fs::read(path) {
-                    for (_type_id, loader) in &self.loaders {
+                if let Ok(bytes) = std::fs::read(path) {
+                    for (type_id, loader) in &self.loaders {
                         if loader.can_load(path) {
-                            if let Some(_storage) = self.asset_storage.read().unwrap().get(_type_id)
-                            {
-                                log::info!("Hot-reloaded asset: {:?}", path);
+                            // Try to reload the asset in-place
+                            let mut storage = self.asset_storage.write().unwrap();
+                            if let Some(type_storage) = storage.get_mut(type_id) {
+                                if let Some(existing) = type_storage.get_mut(id) {
+                                    match loader.reload_raw(path, &bytes, existing) {
+                                        Ok(()) => {
+                                            log::info!("Hot-reloaded asset: {:?}", path);
+                                            // Send reload event for GPU sync
+                                            let _ = self.event_sender.send(AssetEvent::Reloaded {
+                                                handle: AssetHandle {
+                                                    id: *id,
+                                                    generation: meta.generation,
+                                                },
+                                                path: path.to_path_buf(),
+                                            });
+                                        }
+                                        Err(e) => {
+                                            log::warn!(
+                                                "Failed to reload asset {:?}: {}",
+                                                path,
+                                                e.0
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

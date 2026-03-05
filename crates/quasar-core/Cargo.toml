@@ -19,6 +19,7 @@ notify = { workspace = true }
 default = []
 puffin = ["dep:puffin"]
 tracy = ["dep:tracy-client"]
+gpu-profiling = []
 
 [dependencies.puffin]
 version = "0.19"

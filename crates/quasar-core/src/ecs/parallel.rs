@@ -198,9 +198,13 @@ impl SystemGraph {
 
         for group in groups {
             if group.len() == 1 {
+                // Single system - run directly
                 let idx = group[0];
                 self.nodes[idx].system.run(world);
             } else {
+                // Multiple non-conflicting systems - cannot run truly parallel
+                // due to mutable world access. Run sequentially for safety.
+                // The grouping still helps with scheduling and dependency ordering.
                 for idx in group {
                     self.nodes[idx].system.run(world);
                 }
