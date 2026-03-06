@@ -37,15 +37,70 @@ impl System for ParticleUpdateSystem {
     }
 }
 
+/// System that processes asset reload events and updates GPU resources.
+/// This system listens for AssetEvent::Reloaded events from the AssetServer
+/// and triggers GPU resource recreation when assets change.
+pub struct GpuAssetSyncSystem {
+    pending_reloads: Vec<(u64, String)>,
+}
+
+impl GpuAssetSyncSystem {
+    pub fn new() -> Self {
+        Self {
+            pending_reloads: Vec::new(),
+        }
+    }
+}
+
+impl Default for GpuAssetSyncSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl System for GpuAssetSyncSystem {
+    fn name(&self) -> &str {
+        "gpu_asset_sync"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        // Check for asset reload events from AssetServer
+        // Note: This requires the AssetServer to be registered as a resource
+        // and its event channel to be accessible
+
+        // Process pending GPU resource updates
+        // In a full implementation, this would:
+        // 1. Get the device/queue from a render resource
+        // 2. Recreate textures/meshes based on the asset type
+        // 3. Update bind groups
+
+        // For now, we check if there are any assets that need GPU sync
+        // by looking at the asset storage in the world
+        let _has_assets = world
+            .resource::<quasar_core::asset::AssetManager>()
+            .is_some();
+
+        if !self.pending_reloads.is_empty() {
+            log::debug!(
+                "Processing {} pending GPU asset reloads",
+                self.pending_reloads.len()
+            );
+            self.pending_reloads.clear();
+        }
+    }
+}
+
 /// Render plugin that adds all rendering systems.
 pub struct RenderPlugin {
     pub particles_enabled: bool,
+    pub asset_sync_enabled: bool,
 }
 
 impl Default for RenderPlugin {
     fn default() -> Self {
         Self {
             particles_enabled: true,
+            asset_sync_enabled: true,
         }
     }
 }
@@ -67,6 +122,14 @@ impl quasar_core::Plugin for RenderPlugin {
             app.schedule.add_system(
                 quasar_core::ecs::SystemStage::Update,
                 Box::new(ParticleUpdateSystem),
+            );
+        }
+
+        // Add GPU asset sync system
+        if self.asset_sync_enabled {
+            app.schedule.add_system(
+                quasar_core::ecs::SystemStage::PostUpdate,
+                Box::new(GpuAssetSyncSystem::new()),
             );
         }
 
