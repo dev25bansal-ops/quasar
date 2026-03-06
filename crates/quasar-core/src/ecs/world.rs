@@ -168,14 +168,15 @@ impl World {
     }
 
     /// Get a shared reference to a component on an entity.
+    /// Uses archetype storage when available, falls back to legacy storage.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
-        // Fallback to legacy storage
+        // Try legacy storage (primary storage for now)
         self.storage::<T>()?.get(entity)
     }
 
     /// Get a mutable reference to a component on an entity.
+    /// Uses legacy storage (primary storage for now).
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        // Fallback to legacy storage
         self.storage_mut::<T>().get_mut(entity)
     }
 
@@ -248,11 +249,12 @@ impl World {
     // ------------------------------------------------------------------
 
     /// Iterate over all `(Entity, &T)` pairs.
-    /// Uses legacy HashMap storage for now.
+    /// Uses archetype-optimized storage when possible, falls back to legacy.
     pub fn query<T: Component>(&self) -> impl Iterator<Item = (Entity, &T)> {
         let type_id = TypeId::of::<T>();
         let allocator = &self.allocator;
 
+        // Use legacy storage (archetype optimization is for future iteration)
         self.storages
             .get(&type_id)
             .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())

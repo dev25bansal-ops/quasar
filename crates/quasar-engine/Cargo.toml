@@ -20,3 +20,4 @@ log = { workspace = true }
 glam = { workspace = true }
 wgpu = { workspace = true }
 egui-wgpu = { workspace = true }
+bytemuck = { workspace = true }

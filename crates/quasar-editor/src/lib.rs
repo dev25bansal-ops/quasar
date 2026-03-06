@@ -20,6 +20,15 @@ pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
 use quasar_core::ecs::Entity;
 
+/// Editor actions that require world access
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorAction {
+    Play,
+    Stop,
+    Undo,
+    Redo,
+}
+
 /// Editor state — tracks visible panels and the selected entity.
 pub struct Editor {
     /// Master toggle — when false, no editor UI is drawn.
@@ -63,18 +72,21 @@ impl Editor {
     ///
     /// `inspector_data` should be `Some` when an entity is selected and the
     /// caller has read its components. Edited values are written in-place;
-    /// the function returns `(bool, Option<InspectorAction>)` where:
+    /// the function returns `(bool, Option<InspectorAction>, Option<EditorAction>)` where:
     /// - `bool` indicates if anything was changed so the caller can write back to ECS.
     /// - `Option<InspectorAction>` contains any action requested (despawn/spawn).
+    /// - `Option<EditorAction>` contains editor actions like Play/Pause/Stop.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
         entity_names: &[(Entity, String)],
         inspector_data: Option<&mut InspectorData>,
-    ) -> (bool, Option<InspectorAction>) {
+    ) -> (bool, Option<InspectorAction>, Option<EditorAction>) {
         if !self.enabled {
-            return (false, None);
+            return (false, None, None);
         }
+
+        let mut editor_action = None;
 
         // Top menu bar
         egui::TopBottomPanel::top("editor_menu").show(ctx, |ui| {
@@ -95,26 +107,42 @@ impl Editor {
                 };
                 if ui.button(play_label).clicked() {
                     match self.state.mode {
-                        EditorMode::Stopped => self.state.mode = EditorMode::Playing,
-                        EditorMode::Playing => self.state.mode = EditorMode::Paused,
-                        EditorMode::Paused => self.state.mode = EditorMode::Playing,
+                        EditorMode::Stopped => {
+                            editor_action = Some(EditorAction::Play);
+                        }
+                        EditorMode::Playing => {
+                            self.state.mode = EditorMode::Paused;
+                        }
+                        EditorMode::Paused => {
+                            self.state.mode = EditorMode::Playing;
+                        }
                     }
                 }
                 if ui.button("⏹ Stop").clicked() && self.state.mode != EditorMode::Stopped {
-                    self.state.mode = EditorMode::Stopped;
+                    editor_action = Some(EditorAction::Stop);
                 }
 
                 ui.separator();
 
-                // Undo/Redo buttons (visual only - actual undo/redo via keyboard shortcuts)
-                ui.add_enabled(
-                    self.state.undo_stack.can_undo(),
-                    egui::Button::new("↶ Undo"),
-                );
-                ui.add_enabled(
-                    self.state.undo_stack.can_redo(),
-                    egui::Button::new("↷ Redo"),
-                );
+                // Undo/Redo buttons
+                if ui
+                    .add_enabled(
+                        self.state.undo_stack.can_undo(),
+                        egui::Button::new("↶ Undo"),
+                    )
+                    .clicked()
+                {
+                    editor_action = Some(EditorAction::Undo);
+                }
+                if ui
+                    .add_enabled(
+                        self.state.undo_stack.can_redo(),
+                        egui::Button::new("↷ Redo"),
+                    )
+                    .clicked()
+                {
+                    editor_action = Some(EditorAction::Redo);
+                }
             });
         });
 
@@ -153,7 +181,29 @@ impl Editor {
                 });
         }
 
-        (inspector_changed, inspector_action)
+        (inspector_changed, inspector_action, editor_action)
+    }
+
+    /// Handle editor action that requires world access
+    pub fn handle_action(&mut self, action: EditorAction, world: &mut quasar_core::ecs::World) {
+        match action {
+            EditorAction::Play => {
+                self.state.play(world);
+            }
+            EditorAction::Stop => {
+                self.state.stop(world);
+            }
+            EditorAction::Undo => {
+                if let Some(desc) = self.state.undo_stack.undo(world) {
+                    log::info!("Undo: {}", desc);
+                }
+            }
+            EditorAction::Redo => {
+                if let Some(desc) = self.state.undo_stack.redo(world) {
+                    log::info!("Redo: {}", desc);
+                }
+            }
+        }
     }
 }
 

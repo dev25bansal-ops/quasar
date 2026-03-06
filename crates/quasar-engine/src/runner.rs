@@ -25,8 +25,11 @@ use winit::{
 use quasar_core::asset::AssetManager;
 use quasar_core::scene::SceneGraph;
 use quasar_core::App;
-use quasar_editor::{renderer::EditorRenderer, Editor};
-use quasar_render::{Camera, MeshCache, MeshShape, OrbitController, RenderConfig, Renderer};
+use quasar_editor::{renderer::EditorRenderer, Editor, EditorAction};
+use quasar_render::{
+    Camera, DirectionalLight, LightData, LightsUniform, MeshCache, MeshShape, OrbitController,
+    PointLight, RenderConfig, Renderer,
+};
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
 /// Runtime state created once the window is available.
@@ -38,6 +41,8 @@ struct RunnerState {
     editor: Editor,
     editor_renderer: EditorRenderer,
     mesh_cache: MeshCache,
+    /// Default directional light for scenes without explicit lights
+    default_light: DirectionalLight,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -117,6 +122,7 @@ impl ApplicationHandler for QuasarRunner {
             editor,
             editor_renderer,
             mesh_cache: MeshCache::new(),
+            default_light: DirectionalLight::default(),
         });
 
         log::info!(
@@ -298,6 +304,44 @@ impl ApplicationHandler for QuasarRunner {
                         .get_or_create(&state.renderer.device, *shape);
                 }
 
+                // Collect lights from the world
+                let lights_uniform = {
+                    let mut lights = LightsUniform::default();
+                    let mut light_count = 0usize;
+
+                    // Collect directional lights
+                    for (_, light) in self.app.world.query::<DirectionalLight>() {
+                        if light_count < quasar_render::MAX_LIGHTS {
+                            lights.lights[light_count] = LightData::from_directional(light);
+                            light_count += 1;
+                        }
+                    }
+
+                    // Collect point lights
+                    for (_, light) in self.app.world.query::<PointLight>() {
+                        if light_count < quasar_render::MAX_LIGHTS {
+                            lights.lights[light_count] = LightData::from_point(light);
+                            light_count += 1;
+                        }
+                    }
+
+                    // If no lights in scene, use default directional light
+                    if light_count == 0 {
+                        lights.lights[0] = LightData::from_directional(&state.default_light);
+                        light_count = 1;
+                    }
+
+                    lights.count = light_count as u32;
+                    lights
+                };
+
+                // Update light uniform buffer
+                state.renderer.queue.write_buffer(
+                    &state.renderer.light_buffer,
+                    0,
+                    bytemuck::cast_slice(&[lights_uniform]),
+                );
+
                 // ── Split-phase rendering: 3D → egui → present ───
                 let frame_result = state.renderer.begin_frame();
                 match frame_result {
@@ -320,10 +364,13 @@ impl ApplicationHandler for QuasarRunner {
                             })
                             .collect();
 
-                        // 3D pass.
-                        state
-                            .renderer
-                            .render_3d_pass(&state.camera, &objects, &view, &mut encoder);
+                        // 3D pass (using batched rendering for better performance).
+                        state.renderer.render_3d_pass_batched(
+                            &state.camera,
+                            &objects,
+                            &view,
+                            &mut encoder,
+                        );
 
                         // egui pass (editor overlay).
                         let egui_commands = if state.editor.enabled {
@@ -366,11 +413,17 @@ impl ApplicationHandler for QuasarRunner {
                                 })
                             });
 
-                            let (inspector_changed, inspector_action) = state.editor.ui(
-                                &state.editor_renderer.egui_ctx,
-                                &entity_names,
-                                inspector_data.as_mut(),
-                            );
+                            let (inspector_changed, inspector_action, editor_action) =
+                                state.editor.ui(
+                                    &state.editor_renderer.egui_ctx,
+                                    &entity_names,
+                                    inspector_data.as_mut(),
+                                );
+
+                            // Handle editor actions (Play/Pause/Stop/Undo/Redo)
+                            if let Some(action) = editor_action {
+                                state.editor.handle_action(action, &mut self.app.world);
+                            }
 
                             // Handle inspector actions.
                             if let Some(action) = inspector_action {

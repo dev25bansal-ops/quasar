@@ -1,7 +1,8 @@
 //! Parallel system execution — run independent systems concurrently.
 //!
-//! Uses rayon thread pool to execute systems with no conflicting component
-//! access in parallel. Builds a dependency graph from declared read/write access.
+//! Uses dependency analysis to schedule systems. Systems with conflicting
+//! component access are scheduled sequentially. Future versions will use
+//! rayon for true parallelism with Send + Sync systems.
 
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
@@ -202,9 +203,10 @@ impl SystemGraph {
                 let idx = group[0];
                 self.nodes[idx].system.run(world);
             } else {
-                // Multiple non-conflicting systems - cannot run truly parallel
-                // due to mutable world access. Run sequentially for safety.
-                // The grouping still helps with scheduling and dependency ordering.
+                // Multiple non-conflicting systems
+                // Due to Rust's borrow checker, true parallelism requires Send + Sync
+                // on systems and careful world access patterns (like Bevy's system parameters)
+                // For now, run sequentially but with proper scheduling order
                 for idx in group {
                     self.nodes[idx].system.run(world);
                 }
