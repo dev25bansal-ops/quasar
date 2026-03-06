@@ -36,6 +36,8 @@ pub struct Editor {
     pub selected_entity: Option<Entity>,
     /// Console log buffer.
     pub console: console::ConsoleLog,
+    /// Editor state for Play/Pause/Stop and undo/redo
+    pub state: EditorState,
 }
 
 impl Editor {
@@ -48,6 +50,7 @@ impl Editor {
             show_metrics: true,
             selected_entity: None,
             console: console::ConsoleLog::new(),
+            state: EditorState::new(),
         }
     }
 
@@ -59,7 +62,7 @@ impl Editor {
     /// Render the full editor UI. Call this from your egui integration each frame.
     ///
     /// `inspector_data` should be `Some` when an entity is selected and the
-    /// caller has read its components.  Edited values are written in-place;
+    /// caller has read its components. Edited values are written in-place;
     /// the function returns `(bool, Option<InspectorAction>)` where:
     /// - `bool` indicates if anything was changed so the caller can write back to ECS.
     /// - `Option<InspectorAction>` contains any action requested (despawn/spawn).
@@ -82,6 +85,36 @@ impl Editor {
                 ui.toggle_value(&mut self.show_inspector, "🔍 Inspector");
                 ui.toggle_value(&mut self.show_console, "📝 Console");
                 ui.toggle_value(&mut self.show_metrics, "📊 Metrics");
+                ui.separator();
+
+                // Play/Pause/Stop buttons
+                let play_label = match self.state.mode {
+                    EditorMode::Stopped => "▶ Play",
+                    EditorMode::Playing => "⏸ Pause",
+                    EditorMode::Paused => "▶ Resume",
+                };
+                if ui.button(play_label).clicked() {
+                    match self.state.mode {
+                        EditorMode::Stopped => self.state.mode = EditorMode::Playing,
+                        EditorMode::Playing => self.state.mode = EditorMode::Paused,
+                        EditorMode::Paused => self.state.mode = EditorMode::Playing,
+                    }
+                }
+                if ui.button("⏹ Stop").clicked() && self.state.mode != EditorMode::Stopped {
+                    self.state.mode = EditorMode::Stopped;
+                }
+
+                ui.separator();
+
+                // Undo/Redo buttons (visual only - actual undo/redo via keyboard shortcuts)
+                ui.add_enabled(
+                    self.state.undo_stack.can_undo(),
+                    egui::Button::new("↶ Undo"),
+                );
+                ui.add_enabled(
+                    self.state.undo_stack.can_redo(),
+                    egui::Button::new("↷ Redo"),
+                );
             });
         });
 
@@ -113,8 +146,10 @@ impl Editor {
                 .collapsible(false)
                 .show(ctx, |ui| {
                     ui.label(format!("Entities: {}", entity_names.len()));
+                    ui.label(format!("Mode: {:?}", self.state.mode));
                     ui.separator();
                     ui.label("Press F12 to toggle editor");
+                    ui.label("Ctrl+Z: Undo | Ctrl+Y: Redo");
                 });
         }
 

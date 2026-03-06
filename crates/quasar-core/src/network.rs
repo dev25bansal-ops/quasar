@@ -6,7 +6,8 @@
 //! - Rollback netcode support
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::io;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_PORT: u16 = 7777;
 pub const MAX_CLIENTS: usize = 32;
 pub const TICK_RATE: u32 = 60;
+pub const MTU_SIZE: usize = 1400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
@@ -200,6 +202,7 @@ impl NetworkState {
     }
 }
 
+/// Trait for network transport abstraction.
 pub trait NetworkTransport: Send + Sync {
     fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError>;
     fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError>;
@@ -216,6 +219,57 @@ impl std::fmt::Display for NetworkError {
 }
 
 impl std::error::Error for NetworkError {}
+
+impl From<std::io::Error> for NetworkError {
+    fn from(e: std::io::Error) -> Self {
+        NetworkError(e.to_string())
+    }
+}
+
+/// UDP-based network transport using std::net.
+pub struct UdpTransport {
+    socket: UdpSocket,
+    recv_buffer: [u8; MTU_SIZE],
+}
+
+impl UdpTransport {
+    pub fn bind(addr: SocketAddr) -> Result<Self, NetworkError> {
+        let socket = UdpSocket::bind(addr)?;
+        socket.set_nonblocking(true)?;
+        Ok(Self {
+            socket,
+            recv_buffer: [0u8; MTU_SIZE],
+        })
+    }
+
+    pub fn connect(&self, server_addr: SocketAddr) -> Result<(), NetworkError> {
+        self.socket.connect(server_addr)?;
+        Ok(())
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        Ok(self.socket.local_addr()?)
+    }
+}
+
+impl NetworkTransport for UdpTransport {
+    fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError> {
+        self.socket.send_to(data, addr)?;
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError> {
+        match self.socket.recv_from(&mut self.recv_buffer) {
+            Ok((len, addr)) => Ok(Some((addr, self.recv_buffer[..len].to_vec()))),
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(NetworkError(e.to_string())),
+        }
+    }
+
+    fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        Ok(self.socket.local_addr()?)
+    }
+}
 
 pub struct RollbackState {
     pub frame: u64,
