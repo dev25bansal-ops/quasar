@@ -13,6 +13,7 @@ members = [
     "crates/quasar-ui",
     "crates/quasar-mobile",
     "crates/quasar-build",
+    "crates/quasar-derive",
     "examples/spinning_cube",
     "examples/showcase",
     "examples/physics_sandbox",
@@ -41,6 +42,7 @@ quasar-editor = { path = "crates/quasar-editor" }
 quasar-ui = { path = "crates/quasar-ui" }
 quasar-mobile = { path = "crates/quasar-mobile" }
 quasar-build = { path = "crates/quasar-build" }
+quasar-derive = { path = "crates/quasar-derive" }
 
 # Rendering & windowing
 wgpu = "24"
@@ -54,6 +56,11 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 log = "0.4"
 env_logger = "0.11"
+jni = "0.21"
+ndk-context = "0.1"
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSString"] }
+objc2-ui-kit = { version = "0.2", features = ["UIFeedbackGenerator", "UIImpactFeedbackGenerator", "UINotificationFeedbackGenerator"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
@@ -97,6 +104,12 @@ tracy-client = "0.17"
 
 # Serialization
 bincode = "1"
+
+# QUIC transport
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
+rcgen = "0.13"
 
 # WASM/Web
 wasm-bindgen = "0.2"

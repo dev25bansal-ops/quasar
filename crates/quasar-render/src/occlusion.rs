@@ -647,3 +647,172 @@ mod tests {
         ));
     }
 }
+
+// ── GPU Hi-Z depth pyramid builder ────────────────────────────────
+
+/// GPU-side uniform for the Hi-Z downsample compute shader.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct HizParams {
+    /// (parent_w, parent_h, output_w, output_h)
+    pub dims: [u32; 4],
+}
+
+/// GPU-accelerated Hi-Z mip-chain builder.
+///
+/// Creates a compute pipeline that downsamples a depth texture one mip at a
+/// time using a 2×2 max filter.  Each dispatch writes a single mip level of
+/// the destination `R32Float` texture.
+pub struct GpuHiZBuilder {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub uniform_buffer: wgpu::Buffer,
+}
+
+impl GpuHiZBuilder {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("HiZ Build BGL"),
+                entries: &[
+                    // 0: uniform
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 1: source mip (sampled)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                    // 2: destination mip (storage write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::R32Float,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("HiZ Build Shader"),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../assets/shaders/hiz_build.wgsl").into(),
+            ),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("HiZ Build Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("HiZ Build Pipeline"),
+            layout: Some(&layout),
+            module: &shader,
+            entry_point: Some("hiz_downsample"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("HiZ Build Uniform"),
+            size: std::mem::size_of::<HizParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+            uniform_buffer,
+        }
+    }
+
+    /// Build the Hi-Z mip chain on the GPU.
+    ///
+    /// `hiz_texture` must be an `R32Float` texture with at least `mip_levels`
+    /// mip levels.  Mip 0 must be pre-filled with the full-resolution depth.
+    pub fn build(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        hiz_texture: &wgpu::Texture,
+        base_width: u32,
+        base_height: u32,
+        mip_levels: u32,
+    ) {
+        let mut w = base_width;
+        let mut h = base_height;
+
+        for mip in 1..mip_levels {
+            let src_w = w;
+            let src_h = h;
+            w = (w / 2).max(1);
+            h = (h / 2).max(1);
+
+            let params = HizParams {
+                dims: [src_w, src_h, w, h],
+            };
+            queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
+
+            let src_view = hiz_texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: mip - 1,
+                mip_level_count: Some(1),
+                ..Default::default()
+            });
+
+            let dst_view = hiz_texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: mip,
+                mip_level_count: Some(1),
+                ..Default::default()
+            });
+
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("HiZ Build BG"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: self.uniform_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(&dst_view),
+                    },
+                ],
+            });
+
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("HiZ Build"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &bg, &[]);
+            cpass.dispatch_workgroups((w + 7) / 8, (h + 7) / 8, 1);
+        }
+    }
+}

@@ -3,7 +3,7 @@
 //! Renders 3D overlay handles in the viewport and handles mouse-ray
 //! intersection for drag operations.
 
-use quasar_math::Vec3;
+use quasar_math::{Mat4, Vec2, Vec3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GizmoMode {
@@ -524,6 +524,118 @@ pub fn calculate_drag_delta(
     }
 }
 
+/// Convert mouse pixel coordinates to a world-space ray.
+///
+/// Returns `(ray_origin, ray_direction)`.
+/// `inv_view_proj` is the inverse of `projection * view`.
+pub fn mouse_to_ray(
+    mouse: Vec2,
+    screen_size: Vec2,
+    inv_view_proj: Mat4,
+) -> (Vec3, Vec3) {
+    // Normalised device coords: -1..1
+    let ndc_x = (mouse.x / screen_size.x) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (mouse.y / screen_size.y) * 2.0; // flip Y
+
+    let near_ndc = quasar_math::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+    let far_ndc = quasar_math::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+
+    let near_world = inv_view_proj * near_ndc;
+    let far_world = inv_view_proj * far_ndc;
+
+    let near_world = near_world.truncate() / near_world.w;
+    let far_world = far_world.truncate() / far_world.w;
+
+    let direction = (far_world - near_world).normalize();
+    (near_world, direction)
+}
+
+/// Axis-aligned bounding box (min / max corners).
+#[derive(Debug, Clone, Copy)]
+pub struct Aabb {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+/// Ray–AABB slab test.  Returns `Some(t)` at the nearest hit or `None`.
+fn ray_aabb(origin: Vec3, inv_dir: Vec3, aabb: &Aabb) -> Option<f32> {
+    let t1 = (aabb.min - origin) * inv_dir;
+    let t2 = (aabb.max - origin) * inv_dir;
+
+    let tmin = t1.min(t2);
+    let tmax = t1.max(t2);
+
+    let enter = tmin.x.max(tmin.y).max(tmin.z);
+    let exit = tmax.x.min(tmax.y).min(tmax.z);
+
+    if enter <= exit && exit >= 0.0 {
+        Some(enter.max(0.0))
+    } else {
+        None
+    }
+}
+
+/// Pick the closest entity whose AABB is hit by the given ray.
+///
+/// `entities` is an iterator over (entity-id, world-space AABB) pairs.
+/// Returns the picked entity id and the hit distance `t`.
+pub fn pick_entity<E: Copy>(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    entities: impl IntoIterator<Item = (E, Aabb)>,
+) -> Option<(E, f32)> {
+    let inv_dir = Vec3::new(
+        1.0 / ray_direction.x,
+        1.0 / ray_direction.y,
+        1.0 / ray_direction.z,
+    );
+
+    let mut best: Option<(E, f32)> = None;
+
+    for (id, aabb) in entities {
+        if let Some(t) = ray_aabb(ray_origin, inv_dir, &aabb) {
+            if best.map_or(true, |(_, bt)| t < bt) {
+                best = Some((id, t));
+            }
+        }
+    }
+
+    best
+}
+
+/// Convenience: handle a mouse click for entity selection.
+///
+/// Combines `mouse_to_ray` → gizmo check → entity pick.
+/// Returns `PickResult::Gizmo` if a gizmo handle was clicked, or
+/// `PickResult::Entity` with the entity id, or `PickResult::None`.
+pub enum PickResult<E> {
+    Gizmo(GizmoAxis),
+    Entity(E, f32),
+    None,
+}
+
+pub fn handle_click<E: Copy>(
+    mouse: Vec2,
+    screen_size: Vec2,
+    inv_view_proj: Mat4,
+    gizmo_position: Vec3,
+    gizmo_mode: GizmoMode,
+    entities: impl IntoIterator<Item = (E, Aabb)>,
+) -> PickResult<E> {
+    let (origin, dir) = mouse_to_ray(mouse, screen_size, inv_view_proj);
+
+    // Gizmo handles take priority.
+    if let Some(axis) = raycast_gizmo(origin, dir, gizmo_position, gizmo_mode) {
+        return PickResult::Gizmo(axis);
+    }
+
+    if let Some((entity, t)) = pick_entity(origin, dir, entities) {
+        return PickResult::Entity(entity, t);
+    }
+
+    PickResult::None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,5 +655,32 @@ mod tests {
 
         let hit = raycast_gizmo(ray_origin, ray_dir, gizmo_pos, GizmoMode::Translate);
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn ray_aabb_hit() {
+        let aabb = Aabb {
+            min: Vec3::new(-1.0, -1.0, -1.0),
+            max: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let origin = Vec3::new(0.0, 0.0, 5.0);
+        let dir = Vec3::new(0.0, 0.0, -1.0);
+        let result = pick_entity(origin, dir, [(0u32, aabb)]);
+        assert!(result.is_some());
+        let (id, t) = result.unwrap();
+        assert_eq!(id, 0u32);
+        assert!((t - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn ray_aabb_miss() {
+        let aabb = Aabb {
+            min: Vec3::new(-1.0, -1.0, -1.0),
+            max: Vec3::new(1.0, 1.0, 1.0),
+        };
+        let origin = Vec3::new(5.0, 5.0, 5.0);
+        let dir = Vec3::new(0.0, 0.0, -1.0);
+        let result = pick_entity(origin, dir, [(0u32, aabb)]);
+        assert!(result.is_none());
     }
 }

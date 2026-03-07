@@ -12,3 +12,12 @@ quasar-window = { workspace = true }
 winit = { workspace = true }
 log = { workspace = true }
 glam = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { workspace = true }
+ndk-context = { workspace = true }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-ui-kit = { workspace = true }

@@ -22,6 +22,8 @@ pub mod error;
 pub mod event;
 pub mod navigation;
 pub mod network;
+#[cfg(feature = "quinn-transport")]
+pub mod net_quinn;
 pub mod plugin;
 pub mod prefab;
 pub mod profiler;

@@ -28,6 +28,7 @@ pub use reflect::{
     widget_bool, widget_color3, widget_color4, widget_f32, widget_f64,
     widget_i32, widget_string, widget_u32, widget_vec3,
 };
+pub use quasar_derive::Inspect as DeriveInspect;
 use quasar_core::ecs::Entity;
 
 /// Editor actions that require world access

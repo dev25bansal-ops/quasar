@@ -85,7 +85,7 @@ pub use particle::{ParticleEmitter, ParticleEmitterConfig, ParticleData, GpuPart
 pub use sprite::{SpriteBatch, Sprite, SpriteRect, SpriteVertex, OrthographicCamera, FontAtlas, TextRenderer};
 pub use lod::{LodGroup, LodLevel, LodSystem, LodCrossFade, LOD_CROSSFADE_BAND, LOD_CROSSFADE_WGSL, BAYER_4X4, bayer_threshold};
 pub use volumetric::{VolumetricFogSettings, VolumetricFogPass, VolumetricFogUniform};
-pub use lightmap::{Lightmap, LightmapBaker, BakeConfig, SHProbe, SHProbeGrid, LightmapMaterial, GpuLightmapBaker, GpuBakeUniform, GpuBakerTriangle, GPU_LIGHTMAP_BAKE_WGSL, PathTraceBakeConfig, GpuPathTraceUniform, GpuPathTraceBaker, GPU_PATHTRACE_BAKE_WGSL};
+pub use lightmap::{Lightmap, LightmapBaker, BakeConfig, SHProbe, SHProbeGrid, LightmapMaterial, GpuLightmapBaker, GpuBakeUniform, GpuBakerTriangle, PathTraceBakeConfig, GpuPathTraceUniform, GpuPathTraceBaker};
 pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection, ShaderGraphCompiler, ShaderGraphCache, ShaderGraphDiagnostic, DiagnosticSeverity, CompileResult};
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
 pub use occlusion::{HiZBuffer, HiZMip, GpuCullPass, GpuAabb, GpuCullUniforms, DrawIndexedIndirectArgs, HIZ_MIP_LEVELS, GPU_CULL_MAX_OBJECTS, GPU_CULL_WGSL, MeshDrawCommand, IndirectDrawManager};
