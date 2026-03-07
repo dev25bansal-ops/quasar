@@ -63,7 +63,7 @@ pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
 pub use components::TextureHandle;
 pub use culling::{Aabb, Frustum};
-pub use gltf_loader::{load_gltf, load_gltf_animations, GltfAnimationClip, GltfAnimationChannel, GltfChannelProperty, GltfChannelValues};
+pub use gltf_loader::{load_gltf, load_gltf_animations, sample_vec3, sample_quat, GltfAnimationClip, GltfAnimationChannel, GltfChannelProperty, GltfChannelValues, GltfInterpolation};
 pub use hdr::{HdrRenderTarget, TonemappingPass, Tonemapping, ColorGrading};
 pub use instanced::{InstancedMesh, InstanceData, InstanceBatch, InstanceCollector, MAX_INSTANCES};
 pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData, LightsUniform, MAX_LIGHTS};

@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -174,6 +175,64 @@ fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
     serde_json::from_str(&text).map_err(|e| format!("Invalid manifest JSON: {e}"))
 }
 
+// ── incremental build cache ─────────────────────────────────────
+
+/// Persisted mapping of relative asset paths to their blake3 content hashes.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct BuildCache {
+    hashes: HashMap<String, String>,
+}
+
+impl BuildCache {
+    fn load(path: &Path) -> Self {
+        if let Ok(text) = fs::read_to_string(path) {
+            serde_json::from_str(&text).unwrap_or_default()
+        } else {
+            Self::default()
+        }
+    }
+
+    fn save(&self, path: &Path) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("serialize build cache: {e}"))?;
+        fs::write(path, json).map_err(|e| format!("write build cache: {e}"))
+    }
+
+    /// Hash a file with blake3. Returns the hex digest.
+    fn hash_file(path: &Path) -> Result<String, String> {
+        let mut file = fs::File::open(path)
+            .map_err(|e| format!("open {}: {e}", path.display()))?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = [0u8; 16384];
+        loop {
+            let n = file.read(&mut buf)
+                .map_err(|e| format!("read {}: {e}", path.display()))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+
+    /// Returns `true` if the file is unchanged (hash matches cache).
+    fn is_unchanged(&self, rel_path: &str, src: &Path) -> bool {
+        if let Some(cached_hash) = self.hashes.get(rel_path) {
+            if let Ok(current_hash) = Self::hash_file(src) {
+                return *cached_hash == current_hash;
+            }
+        }
+        false
+    }
+
+    /// Record the hash for a given relative path.
+    fn record(&mut self, rel_path: String, src: &Path) {
+        if let Ok(hash) = Self::hash_file(src) {
+            self.hashes.insert(rel_path, hash);
+        }
+    }
+}
+
 // ── pipeline ────────────────────────────────────────────────────
 
 fn run(args: BuildArgs) -> Result<(), String> {
@@ -195,8 +254,11 @@ fn run(args: BuildArgs) -> Result<(), String> {
         args.project_dir.join(&manifest.assets_dir)
     };
     let assets_dst = out_dir.join("assets");
+    let cache_path = out_dir.join("build-cache.json");
+    let mut cache = BuildCache::load(&cache_path);
     if assets_src.exists() {
-        copy_assets(&assets_src, &assets_dst, args.compress_textures, args.gpu_texture_format)?;
+        copy_assets(&assets_src, &assets_dst, args.compress_textures, args.gpu_texture_format, &mut cache)?;
+        cache.save(&cache_path)?;
         log::info!("Assets copied to {}", assets_dst.display());
     }
 
@@ -231,14 +293,12 @@ fn run(args: BuildArgs) -> Result<(), String> {
 
 // ── asset processing ────────────────────────────────────────────
 
-fn copy_assets(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat) -> Result<(), String> {
-    if dst.exists() {
-        fs::remove_dir_all(dst).map_err(|e| format!("clean assets dir: {e}"))?;
-    }
-    copy_dir_recursive(src, dst, compress_textures, gpu_fmt)
+fn copy_assets(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, cache: &mut BuildCache) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| format!("create assets dir: {e}"))?;
+    copy_dir_recursive(src, dst, compress_textures, gpu_fmt, src, cache)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat) -> Result<(), String> {
+fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, assets_root: &Path, cache: &mut BuildCache) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
     let entries = fs::read_dir(src).map_err(|e| format!("readdir {}: {e}", src.display()))?;
     for entry in entries {
@@ -246,12 +306,22 @@ fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: 
         let path = entry.path();
         let dest_path = dst.join(entry.file_name());
         if path.is_dir() {
-            copy_dir_recursive(&path, &dest_path, compress_textures, gpu_fmt)?;
+            copy_dir_recursive(&path, &dest_path, compress_textures, gpu_fmt, assets_root, cache)?;
         } else {
             // Skip editor-only files.
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if name_str.starts_with(".editor") || name_str.ends_with(".editor.json") {
+                continue;
+            }
+            // Compute relative path for cache key.
+            let rel_path = path.strip_prefix(assets_root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            // Skip unchanged files (incremental build).
+            if dest_path.exists() && cache.is_unchanged(&rel_path, &path) {
+                log::debug!("Unchanged, skipping: {}", rel_path);
                 continue;
             }
             // Compress textures if flag is set.
@@ -265,6 +335,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: 
                 fs::copy(&path, &dest_path)
                     .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
             }
+            // Record hash for incremental cache.
+            cache.record(rel_path, &path);
         }
     }
     Ok(())
@@ -577,7 +649,8 @@ fn package_android(out_dir: &Path, manifest: &ProjectManifest, release: bool) ->
     // Copy assets into APK assets directory.
     let assets_src = out_dir.join("assets");
     if assets_src.exists() {
-        copy_dir_recursive(&assets_src, &apk_dir.join("assets"), false, GpuTextureFormat::None)?;
+        let mut dummy_cache = BuildCache::default();
+        copy_dir_recursive(&assets_src, &apk_dir.join("assets"), false, GpuTextureFormat::None, &assets_src, &mut dummy_cache)?;
     }
 
     // Generate AndroidManifest.xml.
@@ -696,11 +769,14 @@ fn package_ios(out_dir: &Path, manifest: &ProjectManifest, _release: bool) -> Re
     // Copy assets into bundle.
     let assets_src = out_dir.join("assets");
     if assets_src.exists() {
+        let mut dummy_cache = BuildCache::default();
         copy_dir_recursive(
             &assets_src,
             &app_dir.join("assets"),
             false,
             GpuTextureFormat::None,
+            &assets_src,
+            &mut dummy_cache,
         )?;
     }
 

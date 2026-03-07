@@ -82,6 +82,9 @@ notify = "7"
 # Image loading
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
+# Hashing
+blake3 = "1"
+
 # 3D model loading
 gltf = { version = "1", features = ["import", "utils"] }
 

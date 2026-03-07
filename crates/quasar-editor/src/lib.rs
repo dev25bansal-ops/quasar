@@ -11,6 +11,7 @@ pub mod editor_state;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
+pub mod reflect;
 pub mod renderer;
 pub mod shader_graph_editor;
 
@@ -22,6 +23,11 @@ pub use editor_state::{
 };
 pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
+pub use reflect::{
+    FieldDescriptor, FieldMeta, Inspect, InspectFn, ReflectionRegistry,
+    widget_bool, widget_color3, widget_color4, widget_f32, widget_f64,
+    widget_i32, widget_string, widget_u32, widget_vec3,
+};
 use quasar_core::ecs::Entity;
 
 /// Editor actions that require world access

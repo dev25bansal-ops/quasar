@@ -116,29 +116,90 @@ impl RenderGraph {
         self
     }
 
-    /// Create GPU resources for all attachments.
+    /// Create GPU resources for all attachments, aliasing textures of
+    /// non-overlapping passes that share the same format and size.
     pub fn create_resources(&mut self, device: &wgpu::Device) {
-        for attachment in self.attachments.values_mut() {
-            let size = wgpu::Extent3d {
-                width: attachment.size.0,
-                height: attachment.size.1,
-                depth_or_array_layers: 1,
-            };
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some(&attachment.name),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: attachment.format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            attachment.texture = Some(texture);
-            attachment.view = Some(view);
+        let order = self.topological_sort();
+        let lifetimes = self.compute_attachment_lifetimes(&order);
+
+        // Group attachments by (format, size) for aliasing candidates.
+        struct Pool {
+            texture: wgpu::Texture,
+            last_used: usize, // topological index when freed
         }
+        let mut pools: HashMap<(wgpu::TextureFormat, u32, u32), Vec<Pool>> = HashMap::new();
+
+        // Sort attachments by first-use order so earlier ones claim pools first.
+        let mut att_ids: Vec<AttachmentId> = self.attachments.keys().copied().collect();
+        att_ids.sort_by_key(|id| lifetimes.get(id).map(|r| r.0).unwrap_or(usize::MAX));
+
+        for att_id in att_ids {
+            let attachment = self.attachments.get_mut(&att_id).unwrap();
+            let key = (attachment.format, attachment.size.0, attachment.size.1);
+            let (first, last) = match lifetimes.get(&att_id) {
+                Some(&(f, l)) => (f, l),
+                None => {
+                    // Not referenced by any pass — allocate standalone.
+                    let (texture, view) = Self::alloc_texture(device, attachment);
+                    attachment.texture = Some(texture);
+                    attachment.view = Some(view);
+                    continue;
+                }
+            };
+
+            // Try to reuse a pool entry whose last_used < first (non-overlapping).
+            let pool = pools.entry(key).or_default();
+            let reuse_idx = pool.iter().position(|p| p.last_used < first);
+            if let Some(idx) = reuse_idx {
+                pool[idx].last_used = last;
+                let view = pool[idx].texture.create_view(&wgpu::TextureViewDescriptor::default());
+                attachment.texture = None; // aliased — owned by pool
+                attachment.view = Some(view);
+            } else {
+                let (texture, _view) = Self::alloc_texture(device, attachment);
+                attachment.view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                pool.push(Pool { texture, last_used: last });
+            }
+        }
+    }
+
+    fn alloc_texture(device: &wgpu::Device, attachment: &Attachment) -> (wgpu::Texture, wgpu::TextureView) {
+        let size = wgpu::Extent3d {
+            width: attachment.size.0,
+            height: attachment.size.1,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&attachment.name),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: attachment.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        (texture, view)
+    }
+
+    /// Compute the first and last topological index at which each attachment is used.
+    fn compute_attachment_lifetimes(&self, order: &[PassId]) -> HashMap<AttachmentId, (usize, usize)> {
+        let pass_index: HashMap<PassId, usize> = order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+        let mut lifetimes: HashMap<AttachmentId, (usize, usize)> = HashMap::new();
+        for (&pid, node) in &self.nodes {
+            let idx = match pass_index.get(&pid) {
+                Some(&i) => i,
+                None => continue,
+            };
+            for &att in &node.outputs {
+                let entry = lifetimes.entry(att).or_insert((idx, idx));
+                entry.0 = entry.0.min(idx);
+                entry.1 = entry.1.max(idx);
+            }
+        }
+        lifetimes
     }
 
     /// Execute all passes in topological order.

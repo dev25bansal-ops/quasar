@@ -331,4 +331,5 @@ pub use dsp::{
     AudioChannel, AudioMixer, AudioMixerSystem, DopplerSystem, DopplerTracker, ReverbZone,
     ReverbZoneSystem, ConvolutionImpulseResponse, ConvolutionReverb, ConvolutionReverbZone,
     StreamingAudioSource, StreamingAudioSystem, StreamingBuffer, StreamingMode,
+    HrtfDatabase, HrtfEntry, HrtfIrPair, HrtfProcessor, HrtfSource, HrtfSystem,
 };

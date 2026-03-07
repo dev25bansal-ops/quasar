@@ -15,6 +15,8 @@ pub struct GltfAnimationChannel {
     pub timestamps: Vec<f32>,
     /// Values for each keyframe — interpretation depends on `property`.
     pub values: GltfChannelValues,
+    /// Interpolation mode.
+    pub interpolation: GltfInterpolation,
 }
 
 /// Which transform property a channel animates.
@@ -23,6 +25,15 @@ pub enum GltfChannelProperty {
     Translation,
     Rotation,
     Scale,
+}
+
+/// Interpolation mode for an animation channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GltfInterpolation {
+    Step,
+    Linear,
+    /// Cubic spline — keyframe values include in-tangent, value, out-tangent.
+    CubicSpline,
 }
 
 /// Typed keyframe output values.
@@ -138,6 +149,11 @@ pub fn load_gltf_animations(path: impl AsRef<Path>) -> Result<Vec<GltfAnimationC
             let node_name = node_names.get(node_index).cloned().flatten();
 
             let sampler = channel.sampler();
+            let interp = match sampler.interpolation() {
+                gltf::animation::Interpolation::Linear => GltfInterpolation::Linear,
+                gltf::animation::Interpolation::Step => GltfInterpolation::Step,
+                gltf::animation::Interpolation::CubicSpline => GltfInterpolation::CubicSpline,
+            };
             let input_accessor = sampler.input();
             let output_accessor = sampler.output();
 
@@ -182,6 +198,7 @@ pub fn load_gltf_animations(path: impl AsRef<Path>) -> Result<Vec<GltfAnimationC
                 property,
                 timestamps,
                 values,
+                interpolation: interp,
             });
         }
 
@@ -193,6 +210,165 @@ pub fn load_gltf_animations(path: impl AsRef<Path>) -> Result<Vec<GltfAnimationC
     }
 
     Ok(clips)
+}
+
+// ---------------------------------------------------------------------------
+// Keyframe interpolation helpers
+// ---------------------------------------------------------------------------
+
+/// Sample a Vec3 channel at time `t` using the channel's interpolation mode.
+pub fn sample_vec3(channel: &GltfAnimationChannel, t: f32) -> [f32; 3] {
+    let ts = &channel.timestamps;
+    let vals = match &channel.values {
+        GltfChannelValues::Vec3(v) => v,
+        _ => return [0.0; 3],
+    };
+    if ts.is_empty() || vals.is_empty() {
+        return [0.0; 3];
+    }
+    if t <= ts[0] {
+        return if channel.interpolation == GltfInterpolation::CubicSpline {
+            vals[1] // skip in-tangent
+        } else {
+            vals[0]
+        };
+    }
+    let n = ts.len();
+    if t >= ts[n - 1] {
+        return if channel.interpolation == GltfInterpolation::CubicSpline {
+            vals[(n - 1) * 3 + 1]
+        } else {
+            vals[n - 1]
+        };
+    }
+    // Find segment.
+    let i = ts.partition_point(|&v| v < t).saturating_sub(1).min(n - 2);
+    let t0 = ts[i];
+    let t1 = ts[i + 1];
+    let dt = (t1 - t0).max(1e-10);
+    let u = ((t - t0) / dt).clamp(0.0, 1.0);
+    match channel.interpolation {
+        GltfInterpolation::Step => {
+            vals[i]
+        }
+        GltfInterpolation::Linear => {
+            lerp3(vals[i], vals[i + 1], u)
+        }
+        GltfInterpolation::CubicSpline => {
+            // GLTF cubic spline: each keyframe stores [in_tangent, value, out_tangent].
+            let v0 = vals[i * 3 + 1];
+            let b0 = vals[i * 3 + 2]; // out-tangent
+            let a1 = vals[(i + 1) * 3];   // in-tangent
+            let v1 = vals[(i + 1) * 3 + 1];
+            hermite3(v0, b0, a1, v1, u, dt)
+        }
+    }
+}
+
+/// Sample a Quat channel at time `t` using the channel's interpolation mode.
+pub fn sample_quat(channel: &GltfAnimationChannel, t: f32) -> [f32; 4] {
+    let ts = &channel.timestamps;
+    let vals = match &channel.values {
+        GltfChannelValues::Quat(v) => v,
+        _ => return [0.0, 0.0, 0.0, 1.0],
+    };
+    if ts.is_empty() || vals.is_empty() {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    if t <= ts[0] {
+        return if channel.interpolation == GltfInterpolation::CubicSpline {
+            vals[1]
+        } else {
+            vals[0]
+        };
+    }
+    let n = ts.len();
+    if t >= ts[n - 1] {
+        return if channel.interpolation == GltfInterpolation::CubicSpline {
+            normalize_quat(vals[(n - 1) * 3 + 1])
+        } else {
+            vals[n - 1]
+        };
+    }
+    let i = ts.partition_point(|&v| v < t).saturating_sub(1).min(n - 2);
+    let t0 = ts[i];
+    let t1 = ts[i + 1];
+    let dt = (t1 - t0).max(1e-10);
+    let u = ((t - t0) / dt).clamp(0.0, 1.0);
+    match channel.interpolation {
+        GltfInterpolation::Step => vals[i],
+        GltfInterpolation::Linear => slerp(vals[i], vals[i + 1], u),
+        GltfInterpolation::CubicSpline => {
+            let v0 = vals[i * 3 + 1];
+            let b0 = vals[i * 3 + 2];
+            let a1 = vals[(i + 1) * 3];
+            let v1 = vals[(i + 1) * 3 + 1];
+            normalize_quat(hermite4(v0, b0, a1, v1, u, dt))
+        }
+    }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+/// Cubic Hermite interpolation for Vec3.  
+/// p0/p1 = values, m0/m1 = tangents, t = [0,1], dt = segment duration.
+fn hermite3(p0: [f32; 3], m0: [f32; 3], m1: [f32; 3], p1: [f32; 3], t: f32, dt: f32) -> [f32; 3] {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = (t3 - 2.0 * t2 + t) * dt;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = (t3 - t2) * dt;
+    [
+        h00 * p0[0] + h10 * m0[0] + h01 * p1[0] + h11 * m1[0],
+        h00 * p0[1] + h10 * m0[1] + h01 * p1[1] + h11 * m1[1],
+        h00 * p0[2] + h10 * m0[2] + h01 * p1[2] + h11 * m1[2],
+    ]
+}
+
+/// Cubic Hermite interpolation for 4-component (quaternion tangent space).
+fn hermite4(p0: [f32; 4], m0: [f32; 4], m1: [f32; 4], p1: [f32; 4], t: f32, dt: f32) -> [f32; 4] {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
+    let h10 = (t3 - 2.0 * t2 + t) * dt;
+    let h01 = -2.0 * t3 + 3.0 * t2;
+    let h11 = (t3 - t2) * dt;
+    [
+        h00 * p0[0] + h10 * m0[0] + h01 * p1[0] + h11 * m1[0],
+        h00 * p0[1] + h10 * m0[1] + h01 * p1[1] + h11 * m1[1],
+        h00 * p0[2] + h10 * m0[2] + h01 * p1[2] + h11 * m1[2],
+        h00 * p0[3] + h10 * m0[3] + h01 * p1[3] + h11 * m1[3],
+    ]
+}
+
+fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let mut dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    let mut b = b;
+    if dot < 0.0 {
+        dot = -dot;
+        b = [-b[0], -b[1], -b[2], -b[3]];
+    }
+    if dot > 0.9995 {
+        return normalize_quat(lerp4(a, b, t));
+    }
+    let theta = dot.clamp(-1.0, 1.0).acos();
+    let sin_theta = theta.sin();
+    let wa = ((1.0 - t) * theta).sin() / sin_theta;
+    let wb = (t * theta).sin() / sin_theta;
+    [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb, a[3] * wa + b[3] * wb]
+}
+
+fn lerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]
+}
+
+fn normalize_quat(q: [f32; 4]) -> [f32; 4] {
+    let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+    if len < 1e-10 { return [0.0, 0.0, 0.0, 1.0]; }
+    [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
 }
 
 /// Read floats from a GLTF accessor.

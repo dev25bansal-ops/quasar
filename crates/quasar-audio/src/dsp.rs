@@ -578,3 +578,267 @@ impl System for StreamingAudioSystem {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// HRTF spatial audio
+// ---------------------------------------------------------------------------
+
+/// A single HRTF impulse response pair (left ear, right ear) for one direction.
+#[derive(Debug, Clone)]
+pub struct HrtfIrPair {
+    pub left: Vec<f32>,
+    pub right: Vec<f32>,
+}
+
+/// An entry in the HRTF database keyed by elevation and azimuth.
+#[derive(Debug, Clone)]
+pub struct HrtfEntry {
+    /// Elevation in degrees (−90 to +90).
+    pub elevation: f32,
+    /// Azimuth in degrees (0 to 360).
+    pub azimuth: f32,
+    pub ir: HrtfIrPair,
+}
+
+/// HRTF dataset — a collection of direction-dependent impulse response pairs.
+///
+/// Typically loaded from MIT Kemar or CIPIC data. Each entry stores a short
+/// FIR filter (128–512 taps) for left and right ears at a given direction.
+#[derive(Debug, Clone)]
+pub struct HrtfDatabase {
+    pub entries: Vec<HrtfEntry>,
+    pub sample_rate: u32,
+    pub ir_length: usize,
+}
+
+impl HrtfDatabase {
+    /// Create a database from pre-loaded entries.
+    pub fn new(entries: Vec<HrtfEntry>, sample_rate: u32) -> Self {
+        let ir_length = entries.first().map(|e| e.ir.left.len()).unwrap_or(0);
+        Self { entries, sample_rate, ir_length }
+    }
+
+    /// Look up the closest HRTF IR pair for a given direction.
+    ///
+    /// `elevation` in degrees (−90..+90), `azimuth` in degrees (0..360).
+    pub fn lookup(&self, elevation: f32, azimuth: f32) -> Option<&HrtfIrPair> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let mut best_idx = 0;
+        let mut best_dist = f32::MAX;
+        let az = azimuth.rem_euclid(360.0);
+        for (i, entry) in self.entries.iter().enumerate() {
+            let de = entry.elevation - elevation;
+            let da = {
+                let d = (entry.azimuth - az).abs();
+                d.min(360.0 - d)
+            };
+            let dist = de * de + da * da;
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = i;
+            }
+        }
+        Some(&self.entries[best_idx].ir)
+    }
+
+    /// Bilinear interpolation between the 4 nearest entries.
+    pub fn lookup_interpolated(&self, elevation: f32, azimuth: f32) -> HrtfIrPair {
+        if self.entries.is_empty() {
+            return HrtfIrPair { left: vec![], right: vec![] };
+        }
+        // Find 4 nearest neighbours by angular distance.
+        let az = azimuth.rem_euclid(360.0);
+        let mut dists: Vec<(usize, f32)> = self.entries.iter().enumerate().map(|(i, e)| {
+            let de = e.elevation - elevation;
+            let da = {
+                let d = (e.azimuth - az).abs();
+                d.min(360.0 - d)
+            };
+            (i, de * de + da * da)
+        }).collect();
+        dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let n = dists.len().min(4);
+        let total_w: f32 = dists[..n].iter().map(|&(_, d)| 1.0 / (d + 1e-6)).sum();
+        let len = self.ir_length;
+        let mut left = vec![0.0f32; len];
+        let mut right = vec![0.0f32; len];
+        for &(idx, dist) in &dists[..n] {
+            let w = (1.0 / (dist + 1e-6)) / total_w;
+            let entry = &self.entries[idx];
+            for j in 0..len.min(entry.ir.left.len()) {
+                left[j] += entry.ir.left[j] * w;
+                right[j] += entry.ir.right[j] * w;
+            }
+        }
+        HrtfIrPair { left, right }
+    }
+}
+
+/// Per-ear convolution state for HRTF processing.
+struct EarConvolver {
+    ir: Vec<f32>,
+    tail: Vec<f32>,
+}
+
+impl EarConvolver {
+    fn new(ir: Vec<f32>) -> Self {
+        let len = ir.len();
+        Self { ir, tail: vec![0.0; len] }
+    }
+
+    fn set_ir(&mut self, ir: Vec<f32>) {
+        self.tail.resize(ir.len(), 0.0);
+        self.ir = ir;
+    }
+
+    fn process(&mut self, input: &[f32], output: &mut [f32]) {
+        let ir_len = self.ir.len();
+        if ir_len == 0 { return; }
+        let n = input.len();
+        let mut wet = vec![0.0f32; n + ir_len - 1];
+        for (i, &s) in input.iter().enumerate() {
+            for (j, &h) in self.ir.iter().enumerate() {
+                wet[i + j] += s * h;
+            }
+        }
+        for (i, &t) in self.tail.iter().enumerate().take(n) {
+            wet[i] += t;
+        }
+        for (i, o) in output.iter_mut().enumerate().take(n) {
+            *o = wet[i];
+        }
+        for (i, t) in self.tail.iter_mut().enumerate() {
+            let idx = n + i;
+            *t = if idx < wet.len() { wet[idx] } else { 0.0 };
+        }
+    }
+
+    fn reset(&mut self) {
+        self.tail.iter_mut().for_each(|s| *s = 0.0);
+    }
+}
+
+/// HRTF processor that convolves a mono source into stereo (L/R) using
+/// direction-dependent impulse responses from an [`HrtfDatabase`].
+pub struct HrtfProcessor {
+    left: EarConvolver,
+    right: EarConvolver,
+    /// Current direction (elevation, azimuth) in degrees.
+    pub elevation: f32,
+    pub azimuth: f32,
+}
+
+impl HrtfProcessor {
+    pub fn new(db: &HrtfDatabase, elevation: f32, azimuth: f32) -> Self {
+        let ir = db.lookup_interpolated(elevation, azimuth);
+        Self {
+            left: EarConvolver::new(ir.left),
+            right: EarConvolver::new(ir.right),
+            elevation,
+            azimuth,
+        }
+    }
+
+    /// Update the source direction and reload IRs from the database.
+    pub fn set_direction(&mut self, db: &HrtfDatabase, elevation: f32, azimuth: f32) {
+        self.elevation = elevation;
+        self.azimuth = azimuth;
+        let ir = db.lookup_interpolated(elevation, azimuth);
+        self.left.set_ir(ir.left);
+        self.right.set_ir(ir.right);
+    }
+
+    /// Convolve a mono input buffer into interleaved stereo (L, R, L, R, …).
+    pub fn process(&mut self, mono_input: &[f32], stereo_output: &mut [f32]) {
+        let n = mono_input.len();
+        let mut left_buf = vec![0.0f32; n];
+        let mut right_buf = vec![0.0f32; n];
+        self.left.process(mono_input, &mut left_buf);
+        self.right.process(mono_input, &mut right_buf);
+        for i in 0..n {
+            if i * 2 + 1 < stereo_output.len() {
+                stereo_output[i * 2] = left_buf[i];
+                stereo_output[i * 2 + 1] = right_buf[i];
+            }
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.left.reset();
+        self.right.reset();
+    }
+}
+
+/// ECS component: marks an entity's audio source for HRTF spatialization.
+#[derive(Debug, Clone)]
+pub struct HrtfSource {
+    /// Elevation relative to listener (computed by HrtfSystem).
+    pub elevation: f32,
+    /// Azimuth relative to listener (computed by HrtfSystem).
+    pub azimuth: f32,
+}
+
+impl Default for HrtfSource {
+    fn default() -> Self {
+        Self { elevation: 0.0, azimuth: 0.0 }
+    }
+}
+
+/// System that computes per-source HRTF elevation/azimuth from world positions.
+///
+/// Requires the world to have an `HrtfDatabase` resource and an
+/// `AudioListener` entity with a `Transform`.
+pub struct HrtfSystem;
+
+impl System for HrtfSystem {
+    fn name(&self) -> &str {
+        "hrtf"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        // Get listener position and forward/up vectors.
+        let listener = world
+            .query::<AudioListener>()
+            .into_iter()
+            .filter_map(|(e, _)| {
+                let t = world.get::<Transform>(e)?;
+                Some(t.clone())
+            })
+            .next();
+        let listener = match listener {
+            Some(l) => l,
+            None => return,
+        };
+
+        let listener_pos = listener.position;
+        // Derive forward/right/up from listener rotation.
+        let fwd = listener.rotation * Vec3::new(0.0, 0.0, -1.0);
+        let up = listener.rotation * Vec3::Y;
+        let right = fwd.cross(up).normalize_or_zero();
+
+        let sources: Vec<(Entity, Vec3)> = world
+            .query::<HrtfSource>()
+            .into_iter()
+            .filter_map(|(e, _)| {
+                let t = world.get::<Transform>(e)?;
+                Some((e, t.position))
+            })
+            .collect();
+
+        for (entity, pos) in sources {
+            let dir = (pos - listener_pos).normalize_or_zero();
+            // Project onto listener-local axes.
+            let x = dir.dot(right);
+            let y = dir.dot(up);
+            let z = dir.dot(fwd);
+            let azimuth = x.atan2(z).to_degrees().rem_euclid(360.0);
+            let elevation = y.asin().to_degrees().clamp(-90.0, 90.0);
+            if let Some(hrtf) = world.get_mut::<HrtfSource>(entity) {
+                hrtf.elevation = elevation;
+                hrtf.azimuth = azimuth;
+            }
+        }
+    }
+}
