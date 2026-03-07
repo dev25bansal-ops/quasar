@@ -9,6 +9,7 @@ license.workspace = true
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+bincode = { workspace = true }
 quasar-math = { path = "../quasar-math" }
 rayon = { workspace = true }
 parking_lot = { workspace = true }

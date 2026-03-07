@@ -168,9 +168,15 @@ impl World {
     }
 
     /// Get a shared reference to a component on an entity.
-    /// Uses archetype storage when available, falls back to legacy storage.
+    /// Uses archetype metadata for a fast existence check before storage lookup.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
-        // Try legacy storage (primary storage for now)
+        let type_id = TypeId::of::<T>();
+        // Fast path: check archetype metadata to see if this entity has the component.
+        if let Some(components) = self.entity_components.get(&entity.index()) {
+            if components.binary_search(&type_id).is_err() {
+                return None;
+            }
+        }
         self.storage::<T>()?.get(entity)
     }
 
@@ -249,22 +255,32 @@ impl World {
     // ------------------------------------------------------------------
 
     /// Iterate over all `(Entity, &T)` pairs.
-    /// Uses archetype-optimized storage when possible, falls back to legacy.
-    pub fn query<T: Component>(&self) -> impl Iterator<Item = (Entity, &T)> {
+    /// Uses archetype metadata to iterate only entities known to carry `T`.
+    pub fn query<T: Component>(&self) -> Vec<(Entity, &T)> {
         let type_id = TypeId::of::<T>();
-        let allocator = &self.allocator;
 
-        // Use legacy storage (archetype optimization is for future iteration)
-        self.storages
+        let storage = match self
+            .storages
             .get(&type_id)
             .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())
-            .into_iter()
-            .flat_map(move |storage| {
-                storage.data.iter().map(move |(&index, component)| {
-                    let generation = allocator.generation_of(index);
-                    (Entity::new(index, generation), component)
-                })
-            })
+        {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let mut results = Vec::with_capacity(storage.data.len());
+
+        // Use archetype index: only visit entities whose component set includes T.
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_id).is_ok() {
+                if let Some(component) = storage.data.get(&idx) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), component));
+                }
+            }
+        }
+
+        results
     }
 
     /// Iterate over all `(Entity, &mut T)` pairs using a callback.
@@ -292,41 +308,73 @@ impl World {
 
     /// Query entities that have **both** components `A` and `B`.
     ///
-    /// Iterates over the smaller storage and looks up the other, yielding
-    /// `(Entity, &A, &B)` for every entity that has both.
-    pub fn query2<A: Component, B: Component>(&self) -> impl Iterator<Item = (Entity, &A, &B)> {
+    /// Uses archetype metadata to iterate only entities known to carry both
+    /// component types, then performs direct storage lookups.
+    pub fn query2<A: Component, B: Component>(&self) -> Vec<(Entity, &A, &B)> {
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
-        let allocator = &self.allocator;
 
-        sa.into_iter().flat_map(move |storage_a| {
-            storage_a.data.iter().filter_map(move |(&index, comp_a)| {
-                sb.and_then(|storage_b| storage_b.data.get(&index))
-                    .map(|comp_b| {
-                        let generation = allocator.generation_of(index);
-                        (Entity::new(index, generation), comp_a, comp_b)
-                    })
-            })
-        })
+        if sa.is_none() || sb.is_none() {
+            return Vec::new();
+        }
+        let sa = sa.unwrap();
+        let sb = sb.unwrap();
+
+        let mut results = Vec::new();
+
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_a).is_ok()
+                && components.binary_search(&type_b).is_ok()
+            {
+                if let (Some(a), Some(b)) = (sa.data.get(&idx), sb.data.get(&idx)) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), a, b));
+                }
+            }
+        }
+
+        results
     }
 
     /// Query entities that have components `A`, `B`, **and** `C`.
+    ///
+    /// Uses archetype metadata to pre-filter to entities with all three types.
     pub fn query3<A: Component, B: Component, C: Component>(
         &self,
-    ) -> impl Iterator<Item = (Entity, &A, &B, &C)> {
+    ) -> Vec<(Entity, &A, &B, &C)> {
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        let type_c = TypeId::of::<C>();
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
         let sc = self.storage::<C>();
-        let allocator = &self.allocator;
 
-        sa.into_iter().flat_map(move |storage_a| {
-            storage_a.data.iter().filter_map(move |(&index, comp_a)| {
-                let comp_b = sb.and_then(|s| s.data.get(&index))?;
-                let comp_c = sc.and_then(|s| s.data.get(&index))?;
-                let generation = allocator.generation_of(index);
-                Some((Entity::new(index, generation), comp_a, comp_b, comp_c))
-            })
-        })
+        if sa.is_none() || sb.is_none() || sc.is_none() {
+            return Vec::new();
+        }
+        let sa = sa.unwrap();
+        let sb = sb.unwrap();
+        let sc = sc.unwrap();
+
+        let mut results = Vec::new();
+
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_a).is_ok()
+                && components.binary_search(&type_b).is_ok()
+                && components.binary_search(&type_c).is_ok()
+            {
+                if let (Some(a), Some(b), Some(c)) =
+                    (sa.data.get(&idx), sb.data.get(&idx), sc.data.get(&idx))
+                {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), a, b, c));
+                }
+            }
+        }
+
+        results
     }
 
     // ------------------------------------------------------------------
@@ -361,6 +409,14 @@ impl World {
         component: Box<dyn std::any::Any + Send + Sync>,
     ) {
         debug_assert!(self.is_alive(entity), "inserting on a dead entity");
+
+        // Track component for this entity
+        let components = self.entity_components.entry(entity.index()).or_default();
+        if !components.contains(&type_id) {
+            components.push(type_id);
+            components.sort();
+        }
+
         // We need to find or create storage, but we don't know the type.
         // For now, we'll need the caller to ensure storage exists.
         if let Some(storage) = self.storages.get_mut(&type_id) {
@@ -372,6 +428,13 @@ impl World {
 
     /// Remove a component using runtime type information (for Commands).
     pub fn remove_raw(&mut self, entity: Entity, type_id: TypeId) -> bool {
+        // Update entity's component list
+        if let Some(components) = self.entity_components.get_mut(&entity.index()) {
+            if let Ok(pos) = components.binary_search(&type_id) {
+                components.remove(pos);
+            }
+        }
+
         if let Some(storage) = self.storages.get_mut(&type_id) {
             storage.remove(entity)
         } else {
@@ -475,7 +538,7 @@ mod tests {
             );
         }
 
-        let positions: Vec<_> = world.query::<Position>().collect();
+        let positions = world.query::<Position>();
         assert_eq!(positions.len(), 5);
     }
 
@@ -527,7 +590,7 @@ mod tests {
         let e3 = world.spawn();
         world.insert(e3, Velocity { dx: 7.0, dy: 8.0 });
 
-        let results: Vec<_> = world.query2::<Position, Velocity>().collect();
+        let results = world.query2::<Position, Velocity>();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, &Position { x: 1.0, y: 2.0 });
         assert_eq!(results[0].2, &Velocity { dx: 3.0, dy: 4.0 });
@@ -547,7 +610,7 @@ mod tests {
         world.insert(e2, Position { x: 5.0, y: 6.0 });
         world.insert(e2, Velocity { dx: 7.0, dy: 8.0 });
 
-        let results: Vec<_> = world.query3::<Position, Velocity, Health>().collect();
+        let results = world.query3::<Position, Velocity, Health>();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].3, &Health(100));
     }
@@ -564,7 +627,7 @@ mod tests {
         world.insert(e2, Position { x: 5.0, y: 6.0 });
         world.insert(e2, Velocity { dx: 7.0, dy: 8.0 });
 
-        let results: Vec<_> = query!(world, (Position, Velocity)).collect();
+        let results: Vec<_> = query!(world, (Position, Velocity)).into_iter().collect();
         assert_eq!(results.len(), 2);
     }
 
@@ -577,7 +640,7 @@ mod tests {
         world.insert(e1, Velocity { dx: 3.0, dy: 4.0 });
         world.insert(e1, Health(100));
 
-        let results: Vec<_> = query!(world, Position, Velocity, Health).collect();
+        let results: Vec<_> = query!(world, Position, Velocity, Health).into_iter().collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].3, &Health(100));
     }

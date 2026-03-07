@@ -63,6 +63,7 @@ impl System for TransformWritebackSystem {
     fn run(&mut self, world: &mut World) {
         let handles: Vec<(rapier3d::prelude::RigidBodyHandle, Transform)> = world
             .query2::<RigidBodyComponent, Transform>()
+            .into_iter()
             .map(|(_, rb, tf)| (rb.handle, *tf))
             .collect();
 
@@ -108,6 +109,7 @@ impl System for PhysicsStepSystem {
 
         let handles: Vec<(Entity, rapier3d::prelude::RigidBodyHandle)> = world
             .query::<RigidBodyComponent>()
+            .into_iter()
             .map(|(e, rbc)| (e, rbc.handle))
             .collect();
 
@@ -179,6 +181,7 @@ impl System for CollisionEventSystem {
             Entity,
         > = world
             .query::<ColliderComponent>()
+            .into_iter()
             .map(|(e, collider)| (collider.handle, e))
             .collect();
 

@@ -343,6 +343,7 @@ impl System for AnimationSystem {
 
         let players: Vec<(Entity, AnimationPlayer)> = world
             .query::<AnimationPlayer>()
+            .into_iter()
             .map(|(e, p)| (e, p.clone()))
             .collect();
 

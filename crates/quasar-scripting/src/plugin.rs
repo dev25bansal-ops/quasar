@@ -53,6 +53,8 @@ enum ScriptCommand {
     SetScale { entity_index: u32, value: Vec3 },
     Spawn,
     Despawn { entity_index: u32 },
+    ApplyForce { entity_index: u32, force: Vec3 },
+    PlayAudio { path: String },
 }
 
 /// System that calls `on_update(dt)` in Lua every frame and checks hot-reload.
@@ -68,7 +70,7 @@ impl ScriptingSystem {
             return;
         };
 
-        for (entity, t) in world.query::<Transform>() {
+        for (entity, t) in world.query::<Transform>().into_iter() {
             if let Ok(entry) = lua.create_table() {
                 let _ = entry.set("px", t.position.x);
                 let _ = entry.set("py", t.position.y);
@@ -227,6 +229,24 @@ impl ScriptingSystem {
                         commands.push(ScriptCommand::Despawn { entity_index: eid });
                     }
                 }
+                "apply_force" => {
+                    if let (Ok(eid), Ok(x), Ok(y), Ok(z)) = (
+                        cmd.get::<u32>("entity"),
+                        cmd.get::<f32>("x"),
+                        cmd.get::<f32>("y"),
+                        cmd.get::<f32>("z"),
+                    ) {
+                        commands.push(ScriptCommand::ApplyForce {
+                            entity_index: eid,
+                            force: Vec3::new(x, y, z),
+                        });
+                    }
+                }
+                "play_audio" => {
+                    if let Ok(path) = cmd.get::<String>("path") {
+                        commands.push(ScriptCommand::PlayAudio { path });
+                    }
+                }
                 _ => {
                     log::warn!("[lua] Unknown command type: {}", cmd_type);
                 }
@@ -251,6 +271,7 @@ impl ScriptingSystem {
         // Collect (entity_index, path, loaded) for entities with a ScriptComponent.
         let scripts: Vec<(u32, String, bool)> = world
             .query::<ScriptComponent>()
+            .into_iter()
             .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
             .collect();
 
@@ -304,8 +325,9 @@ impl ScriptingSystem {
                     {
                         let found: Option<Entity> = world
                             .query::<ScriptComponent>()
+                            .iter()
                             .find(|(e, _)| e.index() == *eid)
-                            .map(|(e, _)| e);
+                            .map(|(e, _)| *e);
                         match found {
                             Some(e) => e,
                             None => continue,
@@ -329,11 +351,12 @@ impl ScriptingSystem {
 
     /// Apply queued commands to the world.
     ///
-    /// We need an entity-index→Entity map for mutations on existing entities.
+    /// We need an entity-index → Entity map for mutations on existing entities.
     fn apply_commands(world: &mut World, commands: Vec<ScriptCommand>) {
         // Build a map of entity_index → Entity for live entities with transforms.
         let entity_map: std::collections::HashMap<u32, Entity> = world
             .query::<Transform>()
+            .into_iter()
             .map(|(e, _)| (e.index(), e))
             .collect();
 
@@ -378,6 +401,32 @@ impl ScriptingSystem {
                     if let Some(&entity) = entity_map.get(&entity_index) {
                         world.despawn(entity);
                         log::debug!("[lua] Despawned entity {:?}", entity);
+                    }
+                }
+                ScriptCommand::ApplyForce {
+                    entity_index,
+                    force,
+                } => {
+                    if let Some(&entity) = entity_map.get(&entity_index) {
+                        // Get the rigid body handle, then apply force through the physics world.
+                        if let Some(rigid_body) = world.get::<quasar_physics::RigidBodyComponent>(entity) {
+                            let handle = rigid_body.handle;
+                            if let Some(phys) = world.resource_mut::<quasar_physics::PhysicsResource>() {
+                                phys.physics.apply_force(handle, [force.x, force.y, force.z]);
+                                log::debug!("[lua] Applied force {:?} to entity {}", force, entity_index);
+                            }
+                        }
+                    }
+                }
+                ScriptCommand::PlayAudio { path } => {
+                    if let Some(audio) = world.resource_mut::<quasar_audio::AudioSystem>() {
+                        if let Some(id) = audio.play(&path) {
+                            log::debug!("[lua] Playing audio: {} (id: {})", path, id);
+                        } else {
+                            log::warn!("[lua] Failed to play audio: {}", path);
+                        }
+                    } else {
+                        log::warn!("[lua] Audio system not available");
                     }
                 }
             }

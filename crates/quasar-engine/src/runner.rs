@@ -282,6 +282,7 @@ impl ApplicationHandler for QuasarRunner {
                         .app
                         .world
                         .query2::<MeshShape, Transform>()
+                        .into_iter()
                         .map(|(_, shape, t)| (*shape, t.matrix()))
                         .collect();
 
@@ -292,6 +293,7 @@ impl ApplicationHandler for QuasarRunner {
                         self.app
                             .world
                             .query::<Transform>()
+                            .into_iter()
                             .map(|(_, t)| (MeshShape::Cube, t.matrix()))
                             .collect()
                     }
@@ -382,6 +384,7 @@ impl ApplicationHandler for QuasarRunner {
                                     .app
                                     .world
                                     .query::<quasar_math::Transform>()
+                                    .into_iter()
                                     .map(|(e, _)| {
                                         let name = scene_opt
                                             .as_ref()

@@ -2,6 +2,7 @@
 
 use quasar_core::ecs::System;
 use quasar_core::ecs::World;
+use quasar_core::AssetServer;
 
 use crate::ParticleEmitter;
 
@@ -33,7 +34,7 @@ impl System for ParticleUpdateSystem {
     fn run(&mut self, world: &mut World) {
         // Note: Particle emitters need mutable access, which requires
         // a different query pattern. This is a placeholder.
-        let _count = world.query::<ParticleEmitter>().count();
+        let _count = world.query::<ParticleEmitter>().len();
     }
 }
 
@@ -65,20 +66,34 @@ impl System for GpuAssetSyncSystem {
 
     fn run(&mut self, world: &mut World) {
         // Check for asset reload events from AssetServer
-        // Note: This requires the AssetServer to be registered as a resource
-        // and its event channel to be accessible
+        if let Some(asset_server) = world.resource::<AssetServer>() {
+            // Poll events directly — process_reloads() consumed its own events
+            // internally, so we poll raw events and handle both reloading and
+            // GPU resource tracking in one pass.
+            let events = asset_server.poll_events();
+
+            for event in events {
+                match event {
+                    quasar_core::AssetEvent::Reloaded { handle, path } => {
+                        log::info!("GPU asset reloaded: {:?} (handle {})", path, handle.id);
+                        self.pending_reloads
+                            .push((handle.id, path.to_string_lossy().to_string()));
+                    }
+                    quasar_core::AssetEvent::Loaded { handle, path } => {
+                        log::debug!("GPU asset loaded: {:?} (handle {})", path, handle.id);
+                    }
+                    quasar_core::AssetEvent::Failed { path, error } => {
+                        log::error!("GPU asset failed: {:?} - {}", path, error);
+                    }
+                }
+            }
+        }
 
         // Process pending GPU resource updates
         // In a full implementation, this would:
         // 1. Get the device/queue from a render resource
         // 2. Recreate textures/meshes based on the asset type
         // 3. Update bind groups
-
-        // For now, we check if there are any assets that need GPU sync
-        // by looking at the asset storage in the world
-        let _has_assets = world
-            .resource::<quasar_core::asset::AssetManager>()
-            .is_some();
 
         if !self.pending_reloads.is_empty() {
             log::debug!(

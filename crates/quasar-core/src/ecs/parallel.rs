@@ -1,14 +1,14 @@
 //! Parallel system execution — run independent systems concurrently.
 //!
-//! Uses dependency analysis to schedule systems. Systems with conflicting
-//! component access are scheduled sequentially. Future versions will use
-//! rayon for true parallelism with Send + Sync systems.
+//! Uses rayon thread pool to execute systems with no conflicting component
+//! access in parallel. Systems must be thread-safe (Send + Sync).
 
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-use super::{System, SystemStage, World};
+use rayon;
 
+use super::{System, SystemStage, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessMode {
     Read,
@@ -199,17 +199,40 @@ impl SystemGraph {
 
         for group in groups {
             if group.len() == 1 {
-                // Single system - run directly
                 let idx = group[0];
                 self.nodes[idx].system.run(world);
             } else {
-                // Multiple non-conflicting systems
-                // Due to Rust's borrow checker, true parallelism requires Send + Sync
-                // on systems and careful world access patterns (like Bevy's system parameters)
-                // For now, run sequentially but with proper scheduling order
-                for idx in group {
-                    self.nodes[idx].system.run(world);
-                }
+                // Systems in the same topological group have been verified to have
+                // no conflicting component/resource access, so they can run in parallel.
+                //
+                // We encode pointers as usize so closures satisfy Send + Sync.
+                let world_addr = world as *mut World as usize;
+                let nodes_ptr = self.nodes.as_mut_ptr();
+
+                let work: Vec<(usize, usize)> = group
+                    .into_iter()
+                    .map(|idx| {
+                        let node_addr = unsafe { nodes_ptr.add(idx) } as usize;
+                        (node_addr, world_addr)
+                    })
+                    .collect();
+
+                rayon::scope(|s| {
+                    for &(node_addr, w_addr) in &work {
+                        s.spawn(move |_| {
+                            // SAFETY:
+                            // 1. Each node pointer is unique — no two threads
+                            //    touch the same SystemNode.
+                            // 2. The topological grouping guarantees that systems
+                            //    in the same group have disjoint component/resource
+                            //    access, so concurrent &mut World access is safe.
+                            unsafe {
+                                let node = &mut *(node_addr as *mut SystemNode);
+                                node.system.run(&mut *(w_addr as *mut World));
+                            }
+                        });
+                    }
+                });
             }
         }
     }

@@ -330,6 +330,11 @@ impl crate::Plugin for AssetPlugin {
     }
 
     fn build(&self, app: &mut crate::App) {
+        let mut server = AssetServer::new("assets");
+        if let Err(e) = server.start_watching() {
+            log::warn!("AssetPlugin: hot-reload watcher failed to start: {}", e);
+        }
+        app.world.insert_resource(server);
         log::info!("AssetPlugin loaded — asset hot-reload active");
     }
 }

@@ -256,6 +256,7 @@ impl EditorState {
     fn take_snapshot(&self, world: &quasar_core::ecs::World) -> WorldSnapshot {
         let transforms: Vec<(u32, TransformData)> = world
             .query::<quasar_math::Transform>()
+            .into_iter()
             .map(|(e, t)| {
                 (
                     e.index(),
@@ -275,6 +276,7 @@ impl EditorState {
         for (entity_index, data) in snapshot.transforms {
             let entities: Vec<quasar_core::ecs::Entity> = world
                 .query::<quasar_math::Transform>()
+                .into_iter()
                 .filter(|(e, _)| e.index() == entity_index)
                 .map(|(e, _)| e)
                 .collect();

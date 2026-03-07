@@ -36,6 +36,7 @@ impl System for AudioPlaybackSystem {
         // Pass 1: collect audio sources that need to start playing.
         let sources_to_play: Vec<(u32, String, bool)> = world
             .query::<AudioSource>()
+            .into_iter()
             .filter(|(_, src)| src.playing_id.is_none())
             .map(|(e, src)| (e.index(), src.path.clone(), src.looping))
             .collect();
@@ -93,6 +94,7 @@ impl System for SpatialAudioSystem {
         // 1. Find the listener position and orientation.
         let listener: Option<(Vec3, Quat)> = world
             .query::<AudioListener>()
+            .into_iter()
             .filter_map(|(entity, _)| {
                 let t = world.get::<Transform>(entity)?;
                 Some((t.position, t.rotation))
@@ -109,6 +111,7 @@ impl System for SpatialAudioSystem {
         // 2. Collect spatial sources that are currently playing.
         let spatial_sources: Vec<(u32, crate::SoundId, f32, f32, f32, f32, Vec3)> = world
             .query::<AudioSource>()
+            .into_iter()
             .filter_map(|(entity, src)| {
                 if !src.spatial {
                     return None;
@@ -141,11 +144,10 @@ impl System for SpatialAudioSystem {
 
                 // Compute stereo panning from the listener-relative direction.
                 let panning: f64 = if distance < 1e-4 {
-                    0.5 // source on top of listener → centre
+                    0.5
                 } else {
                     let dir = diff / distance;
                     let dot = dir.dot(listener_right);
-                    // Map [-1, 1] → [0, 1]
                     (0.5 + 0.5 * dot as f64).clamp(0.0, 1.0)
                 };
 

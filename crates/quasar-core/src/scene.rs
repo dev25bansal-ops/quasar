@@ -152,8 +152,11 @@ impl SceneGraph {
     /// transforms in sync with the hierarchy.
     pub fn propagate_transforms(&self, world: &mut World) {
         // Collect all entities that have a Transform (with correct generations).
-        let entities_with_transform: Vec<Entity> =
-            world.query::<Transform>().map(|(e, _)| e).collect();
+        let entities_with_transform: Vec<Entity> = world
+            .query::<Transform>()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
 
         for entity in entities_with_transform {
             let global_mat = self.compute_global_matrix(entity, world);

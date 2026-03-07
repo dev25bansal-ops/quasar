@@ -6,7 +6,6 @@
 //! - Rollback netcode support
 
 use std::collections::HashMap;
-use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, RwLock};
 
@@ -202,13 +201,6 @@ impl NetworkState {
     }
 }
 
-/// Trait for network transport abstraction.
-pub trait NetworkTransport: Send + Sync {
-    fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError>;
-    fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError>;
-    fn local_addr(&self) -> Result<SocketAddr, NetworkError>;
-}
-
 #[derive(Debug)]
 pub struct NetworkError(pub String);
 
@@ -226,7 +218,6 @@ impl From<std::io::Error> for NetworkError {
     }
 }
 
-/// UDP-based network transport using std::net.
 pub struct UdpTransport {
     socket: UdpSocket,
     recv_buffer: [u8; MTU_SIZE],
@@ -250,24 +241,18 @@ impl UdpTransport {
     pub fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
         Ok(self.socket.local_addr()?)
     }
-}
 
-impl NetworkTransport for UdpTransport {
-    fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError> {
+    pub fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError> {
         self.socket.send_to(data, addr)?;
         Ok(())
     }
 
-    fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError> {
+    pub fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError> {
         match self.socket.recv_from(&mut self.recv_buffer) {
             Ok((len, addr)) => Ok(Some((addr, self.recv_buffer[..len].to_vec()))),
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(NetworkError(e.to_string())),
         }
-    }
-
-    fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
-        Ok(self.socket.local_addr()?)
     }
 }
 
@@ -302,11 +287,9 @@ impl RollbackManager {
             entities,
             inputs,
         };
-
         if self.states.len() >= self.max_frames as usize {
             self.states.remove(0);
         }
-
         self.states.push(state);
         self.current_frame += 1;
     }
@@ -314,24 +297,20 @@ impl RollbackManager {
     pub fn rollback_to(&mut self, frame: u64) -> Option<&RollbackState> {
         self.states.iter().find(|s| s.frame == frame)
     }
-
-    pub fn resimulate(
-        &mut self,
-        from_frame: u64,
-        to_frame: u64,
-        inputs: HashMap<ClientId, Vec<InputData>>,
-    ) {
-        for frame in from_frame..=to_frame {
-            if let Some(state) = self.rollback_to(frame) {
-                self.current_frame = frame;
-            }
-        }
-    }
 }
 
 pub struct NetworkReplication {
     pub state: Arc<RwLock<NetworkState>>,
     pub rollback: RollbackManager,
+}
+
+impl Clone for NetworkReplication {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            rollback: RollbackManager::new(self.rollback.max_frames),
+        }
+    }
 }
 
 impl NetworkReplication {
@@ -347,10 +326,8 @@ impl NetworkReplication {
         let mut state = self.state.write().unwrap();
         let network_id = NetworkEntityId(state.next_entity_id);
         state.next_entity_id += 1;
-
         state.entity_to_network.insert(entity_index, network_id);
         state.network_to_entity.insert(network_id, entity_index);
-
         network_id
     }
 
@@ -362,7 +339,8 @@ impl NetworkReplication {
     }
 
     pub fn sync_transform(
-        &mut self,
+        &self,
+        transport: &mut NetworkTransportResource,
         entity_index: u32,
         position: [f32; 3],
         rotation: [f32; 4],
@@ -374,7 +352,7 @@ impl NetworkReplication {
                 sequence: state.frame_number,
                 timestamp: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
+                    .unwrap_or_default()
                     .as_millis() as u64,
                 payload: NetworkPayload::EntityTransform {
                     entity_id: *network_id,
@@ -383,7 +361,46 @@ impl NetworkReplication {
                     scale,
                 },
             };
+
+            // Broadcast to all connected clients.
+            let client_addrs: Vec<SocketAddr> = state
+                .clients
+                .values()
+                .filter(|c| c.connected)
+                .map(|c| c.addr)
+                .collect();
+
+            for addr in client_addrs {
+                if let Err(e) = transport.send(addr, &message) {
+                    log::warn!("sync_transform: failed to send to {}: {}", addr, e);
+                }
+            }
         }
+    }
+}
+
+pub struct NetworkTransportResource {
+    pub transport: UdpTransport,
+}
+
+impl NetworkTransportResource {
+    pub fn new(transport: UdpTransport) -> Self {
+        Self { transport }
+    }
+
+    pub fn send(&mut self, addr: SocketAddr, message: &NetworkMessage) -> Result<(), NetworkError> {
+        let data = bincode::serialize(message).map_err(|e| NetworkError(e.to_string()))?;
+        self.transport.send_to(addr, &data)
+    }
+
+    pub fn receive(&mut self) -> Vec<(SocketAddr, NetworkMessage)> {
+        let mut messages = Vec::new();
+        while let Ok(Some((addr, data))) = self.transport.receive() {
+            if let Ok(msg) = bincode::deserialize::<NetworkMessage>(&data) {
+                messages.push((addr, msg));
+            }
+        }
+        messages
     }
 }
 
@@ -397,22 +414,203 @@ impl NetworkPlugin {
     }
 }
 
+fn network_system(world: &mut crate::World) {
+    // ── Receive ──────────────────────────────────────────────────
+    let messages = {
+        let Some(transport) = world.resource_mut::<NetworkTransportResource>() else {
+            return;
+        };
+        transport.receive()
+    };
+
+    // Decode messages and collect connection-level updates vs entity updates.
+    let mut transform_updates: Vec<(NetworkEntityId, [f32; 3], [f32; 4], [f32; 3])> = Vec::new();
+
+    {
+        let Some(replication) = world.resource::<NetworkReplication>() else {
+            return;
+        };
+        let mut state = replication.state.write().unwrap();
+
+        for (addr, message) in &messages {
+            match &message.payload {
+                NetworkPayload::ConnectionRequest { client_id } => {
+                    if state.clients.len() < state.config.max_clients {
+                        state.clients.insert(
+                            *client_id,
+                            NetworkClient::new(*client_id, *addr),
+                        );
+                        log::info!("Client {:?} connected from {}", client_id, addr);
+                    }
+                }
+                NetworkPayload::Disconnect { client_id } => {
+                    state.clients.remove(client_id);
+                    log::info!("Client {:?} disconnected", client_id);
+                }
+                NetworkPayload::EntityTransform {
+                    entity_id,
+                    position,
+                    rotation,
+                    scale,
+                } => {
+                    transform_updates.push((*entity_id, *position, *rotation, *scale));
+                }
+                NetworkPayload::Input { client_id, inputs } => {
+                    state.input_buffer.insert(*client_id, inputs.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // Apply received entity transforms.
+    if !transform_updates.is_empty() {
+        // Build network_id → entity_index map
+        let net_to_entity: HashMap<NetworkEntityId, u32> = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                return;
+            };
+            let state = replication.state.read().unwrap();
+            state.network_to_entity.clone()
+        };
+
+        // Build entity_index → Entity handle
+        let entity_map: HashMap<u32, crate::ecs::Entity> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .map(|(e, _)| (e.index(), e))
+            .collect();
+
+        for (net_id, position, rotation, scale) in &transform_updates {
+            if let Some(&entity_index) = net_to_entity.get(net_id) {
+                if let Some(&entity) = entity_map.get(&entity_index) {
+                    if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
+                        t.position = quasar_math::Vec3::new(position[0], position[1], position[2]);
+                        t.rotation = quasar_math::Quat::from_xyzw(
+                            rotation[0], rotation[1], rotation[2], rotation[3],
+                        );
+                        t.scale = quasar_math::Vec3::new(scale[0], scale[1], scale[2]);
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Send (server broadcasts entity transforms) ───────────────
+    let is_server = world
+        .resource::<NetworkReplication>()
+        .map(|r| {
+            let state = r.state.read().unwrap();
+            state.is_server()
+        })
+        .unwrap_or(false);
+
+    if !is_server {
+        return;
+    }
+
+    // Collect all networked entity transforms.
+    let (outgoing_messages, client_addrs) = {
+        let Some(replication) = world.resource::<NetworkReplication>() else {
+            return;
+        };
+        let state = replication.state.read().unwrap();
+
+        let transforms: Vec<_> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .filter_map(|(entity, t)| {
+                state
+                    .entity_to_network
+                    .get(&entity.index())
+                    .map(|net_id| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        NetworkMessage {
+                            sequence: state.frame_number,
+                            timestamp: now,
+                            payload: NetworkPayload::EntityTransform {
+                                entity_id: *net_id,
+                                position: [t.position.x, t.position.y, t.position.z],
+                                rotation: [
+                                    t.rotation.x,
+                                    t.rotation.y,
+                                    t.rotation.z,
+                                    t.rotation.w,
+                                ],
+                                scale: [t.scale.x, t.scale.y, t.scale.z],
+                            },
+                        }
+                    })
+            })
+            .collect();
+
+        let addrs: Vec<SocketAddr> = state
+            .clients
+            .values()
+            .filter(|c| c.connected)
+            .map(|c| c.addr)
+            .collect();
+
+        (transforms, addrs)
+    };
+
+    // Send transform snapshots to all connected clients.
+    if !outgoing_messages.is_empty() && !client_addrs.is_empty() {
+        if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
+            for msg in &outgoing_messages {
+                for &addr in &client_addrs {
+                    if let Err(e) = transport.send(addr, msg) {
+                        log::warn!("Failed to send to {}: {}", addr, e);
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl crate::Plugin for NetworkPlugin {
     fn name(&self) -> &str {
         "NetworkPlugin"
     }
 
     fn build(&self, app: &mut crate::App) {
+        let bind_addr: SocketAddr = match &self.config.role {
+            NetworkRole::Server | NetworkRole::ListenServer => {
+                format!("0.0.0.0:{}", self.config.port).parse().unwrap()
+            }
+            NetworkRole::Client { server_addr: _ } => "0.0.0.0:0".parse().unwrap(),
+        };
+
         let replication = NetworkReplication::new(self.config.clone());
+
+        match UdpTransport::bind(bind_addr) {
+            Ok(transport) => {
+                app.world
+                    .insert_resource(NetworkTransportResource::new(transport));
+                log::info!("NetworkPlugin: UDP socket bound to {}", bind_addr);
+            }
+            Err(e) => {
+                log::warn!(
+                    "NetworkPlugin: Failed to bind UDP socket: {}, networking offline",
+                    e
+                );
+            }
+        }
+
         app.world.insert_resource(replication);
+        app.add_system("network_system", network_system);
 
         log::info!(
-            "NetworkPlugin loaded — {} mode",
+            "NetworkPlugin loaded — {} mode on port {}",
             match self.config.role {
                 NetworkRole::Server => "server",
                 NetworkRole::Client { .. } => "client",
                 NetworkRole::ListenServer => "listen server",
-            }
+            },
+            self.config.port
         );
     }
 }
