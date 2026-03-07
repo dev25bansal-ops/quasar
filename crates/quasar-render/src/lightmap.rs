@@ -499,3 +499,353 @@ fn sample_lightmap(uv: vec2<f32>) -> vec3<f32> {
     return textureSample(lightmap_tex, lightmap_samp, uv).rgb;
 }
 "#;
+
+// ── GPU lightmap baker ─────────────────────────────────────────────
+
+/// GPU uniform for the lightmap bake compute shader.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuBakeUniform {
+    /// Lightmap width.
+    pub width: u32,
+    /// Lightmap height.
+    pub height: u32,
+    /// AO ray count.
+    pub ao_rays: u32,
+    /// Number of triangles in the scene.
+    pub triangle_count: u32,
+    /// Direct light direction (xyz) + ao_distance (w).
+    pub light_dir_ao_dist: [f32; 4],
+    /// Direct light color (rgb) + ao_strength (a).
+    pub light_color_ao_str: [f32; 4],
+}
+
+/// GPU-side triangle for compute shader input.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuBakerTriangle {
+    /// Positions: p0.xyz, _pad, p1.xyz, _pad, p2.xyz, _pad
+    pub p0: [f32; 4],
+    pub p1: [f32; 4],
+    pub p2: [f32; 4],
+    /// Normals: n0.xyz, _pad, n1.xyz, _pad, n2.xyz, _pad
+    pub n0: [f32; 4],
+    pub n1: [f32; 4],
+    pub n2: [f32; 4],
+    /// Lightmap UVs: uv0.xy, uv1.xy
+    pub uv01: [f32; 4],
+    /// uv2.xy, _pad, _pad
+    pub uv2_pad: [f32; 4],
+}
+
+/// GPU-accelerated lightmap baker using a wgpu compute shader.
+///
+/// Bakes direct light + AO per texel on the GPU, then reads back the result
+/// into a [`Lightmap`].
+pub struct GpuLightmapBaker {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl GpuLightmapBaker {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("GPU Lightmap Bake Compute"),
+            source: wgpu::ShaderSource::Wgsl(GPU_LIGHTMAP_BAKE_WGSL.into()),
+        });
+
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU Lightmap Bake BGL"),
+                entries: &[
+                    // 0: uniforms
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 1: triangle buffer (read-only storage)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 2: output lightmap (storage texture, rgba16float)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("GPU Lightmap Bake Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("GPU Lightmap Bake Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+        }
+    }
+
+    /// Prepare GPU buffers and dispatch the bake compute shader.
+    ///
+    /// The caller must submit the returned `CommandBuffer` and then read back
+    /// the output texture to populate a [`Lightmap`].
+    pub fn bake(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        triangles: &[BakerTriangle],
+        config: &BakeConfig,
+    ) -> (wgpu::Texture, wgpu::CommandBuffer) {
+        let gpu_tris: Vec<GpuBakerTriangle> = triangles
+            .iter()
+            .map(|t| {
+                let p = &t.positions;
+                let n = &t.normals;
+                let uv = &t.lightmap_uvs;
+                GpuBakerTriangle {
+                    p0: [p[0].x, p[0].y, p[0].z, 0.0],
+                    p1: [p[1].x, p[1].y, p[1].z, 0.0],
+                    p2: [p[2].x, p[2].y, p[2].z, 0.0],
+                    n0: [n[0].x, n[0].y, n[0].z, 0.0],
+                    n1: [n[1].x, n[1].y, n[1].z, 0.0],
+                    n2: [n[2].x, n[2].y, n[2].z, 0.0],
+                    uv01: [uv[0][0], uv[0][1], uv[1][0], uv[1][1]],
+                    uv2_pad: [uv[2][0], uv[2][1], 0.0, 0.0],
+                }
+            })
+            .collect();
+
+        let uniform = GpuBakeUniform {
+            width: config.width,
+            height: config.height,
+            ao_rays: config.ao_rays,
+            triangle_count: triangles.len() as u32,
+            light_dir_ao_dist: [
+                config.direct_light_dir.x,
+                config.direct_light_dir.y,
+                config.direct_light_dir.z,
+                config.ao_distance,
+            ],
+            light_color_ao_str: [
+                config.direct_light_color.x,
+                config.direct_light_color.y,
+                config.direct_light_color.z,
+                config.ao_strength,
+            ],
+        };
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Bake Uniform"),
+            size: std::mem::size_of::<GpuBakeUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniform]));
+
+        let tri_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Bake Triangles"),
+            size: (std::mem::size_of::<GpuBakerTriangle>() * gpu_tris.len().max(1)) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !gpu_tris.is_empty() {
+            queue.write_buffer(&tri_buffer, 0, bytemuck::cast_slice(&gpu_tris));
+        }
+
+        let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("GPU Bake Output"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GPU Bake BG"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: tri_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&output_view),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("GPU Bake Encoder"),
+        });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("GPU Lightmap Bake"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            let wg_x = (config.width + 7) / 8;
+            let wg_y = (config.height + 7) / 8;
+            cpass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
+
+        (output_texture, encoder.finish())
+    }
+}
+
+/// Compute shader for GPU lightmap baking.
+pub const GPU_LIGHTMAP_BAKE_WGSL: &str = r#"
+struct BakeUniforms {
+    width: u32,
+    height: u32,
+    ao_rays: u32,
+    triangle_count: u32,
+    light_dir_ao_dist: vec4<f32>,
+    light_color_ao_str: vec4<f32>,
+};
+
+struct Triangle {
+    p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>,
+    n0: vec4<f32>, n1: vec4<f32>, n2: vec4<f32>,
+    uv01: vec4<f32>,
+    uv2_pad: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> cfg: BakeUniforms;
+@group(0) @binding(1) var<storage, read> tris: array<Triangle>;
+@group(0) @binding(2) var output: texture_storage_2d<rgba16float, write>;
+
+fn barycentric(tri_uv0: vec2<f32>, tri_uv1: vec2<f32>, tri_uv2: vec2<f32>, p: vec2<f32>) -> vec3<f32> {
+    let v0 = tri_uv1 - tri_uv0;
+    let v1 = tri_uv2 - tri_uv0;
+    let v2 = p - tri_uv0;
+    let d00 = dot(v0, v0);
+    let d01 = dot(v0, v1);
+    let d11 = dot(v1, v1);
+    let d20 = dot(v2, v0);
+    let d21 = dot(v2, v1);
+    let denom = d00 * d11 - d01 * d01;
+    if abs(denom) < 1e-10 { return vec3(-1.0); }
+    let bv = (d11 * d20 - d01 * d21) / denom;
+    let bw = (d00 * d21 - d01 * d20) / denom;
+    let bu = 1.0 - bv - bw;
+    return vec3(bu, bv, bw);
+}
+
+fn ray_tri_intersect(ro: vec3<f32>, rd: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> f32 {
+    let e1 = p1 - p0;
+    let e2 = p2 - p0;
+    let h = cross(rd, e2);
+    let a = dot(e1, h);
+    if abs(a) < 1e-8 { return -1.0; }
+    let f = 1.0 / a;
+    let s = ro - p0;
+    let u = f * dot(s, h);
+    if u < 0.0 || u > 1.0 { return -1.0; }
+    let q = cross(s, e1);
+    let v = f * dot(rd, q);
+    if v < 0.0 || u + v > 1.0 { return -1.0; }
+    let t = f * dot(e2, q);
+    if t > 1e-4 { return t; }
+    return -1.0;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= cfg.width || gid.y >= cfg.height { return; }
+
+    let u = (f32(gid.x) + 0.5) / f32(cfg.width);
+    let v = (f32(gid.y) + 0.5) / f32(cfg.height);
+    let p = vec2(u, v);
+
+    var world_pos = vec3(0.0);
+    var world_normal = vec3(0.0, 1.0, 0.0);
+    var found = false;
+
+    for (var i = 0u; i < cfg.triangle_count; i = i + 1u) {
+        let tri = tris[i];
+        let uv0 = tri.uv01.xy;
+        let uv1 = tri.uv01.zw;
+        let uv2 = tri.uv2_pad.xy;
+        let bary = barycentric(uv0, uv1, uv2, p);
+        if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
+            world_pos = tri.p0.xyz * bary.x + tri.p1.xyz * bary.y + tri.p2.xyz * bary.z;
+            world_normal = normalize(tri.n0.xyz * bary.x + tri.n1.xyz * bary.y + tri.n2.xyz * bary.z);
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        textureStore(output, vec2<i32>(gid.xy), vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    let light_dir = cfg.light_dir_ao_dist.xyz;
+    let n_dot_l = max(dot(world_normal, -light_dir), 0.0);
+
+    // Shadow ray
+    let shadow_origin = world_pos + world_normal * 0.001;
+    var shadowed = false;
+    for (var i = 0u; i < cfg.triangle_count; i = i + 1u) {
+        let tri = tris[i];
+        let t = ray_tri_intersect(shadow_origin, -light_dir, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
+        if t > 0.0 { shadowed = true; break; }
+    }
+
+    var direct = vec3(0.0);
+    if !shadowed {
+        direct = cfg.light_color_ao_str.xyz * n_dot_l;
+    }
+
+    let ao_strength = cfg.light_color_ao_str.w;
+    let color = direct * (1.0 - ao_strength * 0.5);
+
+    textureStore(output, vec2<i32>(gid.xy), vec4(color, 1.0));
+}
+"#;

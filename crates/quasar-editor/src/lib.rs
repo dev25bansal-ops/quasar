@@ -12,8 +12,10 @@ pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
 pub mod renderer;
+pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
+pub use shader_graph_editor::ShaderGraphEditor;
 pub use editor_state::{
     EditCommand, EditorMode, EditorState, SetMaterialCommand, SetPositionCommand,
     SetRotationCommand, SetScaleCommand, UndoStack, WorldSnapshot,
@@ -45,6 +47,10 @@ pub struct Editor {
     pub show_metrics: bool,
     /// Show the asset browser panel.
     pub show_asset_browser: bool,
+    /// Show the shader graph editor panel.
+    pub show_shader_graph: bool,
+    /// Shader graph editor state.
+    pub shader_graph_editor: ShaderGraphEditor,
     /// The currently selected entity (if any).
     pub selected_entity: Option<Entity>,
     /// Console log buffer.
@@ -64,6 +70,8 @@ impl Editor {
             show_console: false,
             show_metrics: true,
             show_asset_browser: false,
+            show_shader_graph: false,
+            shader_graph_editor: ShaderGraphEditor::new(),
             selected_entity: None,
             console: console::ConsoleLog::new(),
             state: EditorState::new(),
@@ -106,6 +114,7 @@ impl Editor {
                 ui.toggle_value(&mut self.show_console, "📝 Console");
                 ui.toggle_value(&mut self.show_metrics, "📊 Metrics");
                 ui.toggle_value(&mut self.show_asset_browser, "📁 Assets");
+                ui.toggle_value(&mut self.show_shader_graph, "🔗 Shader Graph");
                 ui.separator();
 
                 // Play/Pause/Stop buttons

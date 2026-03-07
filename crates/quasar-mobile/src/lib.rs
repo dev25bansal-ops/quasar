@@ -15,10 +15,12 @@
 
 pub mod gesture;
 pub mod gyroscope;
+pub mod runner;
 pub mod touch;
 
 pub use gesture::{Gesture, GestureRecognizer, SwipeDirection};
 pub use gyroscope::Gyroscope;
+pub use runner::{MobileRunner, run_mobile};
 pub use touch::{TouchInput, TouchPhase, TouchPointer, MAX_TOUCH_POINTERS};
 
 /// Mobile-specific configuration.

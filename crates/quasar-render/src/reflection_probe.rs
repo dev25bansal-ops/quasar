@@ -265,6 +265,53 @@ impl ReflectionProbeManager {
             1000.0,
         )
     }
+
+    /// Create per-face `TextureView`s for writing into a probe's cubemap slot.
+    ///
+    /// Returns 6 views (one per face: +X, −X, +Y, −Y, +Z, −Z) at mip 0.
+    pub fn face_views(&self, probe_slot: u32) -> [wgpu::TextureView; 6] {
+        std::array::from_fn(|face| {
+            self.cubemap_array.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Probe Face View"),
+                dimension: Some(wgpu::TextureViewDimension::D2),
+                base_array_layer: probe_slot * 6 + face as u32,
+                array_layer_count: Some(1),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        })
+    }
+
+    /// Bake a single reflection probe by rendering the scene into its six cubemap faces.
+    ///
+    /// `render_face` is called six times with `(encoder, face_view, view_matrix, projection_matrix)`.
+    /// The caller should render the scene from the probe's position into the supplied `face_view`.
+    pub fn bake_probe<F>(
+        &self,
+        device: &wgpu::Device,
+        probe: &ReflectionProbe,
+        mut render_face: F,
+    ) -> wgpu::CommandBuffer
+    where
+        F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, glam::Mat4, glam::Mat4),
+    {
+        let slot = probe.slot.expect("probe must have an assigned slot — call update_probes first");
+        let face_views = self.face_views(slot as u32);
+        let view_matrices = Self::cubemap_view_matrices(probe.position);
+        let projection = Self::cubemap_projection();
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Reflection Probe Bake"),
+        });
+
+        for (face, (view, mat)) in face_views.iter().zip(view_matrices.iter()).enumerate() {
+            let _ = face; // unused but useful for debugging
+            render_face(&mut encoder, view, *mat, projection);
+        }
+
+        encoder.finish()
+    }
 }
 
 #[cfg(test)]

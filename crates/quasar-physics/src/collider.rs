@@ -32,6 +32,16 @@ pub enum ColliderShape {
     Cylinder { half_height: f32, radius: f32 },
     /// Cone with half-height and radius.
     Cone { half_height: f32, radius: f32 },
+    /// Height-field terrain collider.
+    ///
+    /// `heights` is a row-major grid of `nrows × ncols` elevation values.
+    /// `scale` applies to the (x, y, z) axes of the resulting shape.
+    HeightField {
+        nrows: usize,
+        ncols: usize,
+        heights: Vec<f32>,
+        scale: [f32; 3],
+    },
 }
 
 impl ColliderShape {
@@ -59,6 +69,18 @@ impl ColliderShape {
                 half_height,
                 radius,
             } => SharedShape::cone(*half_height, *radius),
+            Self::HeightField {
+                nrows,
+                ncols,
+                heights,
+                scale,
+            } => {
+                let matrix = nalgebra::DMatrix::from_row_slice(*nrows, *ncols, heights);
+                SharedShape::heightfield(
+                    matrix,
+                    nalgebra::vector![scale[0], scale[1], scale[2]],
+                )
+            }
         }
     }
 }

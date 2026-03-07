@@ -95,6 +95,8 @@ pub struct VolumetricFogPass {
     pub sampler: wgpu::Sampler,
     pub width: u32,
     pub height: u32,
+    /// Whether the real depth texture has been bound (replacing the 1×1 placeholder).
+    pub depth_bound: bool,
 }
 
 impl VolumetricFogPass {
@@ -330,6 +332,7 @@ impl VolumetricFogPass {
             sampler,
             width,
             height,
+            depth_bound: false,
         }
     }
 
@@ -394,10 +397,19 @@ impl VolumetricFogPass {
                 },
             ],
         });
+        self.depth_bound = true;
     }
 
-    /// Resize the scatter texture (call on window resize).
-    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+    /// Resize the scatter texture and rebind the depth view.
+    ///
+    /// Pass the current depth texture view so the bind group is kept in sync.
+    pub fn resize(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        depth_view: &wgpu::TextureView,
+    ) {
         self.width = width;
         self.height = height;
         self.scatter_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -418,6 +430,7 @@ impl VolumetricFogPass {
         self.scatter_view = self
             .scatter_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        self.rebuild_bind_group(device, depth_view);
     }
 }
 
