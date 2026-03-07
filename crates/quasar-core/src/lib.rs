@@ -42,11 +42,11 @@ pub use asset_server::{
     AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetReloadSystem,
     AssetReloadedEvent, AssetServer, ReloadKind,
 };
-pub use ecs::{Component, Entity, EntityBuilder, World};
+pub use ecs::{Component, Entity, EntityBuilder, World, flush_commands, QueryState, WorldQuery, QueryFilter};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;
-pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor};
-pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, find_path, path_to_waypoints};
+pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent};
+pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
 pub use plugin::Plugin;
 pub use prefab::{Prefab, PrefabEntity, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, instantiate_prefab};
 pub use profiler::{FrameStats, Profiler, ProfilerPlugin};

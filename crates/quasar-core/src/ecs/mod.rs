@@ -24,8 +24,14 @@ pub use archetype::{
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
 pub use entity::Entity;
-pub use parallel::{AccessMode, ComponentAccess, ParallelSchedule, SystemGraph, SystemNode};
-pub use query::{Query, QueryIter};
+pub use parallel::{
+    AccessMode, ComponentAccess, ParallelSchedule, ReadWriteSet, SystemGraph, SystemNode,
+    read_set, system_node_with_access, write_set,
+};
+pub use query::{
+    FilterAdded, FilterChanged, FilterRemoved, FilterWith, FilterWithout, Query, QueryFilter,
+    QueryIter, QueryState, WorldQuery,
+};
 pub use system::{Schedule, System, SystemStage};
 pub use world::{EntityBuilder, World};
 
@@ -39,6 +45,21 @@ pub struct With<T: Component>(std::marker::PhantomData<T>);
 
 /// Marker for "entity must NOT have component W" filter.
 pub struct Without<T: Component>(std::marker::PhantomData<T>);
+
+/// Marker for "entity just had component T added" filter.
+pub struct Added<T: Component>(std::marker::PhantomData<T>);
+
+/// Marker for "entity just had component T removed" filter.
+pub struct Removed<T: Component>(std::marker::PhantomData<T>);
+
+/// Flush pending `Commands` from the world. Call between stages or after
+/// system execution to apply deferred mutations.
+pub fn flush_commands(world: &mut World) {
+    if let Some(mut cmds) = world.remove_resource::<Commands>() {
+        cmds.apply(world);
+        world.insert_resource(cmds);
+    }
+}
 
 #[macro_export]
 macro_rules! query {

@@ -262,34 +262,80 @@ pub struct RollbackState {
     pub inputs: HashMap<ClientId, Vec<InputData>>,
 }
 
-/// **STUB** — Rollback netcode manager.
+/// Per-client input history ring buffer for rollback.
+pub struct InputHistory {
+    /// Ring of per-frame inputs keyed by frame number.
+    buffer: HashMap<u64, HashMap<ClientId, Vec<InputData>>>,
+    oldest_frame: u64,
+    capacity: u32,
+}
+
+impl InputHistory {
+    pub fn new(capacity: u32) -> Self {
+        Self {
+            buffer: HashMap::with_capacity(capacity as usize),
+            oldest_frame: 0,
+            capacity,
+        }
+    }
+
+    /// Record inputs for a given frame.
+    pub fn record(&mut self, frame: u64, client_id: ClientId, inputs: Vec<InputData>) {
+        let entry = self.buffer.entry(frame).or_insert_with(HashMap::new);
+        entry.insert(client_id, inputs);
+        // Evict stale frames.
+        while self.buffer.len() > self.capacity as usize {
+            self.buffer.remove(&self.oldest_frame);
+            self.oldest_frame += 1;
+        }
+    }
+
+    /// Get all client inputs for a given frame.
+    pub fn get(&self, frame: u64) -> Option<&HashMap<ClientId, Vec<InputData>>> {
+        self.buffer.get(&frame)
+    }
+
+    /// Replace/correct the input for a specific client at a specific frame.
+    pub fn correct(&mut self, frame: u64, client_id: ClientId, inputs: Vec<InputData>) {
+        let entry = self.buffer.entry(frame).or_insert_with(HashMap::new);
+        entry.insert(client_id, inputs);
+    }
+
+    /// Get the range of available frames.
+    pub fn available_range(&self) -> (u64, u64) {
+        let min = self.buffer.keys().copied().min().unwrap_or(0);
+        let max = self.buffer.keys().copied().max().unwrap_or(0);
+        (min, max)
+    }
+}
+
+/// Misprediction result returned by `detect_misprediction`.
+pub struct Misprediction {
+    pub frame: u64,
+    pub server_entities: HashMap<NetworkEntityId, EntitySnapshot>,
+}
+
+/// Rollback netcode manager with input history and re-simulation support.
 ///
-/// `RollbackManager` provides state snapshot storage and retrieval, but the
-/// following features are **not yet implemented**:
+/// Stores per-frame world snapshots and per-client input history in ring
+/// buffers. When the server sends an authoritative snapshot that disagrees
+/// with a predicted frame, the caller can:
 ///
-/// - **Input history buffer**: upstream must feed per-frame inputs via
-///   [`save_state`](Self::save_state).
-/// - **Deterministic simulation tick**: the physics / game-logic step must
-///   be fully deterministic for rollback to produce correct results.
-/// - **Re-simulation after misprediction**: when a server-authoritative
-///   snapshot disagrees with a predicted frame, the caller is responsible
-///   for calling [`rollback_to`](Self::rollback_to) and re-simulating
-///   forward with corrected inputs.
-///
-/// `NetworkConfig::rollback_frame_count` controls how many frames of
-/// history are kept (default 8).  This is sufficient for typical
-/// round-trip latencies ≤130 ms at 60 Hz.
-///
-/// **Next steps** (in order of priority):
-/// 1. Add an `InputHistory` ring-buffer that stores per-client inputs.
-/// 2. Teach the server tick loop to call `save_state` every tick.
-/// 3. On receiving a correction, rewind via `rollback_to` and re-simulate
-///    with the corrected inputs, then fast-forward back to the current
-///    frame.
+/// 1. Call `detect_misprediction` to determine if correction is needed.
+/// 2. Call `begin_rollback` to rewind state to the corrected frame.
+/// 3. Re-simulate forward using `inputs_for_frame` + game logic.
+/// 4. Call `end_rollback` to record the corrected frames.
 pub struct RollbackManager {
     pub states: Vec<RollbackState>,
     pub max_frames: u32,
     pub current_frame: u64,
+    pub input_history: InputHistory,
+    /// True while a rollback re-simulation is in progress.
+    pub is_rolling_back: bool,
+    /// Frame we are rolling back to (valid only during rollback).
+    pub rollback_target_frame: u64,
+    /// Position-squared misprediction threshold.
+    pub misprediction_threshold: f32,
 }
 
 impl RollbackManager {
@@ -298,7 +344,26 @@ impl RollbackManager {
             states: Vec::with_capacity(max_frames as usize),
             max_frames,
             current_frame: 0,
+            input_history: InputHistory::new(max_frames),
+            is_rolling_back: false,
+            rollback_target_frame: 0,
+            misprediction_threshold: 0.001,
         }
+    }
+
+    /// Record inputs for the current frame from a specific client.
+    pub fn record_input(&mut self, client_id: ClientId, inputs: Vec<InputData>) {
+        self.input_history.record(self.current_frame, client_id, inputs);
+    }
+
+    /// Get stored inputs for a specific frame (used during re-simulation).
+    pub fn inputs_for_frame(&self, frame: u64) -> Option<&HashMap<ClientId, Vec<InputData>>> {
+        self.input_history.get(frame)
+    }
+
+    /// Correct the input for a specific client at a past frame (server authority).
+    pub fn correct_input(&mut self, frame: u64, client_id: ClientId, inputs: Vec<InputData>) {
+        self.input_history.correct(frame, client_id, inputs);
     }
 
     pub fn save_state(
@@ -306,6 +371,10 @@ impl RollbackManager {
         entities: HashMap<NetworkEntityId, EntitySnapshot>,
         inputs: HashMap<ClientId, Vec<InputData>>,
     ) {
+        // Also store inputs in the history ring buffer.
+        for (client_id, input_list) in &inputs {
+            self.input_history.record(self.current_frame, *client_id, input_list.clone());
+        }
         let state = RollbackState {
             frame: self.current_frame,
             entities,
@@ -320,6 +389,77 @@ impl RollbackManager {
 
     pub fn rollback_to(&mut self, frame: u64) -> Option<&RollbackState> {
         self.states.iter().find(|s| s.frame == frame)
+    }
+
+    /// Compare a server-authoritative snapshot against our predicted state.
+    /// Returns `Some(Misprediction)` if any entity exceeds the threshold.
+    pub fn detect_misprediction(
+        &self,
+        server_frame: u64,
+        server_entities: &HashMap<NetworkEntityId, EntitySnapshot>,
+    ) -> Option<Misprediction> {
+        let local = self.states.iter().find(|s| s.frame == server_frame)?;
+        for (id, server_snap) in server_entities {
+            if let Some(local_snap) = local.entities.get(id) {
+                let dx = server_snap.position[0] - local_snap.position[0];
+                let dy = server_snap.position[1] - local_snap.position[1];
+                let dz = server_snap.position[2] - local_snap.position[2];
+                if dx * dx + dy * dy + dz * dz > self.misprediction_threshold {
+                    return Some(Misprediction {
+                        frame: server_frame,
+                        server_entities: server_entities.clone(),
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Begin a rollback: restores the world to the given frame's snapshot.
+    /// The caller must then re-simulate from `frame` to `current_frame`
+    /// using the (possibly corrected) input history, calling `advance_rollback`
+    /// after each re-simulated tick.
+    pub fn begin_rollback(
+        &mut self,
+        frame: u64,
+        corrected_entities: HashMap<NetworkEntityId, EntitySnapshot>,
+    ) -> bool {
+        if let Some(idx) = self.states.iter().position(|s| s.frame == frame) {
+            // Replace the snapshot at the corrected frame with server data.
+            self.states[idx].entities = corrected_entities;
+            // Discard all snapshots after this frame — they will be re-simulated.
+            self.states.truncate(idx + 1);
+            self.is_rolling_back = true;
+            self.rollback_target_frame = frame;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Advance one re-simulation tick during rollback.
+    /// `entities` is the world state after re-simulating one frame.
+    pub fn advance_rollback(&mut self, entities: HashMap<NetworkEntityId, EntitySnapshot>) {
+        let frame = match self.states.last() {
+            Some(s) => s.frame + 1,
+            None => self.rollback_target_frame + 1,
+        };
+        let inputs = self.input_history.get(frame).cloned().unwrap_or_default();
+        let state = RollbackState { frame, entities, inputs };
+        self.states.push(state);
+    }
+
+    /// End the rollback. Call after re-simulation has caught up to current_frame.
+    pub fn end_rollback(&mut self) {
+        self.is_rolling_back = false;
+    }
+
+    /// How many frames behind the current frame can we still rollback to.
+    pub fn available_rollback_frames(&self) -> u64 {
+        if self.states.is_empty() {
+            return 0;
+        }
+        self.current_frame.saturating_sub(self.states[0].frame)
     }
 }
 
@@ -466,14 +606,40 @@ fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
 // ── Delta compression ──────────────────────────────────────────
 
 /// Tracks the last-sent state per entity so only changed fields are sent.
+/// Supports encoding/decoding compact binary deltas for bandwidth savings.
 pub struct DeltaCompressor {
     last_sent: HashMap<NetworkEntityId, EntitySnapshot>,
+    /// Baseline frame acknowledged by remote peer.
+    pub baseline_frame: u64,
+    /// Baselines per-entity confirmed by ACK.
+    baselines: HashMap<NetworkEntityId, EntitySnapshot>,
+}
+
+/// Bit flags indicating which fields changed in a delta packet.
+#[derive(Debug, Clone, Copy)]
+pub struct DeltaFlags(pub u8);
+
+impl DeltaFlags {
+    pub const POSITION: u8 = 0b0000_0001;
+    pub const ROTATION: u8 = 0b0000_0010;
+    pub const SCALE:    u8 = 0b0000_0100;
+    pub const FRAME:    u8 = 0b0000_1000;
+}
+
+/// A compact encoded delta for a single entity.
+#[derive(Debug, Clone)]
+pub struct EncodedDelta {
+    pub entity_id: NetworkEntityId,
+    pub flags: u8,
+    pub data: Vec<u8>,
 }
 
 impl DeltaCompressor {
     pub fn new() -> Self {
         Self {
             last_sent: HashMap::new(),
+            baseline_frame: 0,
+            baselines: HashMap::new(),
         }
     }
 
@@ -496,14 +662,203 @@ impl DeltaCompressor {
         }
     }
 
+    /// Encode a compact binary delta between the baseline and current snapshot.
+    /// Returns `None` if nothing changed.
+    pub fn encode_delta(
+        &self,
+        id: NetworkEntityId,
+        current: &EntitySnapshot,
+    ) -> Option<EncodedDelta> {
+        let baseline = self.baselines.get(&id);
+        let mut flags: u8 = 0;
+        let mut data = Vec::with_capacity(32);
+
+        match baseline {
+            None => {
+                // Full snapshot — all fields.
+                flags = DeltaFlags::POSITION | DeltaFlags::ROTATION | DeltaFlags::SCALE | DeltaFlags::FRAME;
+                for &v in &current.position { data.extend_from_slice(&v.to_le_bytes()); }
+                for &v in &current.rotation { data.extend_from_slice(&v.to_le_bytes()); }
+                for &v in &current.scale    { data.extend_from_slice(&v.to_le_bytes()); }
+                data.extend_from_slice(&current.frame.to_le_bytes());
+            }
+            Some(base) => {
+                let pos_diff = (current.position[0] - base.position[0]).powi(2)
+                    + (current.position[1] - base.position[1]).powi(2)
+                    + (current.position[2] - base.position[2]).powi(2);
+                if pos_diff > 0.000_25 {
+                    flags |= DeltaFlags::POSITION;
+                    // XOR-based delta: encode difference as f32 bytes XORed.
+                    for i in 0..3 {
+                        let base_bits = base.position[i].to_bits();
+                        let curr_bits = current.position[i].to_bits();
+                        data.extend_from_slice(&(base_bits ^ curr_bits).to_le_bytes());
+                    }
+                }
+                let rot_diff = (current.rotation[0] - base.rotation[0]).powi(2)
+                    + (current.rotation[1] - base.rotation[1]).powi(2)
+                    + (current.rotation[2] - base.rotation[2]).powi(2)
+                    + (current.rotation[3] - base.rotation[3]).powi(2);
+                if rot_diff > 0.000_1 {
+                    flags |= DeltaFlags::ROTATION;
+                    for i in 0..4 {
+                        let base_bits = base.rotation[i].to_bits();
+                        let curr_bits = current.rotation[i].to_bits();
+                        data.extend_from_slice(&(base_bits ^ curr_bits).to_le_bytes());
+                    }
+                }
+                let scale_diff = (current.scale[0] - base.scale[0]).powi(2)
+                    + (current.scale[1] - base.scale[1]).powi(2)
+                    + (current.scale[2] - base.scale[2]).powi(2);
+                if scale_diff > 0.000_25 {
+                    flags |= DeltaFlags::SCALE;
+                    for i in 0..3 {
+                        let base_bits = base.scale[i].to_bits();
+                        let curr_bits = current.scale[i].to_bits();
+                        data.extend_from_slice(&(base_bits ^ curr_bits).to_le_bytes());
+                    }
+                }
+                if current.frame != base.frame {
+                    flags |= DeltaFlags::FRAME;
+                    data.extend_from_slice(&current.frame.to_le_bytes());
+                }
+                if flags == 0 {
+                    return None;
+                }
+            }
+        }
+
+        Some(EncodedDelta { entity_id: id, flags, data })
+    }
+
+    /// Decode a delta packet against the local baseline to reconstruct the snapshot.
+    pub fn decode_delta(&self, delta: &EncodedDelta) -> EntitySnapshot {
+        let base = self.baselines.get(&delta.entity_id);
+        let mut offset = 0usize;
+
+        let read_f32 = |d: &[u8], o: &mut usize| -> f32 {
+            let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
+            *o += 4;
+            f32::from_le_bytes(bytes)
+        };
+        let read_u32 = |d: &[u8], o: &mut usize| -> u32 {
+            let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
+            *o += 4;
+            u32::from_le_bytes(bytes)
+        };
+        let read_u64 = |d: &[u8], o: &mut usize| -> u64 {
+            let bytes: [u8; 8] = [
+                d[*o], d[*o + 1], d[*o + 2], d[*o + 3],
+                d[*o + 4], d[*o + 5], d[*o + 6], d[*o + 7],
+            ];
+            *o += 8;
+            u64::from_le_bytes(bytes)
+        };
+
+        let default_snap = EntitySnapshot {
+            entity_id: delta.entity_id,
+            position: [0.0; 3],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0; 3],
+            frame: 0,
+        };
+        let b = base.unwrap_or(&default_snap);
+
+        let position = if delta.flags & DeltaFlags::POSITION != 0 {
+            if base.is_none() {
+                // Full snapshot mode: raw f32s.
+                [read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset)]
+            } else {
+                // XOR delta mode.
+                let mut pos = [0.0f32; 3];
+                for i in 0..3 {
+                    let xor_bits = read_u32(&delta.data, &mut offset);
+                    pos[i] = f32::from_bits(b.position[i].to_bits() ^ xor_bits);
+                }
+                pos
+            }
+        } else {
+            b.position
+        };
+
+        let rotation = if delta.flags & DeltaFlags::ROTATION != 0 {
+            if base.is_none() {
+                [read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset)]
+            } else {
+                let mut rot = [0.0f32; 4];
+                for i in 0..4 {
+                    let xor_bits = read_u32(&delta.data, &mut offset);
+                    rot[i] = f32::from_bits(b.rotation[i].to_bits() ^ xor_bits);
+                }
+                rot
+            }
+        } else {
+            b.rotation
+        };
+
+        let scale = if delta.flags & DeltaFlags::SCALE != 0 {
+            if base.is_none() {
+                [read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset),
+                 read_f32(&delta.data, &mut offset)]
+            } else {
+                let mut s = [0.0f32; 3];
+                for i in 0..3 {
+                    let xor_bits = read_u32(&delta.data, &mut offset);
+                    s[i] = f32::from_bits(b.scale[i].to_bits() ^ xor_bits);
+                }
+                s
+            }
+        } else {
+            b.scale
+        };
+
+        let frame = if delta.flags & DeltaFlags::FRAME != 0 {
+            read_u64(&delta.data, &mut offset)
+        } else {
+            b.frame
+        };
+
+        EntitySnapshot {
+            entity_id: delta.entity_id,
+            position,
+            rotation,
+            scale,
+            frame,
+        }
+    }
+
     /// Record that we sent `snapshot` for `id`.
     pub fn mark_sent(&mut self, id: NetworkEntityId, snapshot: EntitySnapshot) {
         self.last_sent.insert(id, snapshot);
     }
 
+    /// Acknowledge that the remote peer has received our baseline up to a frame.
+    /// Promotes last_sent snapshots into the baseline set.
+    pub fn acknowledge_baseline(&mut self, _acked_frame: u64) {
+        // Promote all last_sent to baselines upon acknowledgment.
+        for (id, snap) in &self.last_sent {
+            self.baselines.insert(*id, snap.clone());
+        }
+        self.baseline_frame = _acked_frame;
+    }
+
     /// Remove tracking for a despawned entity.
     pub fn remove(&mut self, id: &NetworkEntityId) {
         self.last_sent.remove(id);
+        self.baselines.remove(id);
+    }
+
+    /// Reset all baselines (e.g., on reconnection).
+    pub fn reset_baselines(&mut self) {
+        self.baselines.clear();
+        self.last_sent.clear();
+        self.baseline_frame = 0;
     }
 }
 
@@ -1102,6 +1457,155 @@ impl ReliabilityManager {
 impl Default for ReliabilityManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  QUIC TRANSPORT ABSTRACTION
+// ════════════════════════════════════════════════════════════════════
+
+/// Transport protocol selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportProtocol {
+    Udp,
+    Quic,
+}
+
+/// Configuration for the QUIC transport.
+#[derive(Debug, Clone)]
+pub struct QuicConfig {
+    /// Server certificate (DER encoded) for TLS — `None` to accept any cert
+    /// (useful for development / LAN play).
+    pub server_cert_der: Option<Vec<u8>>,
+    /// Keep-alive interval in milliseconds. 0 = disabled.
+    pub keep_alive_ms: u32,
+    /// Maximum idle timeout in milliseconds before the connection is closed.
+    pub idle_timeout_ms: u32,
+    /// Maximum number of concurrent unidirectional streams.
+    pub max_uni_streams: u32,
+    /// Maximum number of concurrent bidirectional streams.
+    pub max_bi_streams: u32,
+}
+
+impl Default for QuicConfig {
+    fn default() -> Self {
+        Self {
+            server_cert_der: None,
+            keep_alive_ms: 5000,
+            idle_timeout_ms: 30000,
+            max_uni_streams: 16,
+            max_bi_streams: 16,
+        }
+    }
+}
+
+/// Stream priority / channel designation for QUIC streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicChannel {
+    /// Reliable ordered — control messages, RPCs, spawns/despawns.
+    Reliable,
+    /// Unreliable unordered — entity state snapshots (uses datagrams).
+    Unreliable,
+    /// Reliable unordered — asset chunk transfers.
+    BulkTransfer,
+}
+
+/// A QUIC transport session (client or server side).
+///
+/// This is a protocol-level abstraction. The actual QUIC implementation
+/// (e.g. via the `quinn` crate) is plugged in at the application layer
+/// through the [`QuicTransportBackend`] trait.
+pub struct QuicTransport {
+    backend: Box<dyn QuicTransportBackend>,
+    config: QuicConfig,
+}
+
+/// Trait for the underlying QUIC library integration.
+///
+/// Implementors wrap a library like `quinn` or `s2n-quic` behind this
+/// interface so the engine stays backend-agnostic.
+pub trait QuicTransportBackend: Send + Sync {
+    /// Open a connection to `addr`. Non-blocking; connection progress
+    /// is reported via [`QuicTransportBackend::poll`].
+    fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
+
+    /// Start listening on `addr`.
+    fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
+
+    /// Drive the QUIC state machine — must be called every frame.
+    fn poll(&mut self) -> Vec<QuicEvent>;
+
+    /// Send data on the given channel to `addr`.
+    fn send(&mut self, addr: SocketAddr, channel: QuicChannel, data: &[u8]) -> Result<(), NetworkError>;
+
+    /// Number of currently connected peers.
+    fn peer_count(&self) -> usize;
+
+    /// Close a specific connection.
+    fn disconnect(&mut self, addr: SocketAddr);
+}
+
+/// Events produced by the QUIC backend each frame.
+#[derive(Debug, Clone)]
+pub enum QuicEvent {
+    /// A new peer connected.
+    Connected(SocketAddr),
+    /// A peer disconnected (may include a reason string).
+    Disconnected(SocketAddr, String),
+    /// Data received from a peer on a given channel.
+    Data {
+        from: SocketAddr,
+        channel: QuicChannel,
+        payload: Vec<u8>,
+    },
+}
+
+impl QuicTransport {
+    pub fn new(backend: Box<dyn QuicTransportBackend>, config: QuicConfig) -> Self {
+        Self { backend, config }
+    }
+
+    pub fn config(&self) -> &QuicConfig {
+        &self.config
+    }
+
+    pub fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        self.backend.connect(addr)
+    }
+
+    pub fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        self.backend.listen(addr)
+    }
+
+    pub fn poll(&mut self) -> Vec<QuicEvent> {
+        self.backend.poll()
+    }
+
+    pub fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: QuicChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError> {
+        self.backend.send(addr, channel, data)
+    }
+
+    pub fn send_message(
+        &mut self,
+        addr: SocketAddr,
+        channel: QuicChannel,
+        message: &NetworkMessage,
+    ) -> Result<(), NetworkError> {
+        let data = bincode::serialize(message).map_err(|e| NetworkError(e.to_string()))?;
+        self.send(addr, channel, &data)
+    }
+
+    pub fn peer_count(&self) -> usize {
+        self.backend.peer_count()
+    }
+
+    pub fn disconnect(&mut self, addr: SocketAddr) {
+        self.backend.disconnect(addr);
     }
 }
 

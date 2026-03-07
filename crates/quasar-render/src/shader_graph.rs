@@ -14,6 +14,35 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
+// ── Validation / diagnostics ───────────────────────────────────────
+
+/// A single diagnostic message from graph validation or compilation.
+#[derive(Debug, Clone)]
+pub struct ShaderGraphDiagnostic {
+    /// The node that caused the issue (if applicable).
+    pub node_id: Option<NodeId>,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+/// Result of a live-preview compilation attempt.
+#[derive(Debug, Clone)]
+pub struct CompileResult {
+    /// The generated WGSL (empty if compilation failed).
+    pub wgsl: String,
+    /// All diagnostics collected during compilation.
+    pub diagnostics: Vec<ShaderGraphDiagnostic>,
+    /// Whether compilation succeeded (no errors).
+    pub success: bool,
+}
+
 // ── Node types ─────────────────────────────────────────────────────
 
 /// Unique node identifier within a graph.
@@ -638,6 +667,151 @@ impl ShaderGraphCompiler {
         }
 
         Ok(order)
+    }
+
+    /// Validate the graph and return a list of diagnostics.
+    ///
+    /// Checks:
+    /// - PBR output node exists.
+    /// - No cycles.
+    /// - No dangling connections (referencing missing nodes).
+    /// - Warns about unconnected required inputs.
+    pub fn validate(graph: &ShaderGraph) -> Vec<ShaderGraphDiagnostic> {
+        let mut diags = Vec::new();
+
+        // 1. Check PBR output exists.
+        if graph.output_node().is_none() {
+            diags.push(ShaderGraphDiagnostic {
+                node_id: None,
+                severity: DiagnosticSeverity::Error,
+                message: "No PbrOutput node in the graph.".into(),
+            });
+        }
+
+        // 2. Dangling connections.
+        let ids: Vec<NodeId> = graph.nodes.iter().map(|n| n.id).collect();
+        for conn in &graph.connections {
+            if !ids.contains(&conn.from_node) {
+                diags.push(ShaderGraphDiagnostic {
+                    node_id: Some(conn.to_node),
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "Connection references missing source node {}.",
+                        conn.from_node
+                    ),
+                });
+            }
+            if !ids.contains(&conn.to_node) {
+                diags.push(ShaderGraphDiagnostic {
+                    node_id: Some(conn.from_node),
+                    severity: DiagnosticSeverity::Error,
+                    message: format!(
+                        "Connection references missing target node {}.",
+                        conn.to_node
+                    ),
+                });
+            }
+        }
+
+        // 3. Slot bounds.
+        for conn in &graph.connections {
+            if let Some(src) = graph.node(conn.from_node) {
+                if conn.from_slot >= src.output_count() {
+                    diags.push(ShaderGraphDiagnostic {
+                        node_id: Some(conn.from_node),
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Output slot {} exceeds node {:?} output count ({}).",
+                            conn.from_slot, src.kind, src.output_count()
+                        ),
+                    });
+                }
+            }
+            if let Some(dst) = graph.node(conn.to_node) {
+                if conn.to_slot >= dst.input_count() {
+                    diags.push(ShaderGraphDiagnostic {
+                        node_id: Some(conn.to_node),
+                        severity: DiagnosticSeverity::Error,
+                        message: format!(
+                            "Input slot {} exceeds node {:?} input count ({}).",
+                            conn.to_slot, dst.kind, dst.input_count()
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 4. Cycle detection via toposort.
+        if let Err(msg) = Self::topological_order(graph) {
+            diags.push(ShaderGraphDiagnostic {
+                node_id: None,
+                severity: DiagnosticSeverity::Error,
+                message: msg,
+            });
+        }
+
+        // 5. Warn about unconnected PBR inputs.
+        if let Some(out) = graph.output_node() {
+            let slot_names = ["base_color", "normal", "roughness", "metallic", "emissive", "alpha"];
+            for (i, name) in slot_names.iter().enumerate() {
+                if graph.find_input(out.id, i as u32).is_none() {
+                    diags.push(ShaderGraphDiagnostic {
+                        node_id: Some(out.id),
+                        severity: DiagnosticSeverity::Warning,
+                        message: format!("PbrOutput.{name} is unconnected — using default."),
+                    });
+                }
+            }
+        }
+
+        diags
+    }
+
+    /// Live-preview compile: validates, compiles, and returns a [`CompileResult`]
+    /// with diagnostics instead of a bare `Result<String, String>`.
+    ///
+    /// Intended to be called frequently (e.g. on every graph edit) by the editor;
+    /// the caller can display the diagnostics inline next to the affected nodes.
+    pub fn compile_live(graph: &ShaderGraph) -> CompileResult {
+        let mut diagnostics = Self::validate(graph);
+        let has_errors = diagnostics
+            .iter()
+            .any(|d| d.severity == DiagnosticSeverity::Error);
+
+        if has_errors {
+            return CompileResult {
+                wgsl: String::new(),
+                diagnostics,
+                success: false,
+            };
+        }
+
+        match Self::compile(graph) {
+            Ok(wgsl) => {
+                diagnostics.push(ShaderGraphDiagnostic {
+                    node_id: None,
+                    severity: DiagnosticSeverity::Info,
+                    message: format!("Compiled OK — {} bytes WGSL.", wgsl.len()),
+                });
+                CompileResult {
+                    wgsl,
+                    diagnostics,
+                    success: true,
+                }
+            }
+            Err(e) => {
+                diagnostics.push(ShaderGraphDiagnostic {
+                    node_id: None,
+                    severity: DiagnosticSeverity::Error,
+                    message: e,
+                });
+                CompileResult {
+                    wgsl: String::new(),
+                    diagnostics,
+                    success: false,
+                }
+            }
+        }
     }
 }
 

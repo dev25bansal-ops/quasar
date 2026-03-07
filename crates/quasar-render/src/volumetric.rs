@@ -97,6 +97,22 @@ pub struct VolumetricFogPass {
     pub height: u32,
     /// Whether the real depth texture has been bound (replacing the 1×1 placeholder).
     pub depth_bound: bool,
+
+    // ── Froxel resources ──
+    /// 3D Rgba16Float texture: (FROXEL_WIDTH × FROXEL_HEIGHT × FROXEL_DEPTH)
+    /// Stores in-scatter (rgb) + extinction (a) per voxel.
+    pub froxel_texture: wgpu::Texture,
+    pub froxel_view: wgpu::TextureView,
+    /// Accumulated froxel result (front-to-back integration along depth).
+    pub froxel_accum_texture: wgpu::Texture,
+    pub froxel_accum_view: wgpu::TextureView,
+    /// Bind group layout for froxel inject + accumulate passes.
+    pub froxel_bgl: wgpu::BindGroupLayout,
+    pub froxel_bind_group: wgpu::BindGroup,
+    /// Compute: inject density + light scattering into 3D grid.
+    pub froxel_inject_pipeline: wgpu::ComputePipeline,
+    /// Compute: front-to-back accumulation along depth slices.
+    pub froxel_accum_pipeline: wgpu::ComputePipeline,
 }
 
 impl VolumetricFogPass {
@@ -321,6 +337,139 @@ impl VolumetricFogPass {
             cache: None,
         });
 
+        // ── Froxel 3D textures ──
+        let froxel_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Froxel Scatter Volume"),
+            size: wgpu::Extent3d {
+                width: FROXEL_WIDTH,
+                height: FROXEL_HEIGHT,
+                depth_or_array_layers: FROXEL_DEPTH,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let froxel_view = froxel_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let froxel_accum_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Froxel Accumulated"),
+            size: wgpu::Extent3d {
+                width: FROXEL_WIDTH,
+                height: FROXEL_HEIGHT,
+                depth_or_array_layers: FROXEL_DEPTH,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D3,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let froxel_accum_view =
+            froxel_accum_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Froxel bind group layout:
+        //   0: uniform, 1: froxel volume (rw storage), 2: froxel accum (rw storage), 3: depth
+        let froxel_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Froxel BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let froxel_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Froxel BG"),
+            layout: &froxel_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&froxel_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&froxel_accum_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&froxel_view),
+                },
+            ],
+        });
+
+        let froxel_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Froxel Compute"),
+            source: wgpu::ShaderSource::Wgsl(FROXEL_COMPUTE_WGSL.into()),
+        });
+        let froxel_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Froxel Layout"),
+            bind_group_layouts: &[&froxel_bgl],
+            push_constant_ranges: &[],
+        });
+        let froxel_inject_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Froxel Inject Pipeline"),
+                layout: Some(&froxel_layout),
+                module: &froxel_shader,
+                entry_point: Some("inject"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let froxel_accum_pipeline =
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Froxel Accumulate Pipeline"),
+                layout: Some(&froxel_layout),
+                module: &froxel_shader,
+                entry_point: Some("accumulate"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
         Self {
             scatter_texture,
             scatter_view,
@@ -333,6 +482,14 @@ impl VolumetricFogPass {
             width,
             height,
             depth_bound: false,
+            froxel_texture,
+            froxel_view,
+            froxel_accum_texture,
+            froxel_accum_view,
+            froxel_bgl,
+            froxel_bind_group,
+            froxel_inject_pipeline,
+            froxel_accum_pipeline,
         }
     }
 
@@ -431,6 +588,44 @@ impl VolumetricFogPass {
             .scatter_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         self.rebuild_bind_group(device, depth_view);
+    }
+
+    /// Dispatch the froxel inject + accumulate compute passes.
+    ///
+    /// Call this *after* updating uniforms and *before* the composite pass.
+    /// The froxel_accum_view then contains the integrated volume ready for
+    /// sampling in the composite shader.
+    pub fn dispatch_froxel(&self, encoder: &mut wgpu::CommandEncoder) {
+        // Pass 1: inject density + in-scattering into the 3D grid.
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Froxel Inject"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.froxel_inject_pipeline);
+            cpass.set_bind_group(0, &self.froxel_bind_group, &[]);
+            // Workgroup size 4×4×4 → dispatch ceil(W/4) × ceil(H/4) × ceil(D/4)
+            cpass.dispatch_workgroups(
+                (FROXEL_WIDTH + 3) / 4,
+                (FROXEL_HEIGHT + 3) / 4,
+                (FROXEL_DEPTH + 3) / 4,
+            );
+        }
+        // Pass 2: front-to-back accumulation along depth axis.
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Froxel Accumulate"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.froxel_accum_pipeline);
+            cpass.set_bind_group(0, &self.froxel_bind_group, &[]);
+            // Each workgroup handles one column (x, y) iterating over depth.
+            cpass.dispatch_workgroups(
+                (FROXEL_WIDTH + 7) / 8,
+                (FROXEL_HEIGHT + 7) / 8,
+                1,
+            );
+        }
     }
 }
 
@@ -545,5 +740,113 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return textureSample(scatter_tex, samp, in.uv);
+}
+"#;
+
+/// Froxel 3D voxel grid compute shader.
+///
+/// Two entry points:
+/// - `inject`: fills the 3D texture with per-voxel in-scatter + extinction.
+/// - `accumulate`: front-to-back integration along the depth axis so each
+///   slice stores the total accumulated radiance and transmittance from the
+///   camera to that depth.
+pub const FROXEL_COMPUTE_WGSL: &str = r#"
+struct FogUniforms {
+    inv_view_proj: mat4x4<f32>,
+    camera_pos_density: vec4<f32>,
+    scatter_absorption: vec4<f32>,
+    params_a: vec4<f32>,
+    params_b: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> fog: FogUniforms;
+@group(0) @binding(1) var froxel_volume: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(2) var froxel_accum: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(3) var froxel_read: texture_3d<f32>;
+
+const FROXEL_W: u32 = 160u;
+const FROXEL_H: u32 = 90u;
+const FROXEL_D: u32 = 128u;
+
+fn slice_to_depth(slice: f32) -> f32 {
+    // Exponential depth distribution: depth = near * (far/near)^(slice/D)
+    let near = 0.1;
+    let far  = fog.params_a.y; // max_distance
+    return near * pow(far / near, slice / f32(FROXEL_D));
+}
+
+fn henyey_greenstein(cos_theta: f32, g: f32) -> f32 {
+    let g2 = g * g;
+    return (1.0 - g2) / (4.0 * 3.14159265 * pow(1.0 + g2 - 2.0 * g * cos_theta, 1.5));
+}
+
+// Inject density + in-scattering per voxel.
+@compute @workgroup_size(4, 4, 4)
+fn inject(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= FROXEL_W || gid.y >= FROXEL_H || gid.z >= FROXEL_D { return; }
+
+    let uv = vec2<f32>(
+        (f32(gid.x) + 0.5) / f32(FROXEL_W),
+        (f32(gid.y) + 0.5) / f32(FROXEL_H),
+    );
+    let ndc = vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+
+    let depth_front = slice_to_depth(f32(gid.z));
+    let depth_back  = slice_to_depth(f32(gid.z) + 1.0);
+    let depth_mid   = (depth_front + depth_back) * 0.5;
+
+    let camera_pos = fog.camera_pos_density.xyz;
+    let far_clip   = fog.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+    let far_world  = far_clip.xyz / far_clip.w;
+    let ray_dir    = normalize(far_world - camera_pos);
+    let pos        = camera_pos + ray_dir * depth_mid;
+
+    let density    = fog.camera_pos_density.w;
+    let scatter_col= fog.scatter_absorption.xyz;
+    let absorption = fog.scatter_absorption.w;
+    let phase_g    = fog.params_a.x;
+    let height_base= fog.params_a.w;
+    let height_fall= fog.params_b.x;
+    let ambient    = fog.params_b.y;
+
+    var local_density = density;
+    if height_fall > 0.0 {
+        local_density *= exp(-max(pos.y - height_base, 0.0) * height_fall);
+    }
+
+    let extinction = local_density * (1.0 + absorption);
+
+    // Directional light (placeholder — same as ray-march fallback).
+    let light_dir = normalize(vec3<f32>(-0.3, -1.0, -0.2));
+    let cos_theta = dot(ray_dir, -light_dir);
+    let phase     = henyey_greenstein(cos_theta, phase_g);
+    let in_scatter= scatter_col * local_density * (phase + ambient);
+
+    textureStore(froxel_volume, vec3<i32>(gid), vec4<f32>(in_scatter, extinction));
+}
+
+// Front-to-back accumulation along depth axis.
+@compute @workgroup_size(8, 8, 1)
+fn accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= FROXEL_W || gid.y >= FROXEL_H { return; }
+
+    var accum_rgb = vec3<f32>(0.0);
+    var transmittance = 1.0;
+
+    for (var z: u32 = 0u; z < FROXEL_D; z = z + 1u) {
+        let data = textureLoad(froxel_read, vec3<i32>(i32(gid.x), i32(gid.y), i32(z)), 0);
+        let in_scatter = data.xyz;
+        let extinction = data.w;
+
+        let depth_front = slice_to_depth(f32(z));
+        let depth_back  = slice_to_depth(f32(z) + 1.0);
+        let step_len    = depth_back - depth_front;
+
+        accum_rgb    += transmittance * in_scatter * step_len;
+        transmittance *= exp(-extinction * step_len);
+
+        textureStore(froxel_accum, vec3<i32>(i32(gid.x), i32(gid.y), i32(z)),
+                     vec4<f32>(accum_rgb, transmittance));
+    }
 }
 "#;

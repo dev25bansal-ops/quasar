@@ -326,6 +326,171 @@ impl NavMeshAgent {
 }
 
 // ---------------------------------------------------------------------------
+// Dynamic obstacles
+// ---------------------------------------------------------------------------
+
+/// A dynamic obstacle that can carve holes in the navmesh at runtime.
+#[derive(Debug, Clone)]
+pub struct NavObstacle {
+    /// Obstacle shape.
+    pub shape: NavObstacleShape,
+    /// World-space center position.
+    pub position: Vec3,
+    /// Whether the obstacle is currently active (blocking navigation).
+    pub active: bool,
+}
+
+/// Supported obstacle shapes.
+#[derive(Debug, Clone)]
+pub enum NavObstacleShape {
+    /// Axis-aligned box with half-extents.
+    Box { half_extents: Vec3 },
+    /// Cylinder with radius and height (Y-up).
+    Cylinder { radius: f32, height: f32 },
+}
+
+impl NavObstacle {
+    /// Create a box obstacle.
+    pub fn new_box(position: Vec3, half_extents: Vec3) -> Self {
+        Self {
+            shape: NavObstacleShape::Box { half_extents },
+            position,
+            active: true,
+        }
+    }
+
+    /// Create a cylinder obstacle.
+    pub fn new_cylinder(position: Vec3, radius: f32, height: f32) -> Self {
+        Self {
+            shape: NavObstacleShape::Cylinder { radius, height },
+            position,
+            active: true,
+        }
+    }
+
+    /// Check if a world-space point is inside this obstacle's volume.
+    pub fn contains(&self, point: Vec3) -> bool {
+        if !self.active {
+            return false;
+        }
+        match &self.shape {
+            NavObstacleShape::Box { half_extents } => {
+                let d = point - self.position;
+                d.x.abs() <= half_extents.x
+                    && d.y.abs() <= half_extents.y
+                    && d.z.abs() <= half_extents.z
+            }
+            NavObstacleShape::Cylinder { radius, height } => {
+                let d = point - self.position;
+                let horiz = (d.x * d.x + d.z * d.z).sqrt();
+                horiz <= *radius && d.y.abs() <= *height * 0.5
+            }
+        }
+    }
+}
+
+/// Manages the navmesh with dynamic obstacle carving.
+///
+/// Maintains a reference copy of the original mesh and rebuilds a
+/// carved version whenever obstacles change.
+pub struct DynamicNavMesh {
+    /// The original, uncarved navmesh.
+    pub base_mesh: NavMesh,
+    /// The current navmesh with obstacles carved out.
+    pub carved_mesh: NavMesh,
+    /// Active obstacles.
+    pub obstacles: Vec<NavObstacle>,
+    /// Dirty flag — set when obstacles changed and carving is needed.
+    dirty: bool,
+}
+
+impl DynamicNavMesh {
+    pub fn new(base_mesh: NavMesh) -> Self {
+        let carved_mesh = base_mesh.clone();
+        Self {
+            base_mesh,
+            carved_mesh,
+            obstacles: Vec::new(),
+            dirty: false,
+        }
+    }
+
+    /// Add a dynamic obstacle and mark the mesh as dirty.
+    pub fn add_obstacle(&mut self, obstacle: NavObstacle) -> usize {
+        let id = self.obstacles.len();
+        self.obstacles.push(obstacle);
+        self.dirty = true;
+        id
+    }
+
+    /// Remove an obstacle by index.
+    pub fn remove_obstacle(&mut self, index: usize) {
+        if index < self.obstacles.len() {
+            self.obstacles.swap_remove(index);
+            self.dirty = true;
+        }
+    }
+
+    /// Move an obstacle to a new position.
+    pub fn move_obstacle(&mut self, index: usize, new_position: Vec3) {
+        if let Some(obs) = self.obstacles.get_mut(index) {
+            obs.position = new_position;
+            self.dirty = true;
+        }
+    }
+
+    /// Toggle obstacle active state.
+    pub fn set_obstacle_active(&mut self, index: usize, active: bool) {
+        if let Some(obs) = self.obstacles.get_mut(index) {
+            obs.active = active;
+            self.dirty = true;
+        }
+    }
+
+    /// Rebuild the carved mesh if dirty. Call once per frame.
+    ///
+    /// Polygons whose centroid falls inside any active obstacle are
+    /// removed from the carved mesh.
+    pub fn rebuild_if_dirty(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+
+        let active_obstacles: Vec<&NavObstacle> =
+            self.obstacles.iter().filter(|o| o.active).collect();
+
+        if active_obstacles.is_empty() {
+            self.carved_mesh = self.base_mesh.clone();
+            return;
+        }
+
+        // Filter out polygons blocked by obstacles.
+        let kept_indices: Vec<Vec<usize>> = self
+            .base_mesh
+            .polygons
+            .iter()
+            .filter(|poly| {
+                !active_obstacles.iter().any(|obs| obs.contains(poly.centroid))
+            })
+            .map(|poly| poly.indices.clone())
+            .collect();
+
+        self.carved_mesh =
+            NavMesh::from_polygons(self.base_mesh.vertices.clone(), kept_indices);
+    }
+
+    /// Find a path on the current carved mesh.
+    pub fn find_path(&mut self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+        self.rebuild_if_dirty();
+        let start = self.carved_mesh.closest_poly(from)?;
+        let goal = self.carved_mesh.closest_poly(to)?;
+        let path = find_path(&self.carved_mesh, start, goal)?;
+        Some(path_to_waypoints(&self.carved_mesh, &path))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // System
 // ---------------------------------------------------------------------------
 

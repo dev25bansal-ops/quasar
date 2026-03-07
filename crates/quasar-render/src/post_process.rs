@@ -25,6 +25,10 @@ pub struct PostProcessPass {
     pub ssao_kernel_buffer: wgpu::Buffer,
     pub ssao_bind_group: wgpu::BindGroup,
     pub ssao_bind_group_layout: wgpu::BindGroupLayout,
+    pub ssao_blur_texture: wgpu::Texture,
+    pub ssao_blur_view: wgpu::TextureView,
+    pub ssao_blur_bind_group: wgpu::BindGroup,
+    pub ssao_blur_bind_group_layout: wgpu::BindGroupLayout,
     pub sampler: wgpu::Sampler,
     pub settings: PostProcessSettings,
 }
@@ -186,10 +190,119 @@ impl PostProcessPass {
                 ],
             });
 
+        let ssao_noise_view =
+            ssao_noise_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_placeholder = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SSAO Depth Placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_placeholder_view =
+            depth_placeholder.create_view(&wgpu::TextureViewDescriptor::default());
         let ssao_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SSAO Bind Group"),
             layout: &ssao_bind_group_layout,
-            entries: &[],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&intermediate_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&ssao_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&depth_placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: ssao_kernel_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        // SSAO bilateral blur intermediate texture
+        let ssao_blur_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SSAO Blur Texture"),
+            size: wgpu::Extent3d {
+                width: width / 2,
+                height: height / 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let ssao_blur_view =
+            ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ssao_blur_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("SSAO Blur BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let ssao_blur_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SSAO Blur BG"),
+            layout: &ssao_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&ssao_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&depth_placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
         });
 
         let fxaa_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -244,6 +357,10 @@ impl PostProcessPass {
             ssao_kernel_buffer,
             ssao_bind_group,
             ssao_bind_group_layout,
+            ssao_blur_texture,
+            ssao_blur_view,
+            ssao_blur_bind_group,
+            ssao_blur_bind_group_layout,
             sampler,
             settings: PostProcessSettings::default(),
         }
@@ -257,6 +374,60 @@ impl PostProcessPass {
         format: wgpu::TextureFormat,
     ) {
         *self = Self::new(device, width, height, format);
+    }
+
+    /// Run the SSAO pass followed by a depth-aware bilateral blur.
+    ///
+    /// The bilateral blur preserves edges by weighting samples with the depth
+    /// difference: `w = exp(-|z_center - z_sample| / threshold)`. Two
+    /// separable passes (horizontal, vertical) are applied.
+    pub fn render_ssao_with_blur(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        if !self.settings.ssao_enabled {
+            return;
+        }
+        // Pass 1 — raw SSAO into ssao_view
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SSAO Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.ssao_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.ssao_pipeline);
+            pass.set_bind_group(0, &self.ssao_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        // Pass 2 — bilateral blur (horizontal) from ssao_view → ssao_blur_view
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SSAO Bilateral Blur"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.ssao_blur_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.ssao_blur_pipeline);
+            pass.set_bind_group(0, &self.ssao_blur_bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 }
 

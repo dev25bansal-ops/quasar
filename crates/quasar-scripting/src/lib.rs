@@ -175,6 +175,50 @@ impl ScriptEngine {
     pub fn lua(&self) -> &Lua {
         &self.lua
     }
+
+    /// Watch an entire directory for script changes (recursive).
+    pub fn watch_directory<P: AsRef<Path>>(&mut self, dir: P) {
+        if let Some(ref mut watcher) = self.watcher {
+            let _ = watcher.watch(dir.as_ref(), RecursiveMode::Recursive);
+            log::info!("Watching directory for script changes: {:?}", dir.as_ref());
+        }
+    }
+
+    /// Reload all watched scripts, preserving Lua global state on error.
+    /// Returns a list of (path, Ok(()) | Err(message)) for each file.
+    pub fn hot_reload_safe(&mut self) -> Vec<(String, Result<(), String>)> {
+        let changed = self.check_hot_reload();
+        let mut results = Vec::new();
+        for path in &changed {
+            match std::fs::read_to_string(path) {
+                Ok(source) => {
+                    match self.lua.load(&source).set_name(path).exec() {
+                        Ok(()) => {
+                            log::info!("Hot-reloaded script: {}", path);
+                            results.push((path.clone(), Ok(())));
+                        }
+                        Err(e) => {
+                            let msg = format!("{}", e);
+                            log::error!("Hot-reload syntax/runtime error in {}: {}", path, msg);
+                            results.push((path.clone(), Err(msg)));
+                            // State is preserved — the old version remains active.
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("IO error: {}", e);
+                    log::error!("Hot-reload failed to read {}: {}", path, msg);
+                    results.push((path.clone(), Err(msg)));
+                }
+            }
+        }
+        results
+    }
+
+    /// Get the list of currently watched script file paths.
+    pub fn watched_files(&self) -> &[String] {
+        &self.watched_files
+    }
 }
 
 /// ECS component that attaches a Lua script to an entity.

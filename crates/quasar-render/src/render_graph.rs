@@ -152,14 +152,80 @@ impl RenderGraph {
             label: Some("Render Graph Encoder"),
         });
 
-        // Simple execution in declared order (proper topological sort would be better)
-        for pass_id in &self.pass_order {
+        let order = self.topological_sort();
+        for pass_id in &order {
             if let Some(node) = self.nodes.get(pass_id) {
                 node.pass.execute(device, queue, &mut encoder, context);
             }
         }
 
         encoder.finish()
+    }
+
+    /// Compute a topological ordering of passes respecting dependencies.
+    ///
+    /// Falls back to the declared order for passes that have no
+    /// dependency relationships.
+    pub fn topological_sort(&self) -> Vec<PassId> {
+        // Kahn's algorithm
+        let mut in_degree: HashMap<PassId, usize> = HashMap::new();
+        for &id in &self.pass_order {
+            in_degree.entry(id).or_insert(0);
+        }
+        // Build adjacency: dep -> [nodes that depend on it]
+        let mut adj: HashMap<PassId, Vec<PassId>> = HashMap::new();
+        for (&id, node) in &self.nodes {
+            for &dep in &node.dependencies {
+                adj.entry(dep).or_default().push(id);
+                *in_degree.entry(id).or_insert(0) += 1;
+            }
+        }
+
+        let mut queue: std::collections::VecDeque<PassId> = self
+            .pass_order
+            .iter()
+            .copied()
+            .filter(|id| *in_degree.get(id).unwrap_or(&0) == 0)
+            .collect();
+
+        let mut sorted = Vec::with_capacity(self.pass_order.len());
+        while let Some(id) = queue.pop_front() {
+            sorted.push(id);
+            if let Some(dependents) = adj.get(&id) {
+                for &dep in dependents {
+                    if let Some(deg) = in_degree.get_mut(&dep) {
+                        *deg = deg.saturating_sub(1);
+                        if *deg == 0 {
+                            queue.push_back(dep);
+                        }
+                    }
+                }
+            }
+        }
+
+        // If there's a cycle or we missed nodes, append remaining in declared order
+        if sorted.len() < self.pass_order.len() {
+            for id in &self.pass_order {
+                if !sorted.contains(id) {
+                    sorted.push(*id);
+                }
+            }
+        }
+
+        sorted
+    }
+
+    /// Reorder the pass execution list. Passes not in `new_order` are
+    /// appended at the end in their original order.
+    pub fn set_pass_order(&mut self, new_order: Vec<PassId>) {
+        let mut remaining: Vec<PassId> = self
+            .pass_order
+            .iter()
+            .filter(|id| !new_order.contains(id))
+            .copied()
+            .collect();
+        self.pass_order = new_order;
+        self.pass_order.append(&mut remaining);
     }
 
     /// Get a pass by ID.

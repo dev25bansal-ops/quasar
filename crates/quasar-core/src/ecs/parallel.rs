@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use rayon;
 
-use super::{System, SystemStage, World};
+use super::{Commands, System, SystemStage, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessMode {
     Read,
@@ -347,6 +347,11 @@ impl ParallelSchedule {
                     graph.run_sequential(world);
                 }
             }
+            // Flush deferred commands between stages
+            if let Some(mut cmds) = world.remove_resource::<Commands>() {
+                cmds.apply(world);
+                world.insert_resource(cmds);
+            }
         }
     }
 }
@@ -359,6 +364,75 @@ impl Default for ParallelSchedule {
 
 pub fn system_node<S: System + 'static>(system: S) -> SystemNode {
     SystemNode::new(Box::new(system))
+}
+
+/// Declare the set of component types a system reads.
+/// Returns a `Vec<ComponentAccess>` for use with `SystemNode::with_component_access`.
+pub fn read_set<T: ReadWriteSet>() -> Vec<ComponentAccess> {
+    T::accesses(AccessMode::Read)
+}
+
+/// Declare the set of component types a system writes.
+pub fn write_set<T: ReadWriteSet>() -> Vec<ComponentAccess> {
+    T::accesses(AccessMode::Write)
+}
+
+/// Helper trait for declaring component access sets.
+pub trait ReadWriteSet {
+    fn accesses(mode: AccessMode) -> Vec<ComponentAccess>;
+}
+
+impl<T0: 'static> ReadWriteSet for (T0,) {
+    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
+        vec![ComponentAccess { type_id: TypeId::of::<T0>(), mode }]
+    }
+}
+
+impl<T0: 'static, T1: 'static> ReadWriteSet for (T0, T1) {
+    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
+        vec![
+            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
+        ]
+    }
+}
+
+impl<T0: 'static, T1: 'static, T2: 'static> ReadWriteSet for (T0, T1, T2) {
+    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
+        vec![
+            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T2>(), mode },
+        ]
+    }
+}
+
+impl<T0: 'static, T1: 'static, T2: 'static, T3: 'static> ReadWriteSet for (T0, T1, T2, T3) {
+    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
+        vec![
+            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T2>(), mode },
+            ComponentAccess { type_id: TypeId::of::<T3>(), mode },
+        ]
+    }
+}
+
+/// Build a `SystemNode` with declared read and write sets enforced in the parallel executor.
+pub fn system_node_with_access<S, R, W>(system: S) -> SystemNode
+where
+    S: System + 'static,
+    R: ReadWriteSet,
+    W: ReadWriteSet,
+{
+    let mut node = SystemNode::new(Box::new(system));
+    for access in R::accesses(AccessMode::Read) {
+        node = node.with_component_access(access);
+    }
+    for access in W::accesses(AccessMode::Write) {
+        node = node.with_component_access(access);
+    }
+    node
 }
 
 #[macro_export]

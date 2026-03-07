@@ -274,6 +274,12 @@ impl ArchetypeGraph {
         self.archetypes.get(&id)
     }
 
+    /// Get a mutable reference to an archetype by ID.
+    /// Returns `None` if the archetype doesn't exist or if Arc has other references.
+    pub fn get_mut(&mut self, id: ArchetypeId) -> Option<&mut Archetype> {
+        self.archetypes.get_mut(&id).and_then(|arc| Arc::get_mut(arc))
+    }
+
     pub fn find_with_components(&self, type_ids: &[TypeId]) -> Vec<&Arc<Archetype>> {
         self.archetypes
             .values()

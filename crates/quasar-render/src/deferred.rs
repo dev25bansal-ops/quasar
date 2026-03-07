@@ -485,3 +485,287 @@ fn bgl_entry(binding: u32, sample_type: wgpu::TextureSampleType) -> wgpu::BindGr
         count: None,
     }
 }
+
+// ── Stencil-based light volumes ────────────────────────────────────
+
+/// Per-light uniform uploaded for each stencil volume draw.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightVolumeUniform {
+    /// Model-to-clip matrix for the volume mesh.
+    pub mvp: [[f32; 4]; 4],
+    /// Light position (xyz) + radius (w).
+    pub position_radius: [f32; 4],
+    /// Light colour (rgb) + intensity (a).
+    pub color_intensity: [f32; 4],
+}
+
+/// Stencil light-volume renderer.
+///
+/// Renders sphere meshes (point lights) or cone meshes (spot lights) with a
+/// two-step stencil algorithm:
+///   1. **Mark** — draw back-faces into the stencil buffer; increment stencil
+///      where depth test fails (the back of the sphere is behind geometry, so
+///      the pixel is inside the volume).
+///   2. **Shade** — draw front-faces; only shade pixels whose stencil was
+///      incremented (i.e. inside the volume and in front of the back face).
+///
+/// This avoids shading pixels outside each light's influence volume.
+pub struct StencilLightVolumePass {
+    /// Pipeline for the stencil-mark pass (back-faces, depth fail → inc).
+    pub stencil_mark_pipeline: wgpu::RenderPipeline,
+    /// Pipeline for the shade pass (front-faces, stencil test, additive blend).
+    pub shade_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the per-light uniform.
+    pub volume_bind_group_layout: wgpu::BindGroupLayout,
+    /// Shared unit sphere vertex/index buffers.
+    pub sphere_vertex_buffer: wgpu::Buffer,
+    pub sphere_index_buffer: wgpu::Buffer,
+    pub sphere_index_count: u32,
+}
+
+impl StencilLightVolumePass {
+    /// Generate stencil mark + shade pipelines.
+    pub fn new(
+        device: &wgpu::Device,
+        output_format: wgpu::TextureFormat,
+        gbuffer_read_layout: &wgpu::BindGroupLayout,
+    ) -> Self {
+        let volume_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Light Volume BGL"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Stencil Light Volume Shader"),
+            source: wgpu::ShaderSource::Wgsl(STENCIL_VOLUME_WGSL.into()),
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Stencil Mark Layout"),
+            bind_group_layouts: &[&volume_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vertex_buffers = [wgpu::VertexBufferLayout {
+            array_stride: 12,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            }],
+        }];
+
+        // Stencil mark pass — render back-faces, depth-fail increments stencil
+        let stencil_mark_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Stencil Mark Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_volume"),
+                    buffers: &vertex_buffers,
+                    compilation_options: Default::default(),
+                },
+                fragment: None, // depth/stencil only
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Front), // render back-faces
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: wgpu::TextureFormat::Depth24PlusStencil8,
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Always,
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState::IGNORE,
+                        back: wgpu::StencilFaceState {
+                            compare: wgpu::CompareFunction::Always,
+                            fail_op: wgpu::StencilOperation::Keep,
+                            depth_fail_op: wgpu::StencilOperation::IncrementWrap,
+                            pass_op: wgpu::StencilOperation::Keep,
+                        },
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: Default::default(),
+                }),
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            });
+
+        let shade_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Stencil Shade Layout"),
+            bind_group_layouts: &[gbuffer_read_layout, &volume_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let shade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Stencil Shade Pipeline"),
+            layout: Some(&shade_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_volume"),
+                buffers: &vertex_buffers,
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_shade"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: output_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent::REPLACE,
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: Some(wgpu::Face::Back), // front-faces
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24PlusStencil8,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: wgpu::CompareFunction::NotEqual,
+                        fail_op: wgpu::StencilOperation::Keep,
+                        depth_fail_op: wgpu::StencilOperation::Keep,
+                        pass_op: wgpu::StencilOperation::Zero, // clear for next light
+                    },
+                    back: wgpu::StencilFaceState::IGNORE,
+                    read_mask: 0xFF,
+                    write_mask: 0xFF,
+                },
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        // Generate a low-poly unit sphere for point-light volumes
+        let (vertices, indices) = generate_unit_sphere(12, 8);
+        let sphere_vertex_buffer =
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Light Volume Sphere VB"),
+                size: (vertices.len() * 12) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        let sphere_index_buffer =
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Light Volume Sphere IB"),
+                size: (indices.len() * 4) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        let sphere_index_count = indices.len() as u32;
+
+        Self {
+            stencil_mark_pipeline,
+            shade_pipeline,
+            volume_bind_group_layout,
+            sphere_vertex_buffer,
+            sphere_index_buffer,
+            sphere_index_count,
+        }
+    }
+}
+
+/// Generate a UV-sphere with `slices` longitude and `stacks` latitude segments.
+/// Returns `(positions: Vec<[f32;3]>, indices: Vec<u32>)`.
+fn generate_unit_sphere(slices: u32, stacks: u32) -> (Vec<[f32; 3]>, Vec<u32>) {
+    let mut verts = Vec::new();
+    let mut idxs = Vec::new();
+
+    for j in 0..=stacks {
+        let theta = std::f32::consts::PI * j as f32 / stacks as f32;
+        let st = theta.sin();
+        let ct = theta.cos();
+        for i in 0..=slices {
+            let phi = 2.0 * std::f32::consts::PI * i as f32 / slices as f32;
+            verts.push([st * phi.cos(), ct, st * phi.sin()]);
+        }
+    }
+
+    let row = slices + 1;
+    for j in 0..stacks {
+        for i in 0..slices {
+            let a = j * row + i;
+            let b = a + row;
+            idxs.extend_from_slice(&[a, b, a + 1, a + 1, b, b + 1]);
+        }
+    }
+
+    (verts, idxs)
+}
+
+/// Inline WGSL for the stencil light volume passes.
+const STENCIL_VOLUME_WGSL: &str = r#"
+struct VolumeUniform {
+    mvp: mat4x4<f32>,
+    position_radius: vec4<f32>,
+    color_intensity: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> volume: VolumeUniform;
+
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+};
+
+@vertex
+fn vs_volume(@location(0) position: vec3<f32>) -> VsOut {
+    var out: VsOut;
+    out.pos = volume.mvp * vec4<f32>(position, 1.0);
+    return out;
+}
+
+// GBuffer bindings (group 0 in shade layout corresponds to gbuffer read)
+@group(0) @binding(0) var t_albedo: texture_2d<f32>;
+@group(0) @binding(1) var t_normal: texture_2d<f32>;
+@group(0) @binding(2) var t_rm: texture_2d<f32>;
+@group(0) @binding(3) var t_depth: texture_depth_2d;
+@group(0) @binding(4) var s_gbuffer: sampler;
+@group(1) @binding(0) var<uniform> light: VolumeUniform;
+
+@fragment
+fn fs_shade(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
+    let dims = vec2<f32>(textureDimensions(t_albedo));
+    let uv = frag_coord.xy / dims;
+
+    let albedo = textureSample(t_albedo, s_gbuffer, uv).rgb;
+    let normal = textureSample(t_normal, s_gbuffer, uv).xyz * 2.0 - 1.0;
+
+    let light_pos = light.position_radius.xyz;
+    let radius = light.position_radius.w;
+    let light_col = light.color_intensity.rgb * light.color_intensity.a;
+
+    // Simple point-light attenuation (placeholder world-pos reconstruction)
+    let falloff = 1.0 / (1.0 + radius * 0.1);
+    let contribution = albedo * light_col * falloff * max(dot(normal, normalize(light_pos)), 0.0);
+    return vec4<f32>(contribution, 1.0);
+}
+"#;

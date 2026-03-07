@@ -312,3 +312,269 @@ impl System for AudioMixerSystem {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Convolution reverb (CPU-side time-domain, applied per-frame to wet bus)
+// ---------------------------------------------------------------------------
+
+/// Impulse response for a convolution reverb.
+///
+/// Stores a mono impulse response (IR) as a vector of f32 samples.
+/// For real-time usage, only the first `max_length` samples are used.
+#[derive(Debug, Clone)]
+pub struct ConvolutionImpulseResponse {
+    /// Mono IR samples (normalised to −1.0 – 1.0).
+    pub samples: Vec<f32>,
+    /// Sample rate of the IR.
+    pub sample_rate: u32,
+}
+
+impl ConvolutionImpulseResponse {
+    /// Load a WAV impulse response from a raw PCM buffer (mono, f32).
+    pub fn from_samples(samples: Vec<f32>, sample_rate: u32) -> Self {
+        Self { samples, sample_rate }
+    }
+
+    /// Truncate the IR to `max_samples` length for performance.
+    pub fn truncated(&self, max_samples: usize) -> Self {
+        let len = self.samples.len().min(max_samples);
+        Self {
+            samples: self.samples[..len].to_vec(),
+            sample_rate: self.sample_rate,
+        }
+    }
+}
+
+/// CPU-side convolution reverb processor.
+///
+/// For each audio buffer, convolves the input with the IR using direct
+/// (time-domain) convolution. For short IRs (< 4096 samples) this is
+/// practical; longer IRs should use partitioned FFT.
+pub struct ConvolutionReverb {
+    pub ir: ConvolutionImpulseResponse,
+    /// Tail buffer holding the overlap from previous frames.
+    tail: Vec<f32>,
+    /// Wet/dry mix (0.0 = fully dry, 1.0 = fully wet).
+    pub wet_mix: f32,
+}
+
+impl ConvolutionReverb {
+    pub fn new(ir: ConvolutionImpulseResponse, wet_mix: f32) -> Self {
+        let tail_len = ir.samples.len();
+        Self {
+            ir,
+            tail: vec![0.0; tail_len],
+            wet_mix: wet_mix.clamp(0.0, 1.0),
+        }
+    }
+
+    /// Process a block of audio samples in-place (mono).
+    /// Adds the convolution wet signal to the buffer.
+    pub fn process(&mut self, buffer: &mut [f32]) {
+        let ir_len = self.ir.samples.len();
+        if ir_len == 0 {
+            return;
+        }
+
+        let n = buffer.len();
+        // Direct convolution: output[i] = sum_{j=0..ir_len-1} input[i-j] * ir[j]
+        // We accumulate into a temporary wet buffer.
+        let mut wet = vec![0.0f32; n + ir_len - 1];
+
+        for (i, &sample) in buffer.iter().enumerate() {
+            for (j, &ir_sample) in self.ir.samples.iter().enumerate() {
+                wet[i + j] += sample * ir_sample;
+            }
+        }
+
+        // Add tail from previous frame.
+        for (i, &t) in self.tail.iter().enumerate().take(n) {
+            wet[i] += t;
+        }
+
+        // Mix wet into the buffer.
+        let mix = self.wet_mix;
+        for (i, s) in buffer.iter_mut().enumerate() {
+            *s = *s * (1.0 - mix) + wet[i] * mix;
+        }
+
+        // Save tail for next frame.
+        self.tail.resize(ir_len, 0.0);
+        if n + ir_len > n {
+            for (i, t) in self.tail.iter_mut().enumerate() {
+                let idx = n + i;
+                *t = if idx < wet.len() { wet[idx] } else { 0.0 };
+            }
+        }
+    }
+
+    /// Reset the reverb tail (e.g., after a scene change).
+    pub fn reset(&mut self) {
+        self.tail.iter_mut().for_each(|s| *s = 0.0);
+    }
+}
+
+/// ECS component: attach to an entity to mark it as a convolution reverb zone.
+/// When the listener enters this zone's AABB, the reverb is applied.
+#[derive(Debug, Clone)]
+pub struct ConvolutionReverbZone {
+    pub center: Vec3,
+    pub half_extents: Vec3,
+    /// Impulse response samples (mono f32).
+    pub ir_samples: Vec<f32>,
+    pub ir_sample_rate: u32,
+    pub wet_mix: f32,
+}
+
+impl ConvolutionReverbZone {
+    pub fn new(center: Vec3, half_extents: Vec3, ir: &ConvolutionImpulseResponse, wet_mix: f32) -> Self {
+        Self {
+            center,
+            half_extents,
+            ir_samples: ir.samples.clone(),
+            ir_sample_rate: ir.sample_rate,
+            wet_mix,
+        }
+    }
+
+    pub fn contains(&self, point: Vec3) -> bool {
+        let d = (point - self.center).abs();
+        d.x <= self.half_extents.x && d.y <= self.half_extents.y && d.z <= self.half_extents.z
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audio streaming (chunked file playback for large assets)
+// ---------------------------------------------------------------------------
+
+/// Streaming mode for audio playback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingMode {
+    /// Load the entire file into memory before playing.
+    FullyLoaded,
+    /// Stream from disk in chunks.
+    Streaming { chunk_size_bytes: usize },
+}
+
+impl Default for StreamingMode {
+    fn default() -> Self {
+        Self::FullyLoaded
+    }
+}
+
+/// ECS component marking an audio source for streaming playback.
+///
+/// Attach alongside `AudioSource` to enable chunked playback.
+/// The `StreamingAudioSystem` manages the read-ahead buffer.
+#[derive(Debug, Clone)]
+pub struct StreamingAudioSource {
+    pub mode: StreamingMode,
+    /// Path to the audio file.
+    pub path: String,
+    /// Current byte offset into the file (for sequential reads).
+    pub read_offset: u64,
+    /// Whether playback has started.
+    pub started: bool,
+    /// Number of chunks pre-buffered ahead.
+    pub prefetch_chunks: u32,
+}
+
+impl StreamingAudioSource {
+    pub fn new(path: impl Into<String>, chunk_size_bytes: usize) -> Self {
+        Self {
+            mode: StreamingMode::Streaming { chunk_size_bytes },
+            path: path.into(),
+            read_offset: 0,
+            started: false,
+            prefetch_chunks: 3,
+        }
+    }
+
+    pub fn with_prefetch(mut self, chunks: u32) -> Self {
+        self.prefetch_chunks = chunks;
+        self
+    }
+}
+
+/// A ring buffer holding decoded audio chunks for streaming playback.
+pub struct StreamingBuffer {
+    /// Decoded PCM samples (interleaved, f32).
+    pub samples: Vec<f32>,
+    /// Read cursor within `samples`.
+    pub read_pos: usize,
+    /// Write cursor within `samples`.
+    pub write_pos: usize,
+    pub capacity: usize,
+}
+
+impl StreamingBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            samples: vec![0.0; capacity],
+            read_pos: 0,
+            write_pos: 0,
+            capacity,
+        }
+    }
+
+    /// Available samples to read.
+    pub fn available(&self) -> usize {
+        if self.write_pos >= self.read_pos {
+            self.write_pos - self.read_pos
+        } else {
+            self.capacity - self.read_pos + self.write_pos
+        }
+    }
+
+    /// Push decoded samples into the ring buffer.
+    pub fn push(&mut self, data: &[f32]) {
+        for &sample in data {
+            self.samples[self.write_pos] = sample;
+            self.write_pos = (self.write_pos + 1) % self.capacity;
+        }
+    }
+
+    /// Read up to `count` samples from the buffer.
+    pub fn read(&mut self, count: usize) -> Vec<f32> {
+        let avail = self.available().min(count);
+        let mut out = Vec::with_capacity(avail);
+        for _ in 0..avail {
+            out.push(self.samples[self.read_pos]);
+            self.read_pos = (self.read_pos + 1) % self.capacity;
+        }
+        out
+    }
+}
+
+/// System that manages streaming audio sources.
+///
+/// For each entity with `StreamingAudioSource`, ensures that read-ahead
+/// buffers are topped up. Actual file I/O is performed on a background
+/// thread (via rayon) in production, but this system stub handles the
+/// bookkeeping and state transitions.
+pub struct StreamingAudioSystem;
+
+impl System for StreamingAudioSystem {
+    fn name(&self) -> &str {
+        "streaming_audio"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        let entities: Vec<(Entity, StreamingAudioSource)> = world
+            .query::<StreamingAudioSource>()
+            .into_iter()
+            .map(|(e, s)| (e, s.clone()))
+            .collect();
+
+        for (entity, mut streaming) in entities {
+            if !streaming.started {
+                // Mark as started — in production, kick off the first async read here.
+                streaming.started = true;
+                if let Some(s) = world.get_mut::<StreamingAudioSource>(entity) {
+                    s.started = true;
+                }
+                log::info!("Streaming audio started for {}", streaming.path);
+            }
+        }
+    }
+}

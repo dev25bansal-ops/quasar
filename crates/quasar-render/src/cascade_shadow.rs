@@ -263,12 +263,24 @@ impl CascadeShadowMap {
         }
     }
 
+    /// Practical Split Scheme (Nvidia GPU Gems 3, Ch. 10).
+    ///
+    /// Blends a logarithmic distribution (even in log-space) with a linear one
+    /// using a `lambda` factor.  `lambda = 1.0` is fully logarithmic; `0.0` is
+    /// fully linear.  Default `lambda = 0.75` is a good general-purpose value.
     pub fn calculate_cascades(near: f32, far: f32) -> Vec<Cascade> {
-        let split_ratios = [0.05, 0.15, 0.35, 1.0];
+        Self::calculate_cascades_lambda(near, far, 0.75)
+    }
+
+    /// Same as [`calculate_cascades`] but with an explicit blend factor.
+    pub fn calculate_cascades_lambda(near: f32, far: f32, lambda: f32) -> Vec<Cascade> {
         let mut cascades = Vec::with_capacity(CASCADE_COUNT);
 
-        for (&ratio, _) in split_ratios.iter().zip(0..) {
-            let split_depth = near + (far - near) * ratio;
+        for i in 1..=CASCADE_COUNT {
+            let t = i as f32 / CASCADE_COUNT as f32;
+            let log_split = near * (far / near).powf(t);
+            let lin_split = near + (far - near) * t;
+            let split_depth = lambda * log_split + (1.0 - lambda) * lin_split;
             cascades.push(Cascade {
                 view_projection: glam::Mat4::IDENTITY,
                 split_depth,

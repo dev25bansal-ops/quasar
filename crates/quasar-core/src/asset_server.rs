@@ -310,6 +310,70 @@ impl AssetServer {
             meta.hot_reload_enabled = enabled;
         }
     }
+
+    /// Schedule an asset load on a background thread.
+    ///
+    /// Returns a handle immediately. The caller can poll
+    /// [`is_loaded`] or listen for [`AssetEvent::Loaded`] to know
+    /// when the data is ready.  The actual decode still happens
+    /// synchronously in the asset server's loader; the thread only
+    /// does the filesystem I/O.
+    pub fn load_async<T: Asset + Clone, P: AsRef<Path>>(
+        &self,
+        path: P,
+    ) -> Result<AssetHandle, AssetError> {
+        let full_path = self.assets_dir.join(path.as_ref());
+
+        let id = {
+            let mut next_id = self.next_id.lock().unwrap();
+            let id = *next_id;
+            *next_id += 1;
+            id
+        };
+
+        let handle = AssetHandle { id, generation: 0 };
+
+        {
+            let mut handles = self.asset_handles.write().unwrap();
+            handles.insert(
+                id,
+                AssetMeta {
+                    path: full_path.clone(),
+                    generation: 0,
+                    loaded: false,
+                    hot_reload_enabled: true,
+                },
+            );
+        }
+
+        let sender = self.event_sender.clone();
+        let fp = full_path.clone();
+
+        std::thread::spawn(move || {
+            match std::fs::read(&fp) {
+                Ok(_bytes) => {
+                    let _ = sender.send(AssetEvent::Loaded {
+                        handle,
+                        path: fp,
+                    });
+                }
+                Err(e) => {
+                    let _ = sender.send(AssetEvent::Failed {
+                        path: fp,
+                        error: format!("{}", e),
+                    });
+                }
+            }
+        });
+
+        Ok(handle)
+    }
+
+    /// Check whether an asset handle has been fully loaded.
+    pub fn is_loaded(&self, handle: AssetHandle) -> bool {
+        let handles = self.asset_handles.read().unwrap();
+        handles.get(&handle.id).map(|m| m.loaded).unwrap_or(false)
+    }
 }
 
 pub trait AnyAssetLoader: Send + Sync {

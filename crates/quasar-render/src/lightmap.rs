@@ -821,3 +821,457 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(output, vec2<i32>(gid.xy), vec4(color, 1.0));
 }
 "#;
+
+// ── Path-tracing GPU lightmap baker ────────────────────────────────
+
+/// Configuration for the path-tracing lightmap baker.
+pub struct PathTraceBakeConfig {
+    /// Lightmap width.
+    pub width: u32,
+    /// Lightmap height.
+    pub height: u32,
+    /// Number of bounce rays per texel per sample.
+    pub samples_per_texel: u32,
+    /// Maximum ray bounce depth.
+    pub max_bounces: u32,
+    /// Direct light direction.
+    pub light_dir: Vec3,
+    /// Direct light colour.
+    pub light_color: Vec3,
+    /// Sky/ambient radiance (used when a ray escapes the scene).
+    pub sky_color: Vec3,
+}
+
+impl Default for PathTraceBakeConfig {
+    fn default() -> Self {
+        Self {
+            width: 512,
+            height: 512,
+            samples_per_texel: 64,
+            max_bounces: 3,
+            light_dir: Vec3::new(-0.3, -1.0, -0.2).normalize(),
+            light_color: Vec3::new(1.0, 0.95, 0.9),
+            sky_color: Vec3::new(0.3, 0.4, 0.6),
+        }
+    }
+}
+
+/// GPU uniform for the path-trace compute shader.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuPathTraceUniform {
+    pub width: u32,
+    pub height: u32,
+    pub samples_per_texel: u32,
+    pub max_bounces: u32,
+    pub light_dir: [f32; 4],
+    pub light_color: [f32; 4],
+    pub sky_color: [f32; 4],
+    pub triangle_count: u32,
+    pub _pad: [u32; 3],
+}
+
+/// GPU lightmap baker that computes multi-bounce path-traced GI.
+pub struct GpuPathTraceBaker {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl GpuPathTraceBaker {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("GPU PathTrace Lightmap Compute"),
+            source: wgpu::ShaderSource::Wgsl(GPU_PATHTRACE_BAKE_WGSL.into()),
+        });
+
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU PathTrace Bake BGL"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::StorageTexture {
+                            access: wgpu::StorageTextureAccess::WriteOnly,
+                            format: wgpu::TextureFormat::Rgba16Float,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("GPU PathTrace Bake Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("GPU PathTrace Bake Pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader,
+            entry_point: Some("pathtrace_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+        }
+    }
+
+    /// Dispatch the path-tracing bake compute shader.
+    pub fn bake(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        triangles: &[BakerTriangle],
+        config: &PathTraceBakeConfig,
+    ) -> (wgpu::Texture, wgpu::CommandBuffer) {
+        let gpu_tris: Vec<GpuBakerTriangle> = triangles
+            .iter()
+            .map(|t| {
+                let p = &t.positions;
+                let n = &t.normals;
+                let uv = &t.lightmap_uvs;
+                GpuBakerTriangle {
+                    p0: [p[0].x, p[0].y, p[0].z, 0.0],
+                    p1: [p[1].x, p[1].y, p[1].z, 0.0],
+                    p2: [p[2].x, p[2].y, p[2].z, 0.0],
+                    n0: [n[0].x, n[0].y, n[0].z, 0.0],
+                    n1: [n[1].x, n[1].y, n[1].z, 0.0],
+                    n2: [n[2].x, n[2].y, n[2].z, 0.0],
+                    uv01: [uv[0][0], uv[0][1], uv[1][0], uv[1][1]],
+                    uv2_pad: [uv[2][0], uv[2][1], 0.0, 0.0],
+                }
+            })
+            .collect();
+
+        let uniform = GpuPathTraceUniform {
+            width: config.width,
+            height: config.height,
+            samples_per_texel: config.samples_per_texel,
+            max_bounces: config.max_bounces,
+            light_dir: [config.light_dir.x, config.light_dir.y, config.light_dir.z, 0.0],
+            light_color: [config.light_color.x, config.light_color.y, config.light_color.z, 0.0],
+            sky_color: [config.sky_color.x, config.sky_color.y, config.sky_color.z, 0.0],
+            triangle_count: triangles.len() as u32,
+            _pad: [0; 3],
+        };
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PathTrace Bake Uniform"),
+            size: std::mem::size_of::<GpuPathTraceUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniform]));
+
+        let tri_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PathTrace Bake Triangles"),
+            size: (std::mem::size_of::<GpuBakerTriangle>() * gpu_tris.len().max(1)) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !gpu_tris.is_empty() {
+            queue.write_buffer(&tri_buffer, 0, bytemuck::cast_slice(&gpu_tris));
+        }
+
+        let output_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("PathTrace Bake Output"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("PathTrace Bake BG"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: tri_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&output_view),
+                },
+            ],
+        });
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("PathTrace Bake Encoder"),
+        });
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("GPU PathTrace Bake"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &bind_group, &[]);
+            let wg_x = (config.width + 7) / 8;
+            let wg_y = (config.height + 7) / 8;
+            cpass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
+
+        (output_texture, encoder.finish())
+    }
+}
+
+/// WGSL compute shader for path-traced lightmap baking.
+pub const GPU_PATHTRACE_BAKE_WGSL: &str = r#"
+struct PathTraceUniforms {
+    width: u32,
+    height: u32,
+    samples_per_texel: u32,
+    max_bounces: u32,
+    light_dir: vec4<f32>,
+    light_color: vec4<f32>,
+    sky_color: vec4<f32>,
+    triangle_count: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+struct Triangle {
+    p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>,
+    n0: vec4<f32>, n1: vec4<f32>, n2: vec4<f32>,
+    uv01: vec4<f32>,
+    uv2_pad: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> cfg: PathTraceUniforms;
+@group(0) @binding(1) var<storage, read> tris: array<Triangle>;
+@group(0) @binding(2) var output: texture_storage_2d<rgba16float, write>;
+
+fn hash(x: u32) -> u32 {
+    var v = x;
+    v = v ^ (v >> 16u);
+    v = v * 0x45d9f3bu;
+    v = v ^ (v >> 16u);
+    v = v * 0x45d9f3bu;
+    v = v ^ (v >> 16u);
+    return v;
+}
+
+fn rand_f(seed: ptr<function, u32>) -> f32 {
+    *seed = hash(*seed);
+    return f32(*seed) / 4294967295.0;
+}
+
+fn barycentric_pt(uv0: vec2<f32>, uv1: vec2<f32>, uv2: vec2<f32>, p: vec2<f32>) -> vec3<f32> {
+    let v0 = uv1 - uv0;
+    let v1 = uv2 - uv0;
+    let v2 = p - uv0;
+    let d00 = dot(v0, v0);
+    let d01 = dot(v0, v1);
+    let d11 = dot(v1, v1);
+    let d20 = dot(v2, v0);
+    let d21 = dot(v2, v1);
+    let denom = d00 * d11 - d01 * d01;
+    if abs(denom) < 1e-10 { return vec3(-1.0); }
+    let bv = (d11 * d20 - d01 * d21) / denom;
+    let bw = (d00 * d21 - d01 * d20) / denom;
+    return vec3(1.0 - bv - bw, bv, bw);
+}
+
+fn ray_tri(ro: vec3<f32>, rd: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<f32>) -> vec4<f32> {
+    // Returns (t, u, v, hit) where hit = 1.0 if intersection found.
+    let e1 = p1 - p0;
+    let e2 = p2 - p0;
+    let h = cross(rd, e2);
+    let a = dot(e1, h);
+    if abs(a) < 1e-8 { return vec4(-1.0, 0.0, 0.0, 0.0); }
+    let f = 1.0 / a;
+    let s = ro - p0;
+    let u = f * dot(s, h);
+    if u < 0.0 || u > 1.0 { return vec4(-1.0, 0.0, 0.0, 0.0); }
+    let q = cross(s, e1);
+    let v = f * dot(rd, q);
+    if v < 0.0 || u + v > 1.0 { return vec4(-1.0, 0.0, 0.0, 0.0); }
+    let t = f * dot(e2, q);
+    if t > 1e-4 { return vec4(t, u, v, 1.0); }
+    return vec4(-1.0, 0.0, 0.0, 0.0);
+}
+
+fn trace_scene(ro: vec3<f32>, rd: vec3<f32>) -> vec4<f32> {
+    // Returns (t, tri_idx_f32, u, v) or t < 0 if no hit.
+    var best_t = 1e30;
+    var best_idx = -1.0;
+    var best_u = 0.0;
+    var best_v = 0.0;
+    for (var i = 0u; i < cfg.triangle_count; i = i + 1u) {
+        let tri = tris[i];
+        let hit = ray_tri(ro, rd, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
+        if hit.w > 0.5 && hit.x < best_t {
+            best_t = hit.x;
+            best_idx = f32(i);
+            best_u = hit.y;
+            best_v = hit.z;
+        }
+    }
+    if best_idx < 0.0 { return vec4(-1.0, 0.0, 0.0, 0.0); }
+    return vec4(best_t, best_idx, best_u, best_v);
+}
+
+fn cosine_hemisphere(normal: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
+    let r1 = rand_f(seed);
+    let r2 = rand_f(seed);
+    let phi = 6.2831853 * r1;
+    let cos_theta = sqrt(r2);
+    let sin_theta = sqrt(1.0 - r2);
+    var tangent: vec3<f32>;
+    if abs(normal.y) < 0.999 {
+        tangent = normalize(cross(normal, vec3(0.0, 1.0, 0.0)));
+    } else {
+        tangent = normalize(cross(normal, vec3(1.0, 0.0, 0.0)));
+    }
+    let bitangent = cross(normal, tangent);
+    return tangent * (sin_theta * cos(phi)) + bitangent * (sin_theta * sin(phi)) + normal * cos_theta;
+}
+
+@compute @workgroup_size(8, 8, 1)
+fn pathtrace_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if gid.x >= cfg.width || gid.y >= cfg.height { return; }
+
+    let u = (f32(gid.x) + 0.5) / f32(cfg.width);
+    let v = (f32(gid.y) + 0.5) / f32(cfg.height);
+    let p = vec2(u, v);
+
+    // Find the triangle that owns this texel.
+    var world_pos = vec3(0.0);
+    var world_normal = vec3(0.0, 1.0, 0.0);
+    var found = false;
+
+    for (var i = 0u; i < cfg.triangle_count; i = i + 1u) {
+        let tri = tris[i];
+        let uv0 = tri.uv01.xy;
+        let uv1 = tri.uv01.zw;
+        let uv2 = tri.uv2_pad.xy;
+        let bary = barycentric_pt(uv0, uv1, uv2, p);
+        if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
+            world_pos = tri.p0.xyz * bary.x + tri.p1.xyz * bary.y + tri.p2.xyz * bary.z;
+            world_normal = normalize(tri.n0.xyz * bary.x + tri.n1.xyz * bary.y + tri.n2.xyz * bary.z);
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        textureStore(output, vec2<i32>(gid.xy), vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
+
+    var seed = hash(gid.x + gid.y * cfg.width + 1u);
+    var accumulated = vec3(0.0);
+    let light_dir = cfg.light_dir.xyz;
+
+    for (var s = 0u; s < cfg.samples_per_texel; s = s + 1u) {
+        seed = hash(seed + s * 7919u);
+        var throughput = vec3(1.0);
+        var radiance = vec3(0.0);
+        var ray_pos = world_pos + world_normal * 0.001;
+        var ray_normal = world_normal;
+
+        // Direct light for the first hit (the texel surface).
+        let shadow_origin = ray_pos;
+        var in_shadow = false;
+        for (var j = 0u; j < cfg.triangle_count; j = j + 1u) {
+            let tri = tris[j];
+            let sh = ray_tri(shadow_origin, -light_dir, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
+            if sh.w > 0.5 { in_shadow = true; break; }
+        }
+        if !in_shadow {
+            let n_dot_l = max(dot(ray_normal, -light_dir), 0.0);
+            radiance += throughput * cfg.light_color.xyz * n_dot_l;
+        }
+
+        // Bounce rays.
+        for (var bounce = 0u; bounce < cfg.max_bounces; bounce = bounce + 1u) {
+            let bounce_dir = cosine_hemisphere(ray_normal, &seed);
+            let hit = trace_scene(ray_pos, bounce_dir);
+            if hit.x < 0.0 {
+                // Ray escaped — add sky contribution.
+                radiance += throughput * cfg.sky_color.xyz;
+                break;
+            }
+            let tri_idx = u32(hit.y);
+            let bu = hit.z;
+            let bv = hit.w;
+            let bw = 1.0 - bu - bv;
+            let tri = tris[tri_idx];
+            let hit_pos = tri.p0.xyz * bw + tri.p1.xyz * bu + tri.p2.xyz * bv;
+            let hit_normal = normalize(tri.n0.xyz * bw + tri.n1.xyz * bu + tri.n2.xyz * bv);
+
+            // Diffuse albedo assumed 0.8 (could be extended with material data).
+            throughput *= vec3(0.8);
+
+            // Direct light at bounce point.
+            let bounce_shadow_origin = hit_pos + hit_normal * 0.001;
+            var bounce_shadowed = false;
+            for (var j = 0u; j < cfg.triangle_count; j = j + 1u) {
+                let stri = tris[j];
+                let sh = ray_tri(bounce_shadow_origin, -light_dir, stri.p0.xyz, stri.p1.xyz, stri.p2.xyz);
+                if sh.w > 0.5 { bounce_shadowed = true; break; }
+            }
+            if !bounce_shadowed {
+                let n_dot_l2 = max(dot(hit_normal, -light_dir), 0.0);
+                radiance += throughput * cfg.light_color.xyz * n_dot_l2;
+            }
+
+            ray_pos = bounce_shadow_origin;
+            ray_normal = hit_normal;
+
+            // Russian roulette after 2 bounces.
+            if bounce >= 2u {
+                let survival = min(max(throughput.x, max(throughput.y, throughput.z)), 0.95);
+                if rand_f(&seed) > survival { break; }
+                throughput /= survival;
+            }
+        }
+
+        accumulated += radiance;
+    }
+
+    let result = accumulated / f32(cfg.samples_per_texel);
+    textureStore(output, vec2<i32>(gid.xy), vec4(result, 1.0));
+}
+"#;

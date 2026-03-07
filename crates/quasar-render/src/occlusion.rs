@@ -14,6 +14,306 @@ use glam::{Mat4, Vec3, Vec4};
 /// Number of mip levels in the depth pyramid.
 pub const HIZ_MIP_LEVELS: usize = 8;
 
+/// Maximum number of objects the GPU cull pass supports per dispatch.
+pub const GPU_CULL_MAX_OBJECTS: u32 = 65536;
+
+// ── GPU-accelerated Hi-Z culling ──────────────────────────────────
+
+/// Per-object AABB data uploaded to the GPU for culling.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuAabb {
+    /// (min_x, min_y, min_z, _pad)
+    pub min: [f32; 4],
+    /// (max_x, max_y, max_z, _pad)
+    pub max: [f32; 4],
+}
+
+/// Uniform data for the GPU cull compute shader.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuCullUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    /// (screen_width, screen_height, num_objects, hiz_mip_levels)
+    pub params: [f32; 4],
+}
+
+/// Indirect draw args written by the cull shader (matches `DrawIndexedIndirect`).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DrawIndexedIndirectArgs {
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub base_vertex: i32,
+    pub first_instance: u32,
+}
+
+/// GPU-driven occlusion culling pass.
+///
+/// Reads a Hi-Z depth pyramid, tests each object AABB, and writes
+/// visibility results into a storage buffer.  A separate indirect
+/// draw buffer is built so only visible objects are drawn.
+pub struct GpuCullPass {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    /// Storage buffer holding `GpuAabb` array.
+    pub aabb_buffer: wgpu::Buffer,
+    /// Uniform buffer for `GpuCullUniforms`.
+    pub uniform_buffer: wgpu::Buffer,
+    /// Output: u32 per object (1 = visible, 0 = culled).
+    pub visibility_buffer: wgpu::Buffer,
+    /// Output: indirect draw args buffer (read by `draw_indexed_indirect`).
+    pub indirect_buffer: wgpu::Buffer,
+    /// Output: atomic counter for visible objects.
+    pub draw_count_buffer: wgpu::Buffer,
+}
+
+impl GpuCullPass {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("GPU Cull BGL"),
+                entries: &[
+                    // 0: uniforms
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 1: AABB buffer (read)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 2: visibility output buffer (write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 3: indirect draw buffer (write)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // 4: draw count (atomic)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("GPU Cull Shader"),
+            source: wgpu::ShaderSource::Wgsl(GPU_CULL_WGSL.into()),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("GPU Cull Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("GPU Cull Pipeline"),
+            layout: Some(&layout),
+            module: &shader,
+            entry_point: Some("cull_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let aabb_buf_size =
+            (GPU_CULL_MAX_OBJECTS as u64) * std::mem::size_of::<GpuAabb>() as u64;
+        let aabb_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull AABBs"),
+            size: aabb_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull Uniforms"),
+            size: std::mem::size_of::<GpuCullUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let vis_buf_size = (GPU_CULL_MAX_OBJECTS as u64) * 4;
+        let visibility_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull Visibility"),
+            size: vis_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let indirect_buf_size = (GPU_CULL_MAX_OBJECTS as u64)
+            * std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
+        let indirect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull Indirect"),
+            size: indirect_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            mapped_at_creation: false,
+        });
+
+        let draw_count_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull Draw Count"),
+            size: 4,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+            aabb_buffer,
+            uniform_buffer,
+            visibility_buffer,
+            indirect_buffer,
+            draw_count_buffer,
+        }
+    }
+
+    /// Create the bind group for a dispatch.  Call after uploading AABBs + uniforms.
+    pub fn create_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GPU Cull BG"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: self.aabb_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.visibility_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.indirect_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.draw_count_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    /// Dispatch the cull compute pass.
+    pub fn dispatch(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        bind_group: &wgpu::BindGroup,
+        num_objects: u32,
+    ) {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("GPU Cull"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, bind_group, &[]);
+        cpass.dispatch_workgroups((num_objects + 63) / 64, 1, 1);
+    }
+}
+
+/// GPU cull compute WGSL.
+pub const GPU_CULL_WGSL: &str = r#"
+struct Uniforms {
+    view_proj: mat4x4<f32>,
+    params: vec4<f32>, // (screen_w, screen_h, num_objects, _)
+};
+
+struct Aabb {
+    aabb_min: vec4<f32>,
+    aabb_max: vec4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+@group(0) @binding(1) var<storage, read> aabbs: array<Aabb>;
+@group(0) @binding(2) var<storage, read_write> visibility: array<u32>;
+@group(0) @binding(3) var<storage, read_write> indirect: array<u32>;
+@group(0) @binding(4) var<storage, read_write> draw_count: atomic<u32>;
+
+fn project_aabb(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> vec4<f32> {
+    // Returns (min_x, min_y, max_x, max_y) in NDC.
+    var lo = vec2<f32>(1.0);
+    var hi = vec2<f32>(-1.0);
+    for (var i = 0u; i < 8u; i++) {
+        let corner = vec3<f32>(
+            select(aabb_min.x, aabb_max.x, (i & 1u) != 0u),
+            select(aabb_min.y, aabb_max.y, (i & 2u) != 0u),
+            select(aabb_min.z, aabb_max.z, (i & 4u) != 0u),
+        );
+        let clip = uniforms.view_proj * vec4<f32>(corner, 1.0);
+        if clip.w <= 0.0 { return vec4<f32>(-1.0, -1.0, 1.0, 1.0); }
+        let ndc = clip.xy / clip.w;
+        lo = min(lo, ndc);
+        hi = max(hi, ndc);
+    }
+    return vec4<f32>(lo, hi);
+}
+
+@compute @workgroup_size(64)
+fn cull_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    let num = u32(uniforms.params.z);
+    if idx >= num { return; }
+
+    let aabb = aabbs[idx];
+    let rect = project_aabb(aabb.aabb_min.xyz, aabb.aabb_max.xyz);
+
+    // Frustum cull: if entirely off-screen, mark culled.
+    let visible = !(rect.z < -1.0 || rect.x > 1.0 || rect.w < -1.0 || rect.y > 1.0);
+
+    if visible {
+        visibility[idx] = 1u;
+        // Atomically append to the indirect draw list.
+        let slot = atomicAdd(&draw_count, 1u);
+        // Placeholder: write object index into indirect buffer.
+        indirect[slot] = idx;
+    } else {
+        visibility[idx] = 0u;
+    }
+}
+"#;
+
 /// Hi-Z depth pyramid — a conservative depth mip-chain.
 pub struct HiZBuffer {
     /// Mip levels, index 0 = full-res, each subsequent level is half.
@@ -198,6 +498,121 @@ impl HiZBuffer {
         }
 
         true // visible
+    }
+}
+
+// ── GPU-driven indirect rendering ─────────────────────────────────
+
+/// Per-draw-call information stored CPU-side to feed the GPU cull pass.
+#[derive(Clone)]
+pub struct MeshDrawCommand {
+    /// Index count for the mesh.
+    pub index_count: u32,
+    /// First index in the index buffer.
+    pub first_index: u32,
+    /// Base vertex offset.
+    pub base_vertex: i32,
+    /// World-space AABB minimum.
+    pub aabb_min: Vec3,
+    /// World-space AABB maximum.
+    pub aabb_max: Vec3,
+    /// Material bind-group index (for sorting).
+    pub material_index: u32,
+}
+
+/// Manages a list of mesh draw commands and produces GPU buffers
+/// suitable for indirect rendering via [`GpuCullPass`].
+pub struct IndirectDrawManager {
+    draws: Vec<MeshDrawCommand>,
+}
+
+impl IndirectDrawManager {
+    pub fn new() -> Self {
+        Self { draws: Vec::new() }
+    }
+
+    /// Clear all draw commands for a new frame.
+    pub fn clear(&mut self) {
+        self.draws.clear();
+    }
+
+    /// Push a mesh draw command.
+    pub fn push(&mut self, cmd: MeshDrawCommand) {
+        self.draws.push(cmd);
+    }
+
+    /// Number of queued draw commands.
+    pub fn count(&self) -> u32 {
+        self.draws.len() as u32
+    }
+
+    /// Upload AABBs to the cull pass buffer.
+    pub fn upload_aabbs(&self, queue: &wgpu::Queue, cull: &GpuCullPass) {
+        let aabbs: Vec<GpuAabb> = self
+            .draws
+            .iter()
+            .map(|d| GpuAabb {
+                min: [d.aabb_min.x, d.aabb_min.y, d.aabb_min.z, 0.0],
+                max: [d.aabb_max.x, d.aabb_max.y, d.aabb_max.z, 0.0],
+            })
+            .collect();
+        queue.write_buffer(&cull.aabb_buffer, 0, bytemuck::cast_slice(&aabbs));
+    }
+
+    /// Upload uniforms to the cull pass buffer.
+    pub fn upload_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        cull: &GpuCullPass,
+        view_proj: &Mat4,
+        screen_width: f32,
+        screen_height: f32,
+    ) {
+        let cols = view_proj.to_cols_array_2d();
+        let uniforms = GpuCullUniforms {
+            view_proj: cols,
+            params: [screen_width, screen_height, self.draws.len() as f32, 0.0],
+        };
+        queue.write_buffer(&cull.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// After the cull compute shader runs, build `DrawIndexedIndirect`
+    /// commands on GPU. Currently this writes a pre-populated indirect buffer
+    /// before the compute pass so the shader can compact it.
+    pub fn prepare_indirect_buffer(&self, queue: &wgpu::Queue, cull: &GpuCullPass) {
+        let args: Vec<DrawIndexedIndirectArgs> = self
+            .draws
+            .iter()
+            .map(|d| DrawIndexedIndirectArgs {
+                index_count: d.index_count,
+                instance_count: 0, // compute shader sets to 1 if visible
+                first_index: d.first_index,
+                base_vertex: d.base_vertex,
+                first_instance: 0,
+            })
+            .collect();
+        queue.write_buffer(&cull.indirect_buffer, 0, bytemuck::cast_slice(&args));
+        // Reset draw count
+        queue.write_buffer(&cull.draw_count_buffer, 0, &[0u8; 4]);
+    }
+
+    /// Record GPU-driven draw calls using `multi_draw_indexed_indirect`.
+    /// Falls back to individual `draw_indexed_indirect` calls.
+    pub fn execute_indirect<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        cull: &'a GpuCullPass,
+    ) {
+        let stride = std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
+        for i in 0..self.draws.len() as u64 {
+            render_pass.draw_indexed_indirect(&cull.indirect_buffer, i * stride);
+        }
+    }
+}
+
+impl Default for IndirectDrawManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

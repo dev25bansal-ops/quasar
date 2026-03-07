@@ -57,6 +57,7 @@ pub mod volumetric;
 pub mod lightmap;
 pub mod shader_graph;
 pub mod gpu_memory;
+pub mod ssr;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
@@ -82,14 +83,15 @@ pub use skinning::{Skeleton, Bone, SkinnedVertex, BoneMatricesBuffer, SkinnedMes
 pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, SSAO_NOISE_SIZE};
 pub use particle::{ParticleEmitter, ParticleEmitterConfig, ParticleData, GpuParticleSystem, MAX_PARTICLES};
 pub use sprite::{SpriteBatch, Sprite, SpriteRect, SpriteVertex, OrthographicCamera, FontAtlas, TextRenderer};
-pub use lod::{LodGroup, LodLevel, LodSystem};
+pub use lod::{LodGroup, LodLevel, LodSystem, LodCrossFade, LOD_CROSSFADE_BAND, LOD_CROSSFADE_WGSL, BAYER_4X4, bayer_threshold};
 pub use volumetric::{VolumetricFogSettings, VolumetricFogPass, VolumetricFogUniform};
-pub use lightmap::{Lightmap, LightmapBaker, BakeConfig, SHProbe, SHProbeGrid, LightmapMaterial, GpuLightmapBaker, GpuBakeUniform, GpuBakerTriangle, GPU_LIGHTMAP_BAKE_WGSL};
-pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection, ShaderGraphCompiler, ShaderGraphCache};
+pub use lightmap::{Lightmap, LightmapBaker, BakeConfig, SHProbe, SHProbeGrid, LightmapMaterial, GpuLightmapBaker, GpuBakeUniform, GpuBakerTriangle, GPU_LIGHTMAP_BAKE_WGSL, PathTraceBakeConfig, GpuPathTraceUniform, GpuPathTraceBaker, GPU_PATHTRACE_BAKE_WGSL};
+pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection, ShaderGraphCompiler, ShaderGraphCache, ShaderGraphDiagnostic, DiagnosticSeverity, CompileResult};
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
-pub use occlusion::{HiZBuffer, HiZMip, HIZ_MIP_LEVELS};
-pub use deferred::{GBuffer, DeferredLightingPass, InverseCameraUniforms, GBUFFER_TARGET_COUNT};
+pub use occlusion::{HiZBuffer, HiZMip, GpuCullPass, GpuAabb, GpuCullUniforms, DrawIndexedIndirectArgs, HIZ_MIP_LEVELS, GPU_CULL_MAX_OBJECTS, GPU_CULL_WGSL, MeshDrawCommand, IndirectDrawManager};
+pub use deferred::{GBuffer, DeferredLightingPass, InverseCameraUniforms, StencilLightVolumePass, LightVolumeUniform, GBUFFER_TARGET_COUNT};
 pub use reflection_probe::{ReflectionProbe, ReflectionProbeManager, ReflectionProbeSystem, ReflectionProbeUniform, GpuDevice, MAX_REFLECTION_PROBES, PROBE_FACE_SIZE, PROBE_MIP_LEVELS};
 pub use decal::{Decal, DecalBatch, DecalUniform, MAX_DECALS, DECAL_PROJECTION_WGSL, DECAL_RENDER_WGSL};
 pub use terrain::{TerrainConfig, TerrainMesh, TerrainLodLevel, TerrainSplatmap, HeightFieldColliderDesc, MAX_TERRAIN_LODS, MAX_SPLAT_LAYERS, TERRAIN_SPLATMAP_WGSL};
 pub use clustered::{LightClusterGrid, Cluster, ClusterAabb, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, MAX_LIGHTS_PER_CLUSTER, TOTAL_CLUSTERS, CLUSTERED_LIGHT_WGSL};
+pub use ssr::{SsrPass, SsrSettings, SsrUniform};

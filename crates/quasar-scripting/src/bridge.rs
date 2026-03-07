@@ -366,6 +366,118 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     })?;
     quasar.set("get_velocity", get_velocity_fn)?;
 
+    // ── ECS query API ──────────────────────────────────────────────
+
+    // Internal table populated by the plugin each frame:
+    // quasar._component_data[type_name] = { [entity_id] = { ... }, ... }
+    quasar.set("_component_data", lua.create_table()?)?;
+
+    // quasar.query(component_name) -> {{entity=id, ...fields}, ...}
+    // Returns all entities that have the named component, with the
+    // component's fields inlined into each result row plus an `entity` key.
+    let query_fn = lua.create_function(|lua, component_name: String| -> LuaResult<LuaTable> {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let component_data: LuaTable = quasar.get("_component_data")?;
+
+        let result = lua.create_table()?;
+        let mut idx = 1u32;
+
+        match component_data.get::<Option<LuaTable>>(component_name.as_str())? {
+            Some(entities_table) => {
+                for pair in entities_table.pairs::<LuaValue, LuaTable>() {
+                    let (key, fields) = pair?;
+                    let row = lua.create_table()?;
+                    // Copy entity id.
+                    match key {
+                        LuaValue::Integer(i) => row.set("entity", i)?,
+                        LuaValue::String(s) => {
+                            if let Ok(id) = s.to_str()?.parse::<u32>() {
+                                row.set("entity", id)?;
+                            }
+                        }
+                        _ => {}
+                    }
+                    // Copy all fields from the component.
+                    for pair in fields.pairs::<String, LuaValue>() {
+                        let (k, v) = pair?;
+                        row.set(k, v)?;
+                    }
+                    result.set(idx, row)?;
+                    idx += 1;
+                }
+            }
+            None => {}
+        }
+
+        Ok(result)
+    })?;
+    quasar.set("query", query_fn)?;
+
+    // quasar.query_entities(component_name) -> {entity_id, entity_id, ...}
+    // Returns just the entity ids (cheaper than full query).
+    let query_entities_fn = lua.create_function(|lua, component_name: String| -> LuaResult<LuaTable> {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let component_data: LuaTable = quasar.get("_component_data")?;
+        let result = lua.create_table()?;
+        let mut idx = 1u32;
+
+        if let Some(entities_table) = component_data.get::<Option<LuaTable>>(component_name.as_str())? {
+            for pair in entities_table.pairs::<LuaValue, LuaValue>() {
+                let (key, _) = pair?;
+                result.set(idx, key)?;
+                idx += 1;
+            }
+        }
+
+        Ok(result)
+    })?;
+    quasar.set("query_entities", query_entities_fn)?;
+
+    // quasar.has_component(entity_id, component_name) -> bool
+    let has_component_fn = lua.create_function(
+        |lua, (entity_id, component_name): (u32, String)| -> LuaResult<bool> {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let component_data: LuaTable = quasar.get("_component_data")?;
+            if let Some(entities_table) =
+                component_data.get::<Option<LuaTable>>(component_name.as_str())?
+            {
+                let exists: Option<LuaTable> = entities_table.get(entity_id)?;
+                Ok(exists.is_some())
+            } else {
+                Ok(false)
+            }
+        },
+    )?;
+    quasar.set("has_component", has_component_fn)?;
+
+    // quasar.add_component(entity_id, component_name, data_table)
+    // Queues an add-component command.
+    let add_component_fn = lua.create_function(
+        |lua, (entity_id, component_name, data): (u32, String, LuaTable)| {
+            let cmd = lua.create_table()?;
+            cmd.set("type", "add_component")?;
+            cmd.set("entity", entity_id)?;
+            cmd.set("component", component_name)?;
+            cmd.set("data", data)?;
+            push_command(lua, cmd)?;
+            Ok(())
+        },
+    )?;
+    quasar.set("add_component", add_component_fn)?;
+
+    // quasar.remove_component(entity_id, component_name)
+    let remove_component_fn = lua.create_function(
+        |lua, (entity_id, component_name): (u32, String)| {
+            let cmd = lua.create_table()?;
+            cmd.set("type", "remove_component")?;
+            cmd.set("entity", entity_id)?;
+            cmd.set("component", component_name)?;
+            push_command(lua, cmd)?;
+            Ok(())
+        },
+    )?;
+    quasar.set("remove_component", remove_component_fn)?;
+
     Ok(())
 }
 

@@ -1,6 +1,8 @@
 [build]
 target = "index.html"
 release = true
+# Output goes to dist/
+dist = "dist"
 
 [watch]
 watch = ["src", "index.html", "../../crates"]
@@ -9,3 +11,11 @@ watch = ["src", "index.html", "../../crates"]
 address = "127.0.0.1"
 port = 8080
 open = false
+# Enable shared-array-buffer headers for multi-threading (if wasm-threads used).
+headers = { "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }
+
+# Copy shader assets into the dist directory so they can be fetched at runtime.
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = ["-c", "cp -r ../../assets/shaders dist/shaders 2>/dev/null || true"]

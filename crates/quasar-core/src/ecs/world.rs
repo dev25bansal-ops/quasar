@@ -36,6 +36,9 @@ pub struct World {
     entity_row: HashMap<u32, usize>,
     /// Track which components each entity has (for archetype migration)
     entity_components: HashMap<u32, Vec<TypeId>>,
+    /// Per-type removal log: tracks entity indices that had a component removed this frame.
+    /// Cleared once per frame via `clear_removal_log()`.
+    removal_log: HashMap<TypeId, Vec<u32>>,
 }
 
 impl World {
@@ -49,6 +52,7 @@ impl World {
             entity_archetype: HashMap::new(),
             entity_row: HashMap::new(),
             entity_components: HashMap::new(),
+            removal_log: HashMap::new(),
         }
     }
 
@@ -62,17 +66,31 @@ impl World {
     }
 
     /// Despawn an entity, removing all of its components.
+    /// Uses swap-and-pop removal from archetype storage and logs removals
+    /// for `Removed<T>` query filters.
     pub fn despawn(&mut self, entity: Entity) -> bool {
         if !self.allocator.deallocate(entity) {
             return false;
         }
 
-        // Remove from archetype storage
+        // Log removals for all components this entity had
+        if let Some(components) = self.entity_components.get(&entity.index()) {
+            for &type_id in components.iter() {
+                self.removal_log.entry(type_id).or_default().push(entity.index());
+            }
+        }
+
+        // Remove from archetype storage (swap-and-pop)
         if let Some(arch_id) = self.entity_archetype.remove(&entity.index()) {
-            let graph = self.archetype_graph.write();
-            if let Some(_arch) = graph.get(arch_id) {
-                // Get mutable access through the graph
-                // For now, just mark as removed
+            let graph = self.archetype_graph.get_mut();
+            if let Some(arch) = graph.get_mut(arch_id) {
+                if let Some(swapped_row) = arch.remove_entity(entity) {
+                    // If a swap occurred, update the moved entity's row mapping
+                    if swapped_row < arch.entities.len() {
+                        let swapped_entity = arch.entities[swapped_row];
+                        self.entity_row.insert(swapped_entity.index(), swapped_row);
+                    }
+                }
             }
         }
 
@@ -160,11 +178,17 @@ impl World {
         }
 
         // Remove from legacy storage
-        if let Some(storage) = self.storages.get_mut(&type_id) {
+        let removed = if let Some(storage) = self.storages.get_mut(&type_id) {
             storage.remove(entity)
         } else {
             false
+        };
+
+        // Log removal for Removed<T> query filter
+        if removed {
+            self.removal_log.entry(type_id).or_default().push(entity.index());
         }
+        removed
     }
 
     /// Get a shared reference to a component on an entity.
@@ -509,7 +533,7 @@ impl World {
     // ------------------------------------------------------------------
 
     /// Get or create the typed storage for `T`.
-    fn storage_mut<T: Component>(&mut self) -> &mut TypedStorage<T> {
+    pub(crate) fn storage_mut<T: Component>(&mut self) -> &mut TypedStorage<T> {
         let type_id = TypeId::of::<T>();
         self.storages
             .entry(type_id)
@@ -520,12 +544,41 @@ impl World {
     }
 
     /// Get an existing typed storage for `T` (read-only).
-    fn storage<T: Component>(&self) -> Option<&TypedStorage<T>> {
+    pub(crate) fn storage<T: Component>(&self) -> Option<&TypedStorage<T>> {
         let type_id = TypeId::of::<T>();
         self.storages
             .get(&type_id)?
             .as_any()
             .downcast_ref::<TypedStorage<T>>()
+    }
+
+    /// Get the component type list for an entity (for query filters).
+    pub fn entity_component_list(&self, entity_index: u32) -> Option<&Vec<TypeId>> {
+        self.entity_components.get(&entity_index)
+    }
+
+    /// Iterate over (entity_index, component_list) pairs.
+    pub fn entity_components_iter(&self) -> impl Iterator<Item = (&u32, &Vec<TypeId>)> {
+        self.entity_components.iter()
+    }
+
+    /// Get the generation for a given entity index.
+    pub fn generation_of(&self, index: u32) -> u32 {
+        self.allocator.generation_of(index)
+    }
+
+    /// Check if a component of type T was removed for a given entity index.
+    pub fn was_removed<T: Component>(&self, entity_index: u32) -> bool {
+        if let Some(removals) = self.removal_log.get(&TypeId::of::<T>()) {
+            removals.contains(&entity_index)
+        } else {
+            false
+        }
+    }
+
+    /// Clear the removal log. Should be called once per frame after systems run.
+    pub fn clear_removal_log(&mut self) {
+        self.removal_log.clear();
     }
 
     /// Insert a component using runtime type information (for Commands).
@@ -559,6 +612,8 @@ impl World {
         if let Some(components) = self.entity_components.get_mut(&entity.index()) {
             if let Ok(pos) = components.binary_search(&type_id) {
                 components.remove(pos);
+                // Log removal
+                self.removal_log.entry(type_id).or_default().push(entity.index());
             }
         }
 
@@ -811,5 +866,216 @@ mod tests {
             Some(&Velocity { dx: 1.0, dy: 2.0 })
         );
         assert_eq!(world.get::<Health>(e), Some(&Health(50)));
+    }
+
+    // ------------------------------------------------------------------
+    // Comprehensive ECS unit tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn spawn_multiple_and_count() {
+        let mut world = World::new();
+        for _ in 0..10 {
+            world.spawn();
+        }
+        assert_eq!(world.entity_count(), 10);
+    }
+
+    #[test]
+    fn despawn_reduces_count() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        let e2 = world.spawn();
+        let e3 = world.spawn();
+        assert_eq!(world.entity_count(), 3);
+        world.despawn(e2);
+        assert_eq!(world.entity_count(), 2);
+        assert!(world.is_alive(e1));
+        assert!(!world.is_alive(e2));
+        assert!(world.is_alive(e3));
+    }
+
+    #[test]
+    fn despawn_cleans_all_components() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+        world.insert(e, Velocity { dx: 3.0, dy: 4.0 });
+        world.insert(e, Health(100));
+        world.despawn(e);
+        // After despawn, no query should return the entity.
+        assert_eq!(world.query::<Position>().len(), 0);
+        assert_eq!(world.query::<Velocity>().len(), 0);
+        assert_eq!(world.query::<Health>().len(), 0);
+    }
+
+    #[test]
+    fn insert_overwrite_component() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Health(100));
+        world.insert(e, Health(50));
+        assert_eq!(world.get::<Health>(e), Some(&Health(50)));
+    }
+
+    #[test]
+    fn remove_component_leaves_others() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+        world.insert(e, Health(100));
+        assert!(world.remove_component::<Health>(e));
+        assert!(world.get::<Health>(e).is_none());
+        assert_eq!(world.get::<Position>(e), Some(&Position { x: 1.0, y: 2.0 }));
+    }
+
+    #[test]
+    fn has_component_check() {
+        let mut world = World::new();
+        let e = world.spawn();
+        assert!(!world.has::<Position>(e));
+        world.insert(e, Position { x: 0.0, y: 0.0 });
+        assert!(world.has::<Position>(e));
+    }
+
+    #[test]
+    fn get_mut_modifies_in_place() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Health(100));
+        if let Some(h) = world.get_mut::<Health>(e) {
+            h.0 += 50;
+        }
+        assert_eq!(world.get::<Health>(e), Some(&Health(150)));
+    }
+
+    #[test]
+    fn commands_spawn_and_apply() {
+        let mut world = World::new();
+        let mut cmds = super::Commands::new();
+        cmds.spawn().with(Position { x: 5.0, y: 6.0 }).id();
+        cmds.spawn().with(Health(200)).id();
+        assert_eq!(world.entity_count(), 0);
+        cmds.apply(&mut world);
+        assert_eq!(world.entity_count(), 2);
+    }
+
+    #[test]
+    fn commands_despawn_applies() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Health(1));
+        let mut cmds = super::Commands::new();
+        cmds.despawn(e);
+        cmds.apply(&mut world);
+        assert!(!world.is_alive(e));
+    }
+
+    #[test]
+    fn query_with_filter() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 0.0 });
+        world.insert(e1, Health(10));
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 2.0, y: 0.0 });
+        // e2 has Position but no Health
+        let results = world.query_with::<Position, Health>();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, &Position { x: 1.0, y: 0.0 });
+    }
+
+    #[test]
+    fn query_without_filter() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 0.0 });
+        world.insert(e1, Health(10));
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 2.0, y: 0.0 });
+        let results = world.query_without::<Position, Health>();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, &Position { x: 2.0, y: 0.0 });
+    }
+
+    #[test]
+    fn query_optional_returns_both() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 0.0 });
+        world.insert(e1, Health(10));
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 2.0, y: 0.0 });
+        let results = world.query_optional::<Position, Health>();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn change_detection_tracks_mutations() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Health(100));
+        let tick_before = world.current_tick::<Health>();
+        world.tick_change_detection();
+        // No mutation yet — unchanged since tick_before
+        let changed = world.query_changed::<Health>(tick_before);
+        assert_eq!(changed.len(), 0);
+        // Mutate
+        if let Some(h) = world.get_mut::<Health>(e) {
+            h.0 = 50;
+        }
+        let changed = world.query_changed::<Health>(tick_before);
+        assert_eq!(changed.len(), 1);
+    }
+
+    #[test]
+    fn typed_query_state_single_component() {
+        use crate::ecs::query::QueryState;
+        let mut world = World::new();
+        for i in 0..3 {
+            let e = world.spawn();
+            world.insert(e, Position { x: i as f32, y: 0.0 });
+        }
+        let qs = QueryState::<&Position>::new();
+        let results: Vec<_> = qs.iter(&world).collect();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn typed_query_state_two_components() {
+        use crate::ecs::query::QueryState;
+        let mut world = World::new();
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 0.0 });
+        world.insert(e1, Velocity { dx: 2.0, dy: 0.0 });
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 3.0, y: 0.0 });
+        let qs = QueryState::<(&Position, &Velocity)>::new();
+        let results: Vec<_> = qs.iter(&world).collect();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn removal_log_tracked() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Health(100));
+        world.remove_component::<Health>(e);
+        assert!(world.was_removed::<Health>(e.index()));
+        world.clear_removal_log();
+        assert!(!world.was_removed::<Health>(e.index()));
+    }
+
+    #[test]
+    fn generational_entity_reuse() {
+        let mut world = World::new();
+        let e1 = world.spawn();
+        let idx = e1.index();
+        world.despawn(e1);
+        let e2 = world.spawn();
+        assert_eq!(e2.index(), idx);
+        assert_ne!(e1.generation(), e2.generation());
+        assert!(!world.is_alive(e1));
+        assert!(world.is_alive(e2));
     }
 }

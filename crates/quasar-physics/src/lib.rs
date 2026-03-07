@@ -19,9 +19,9 @@ pub use character_controller::{
 pub use collider::{ColliderComponent, ColliderShape, PendingCollider};
 pub use events::{
     CollisionEvent, CollisionEventType, CollisionStartEvent, CollisionStopEvent, SensorEnterEvent,
-    SensorExitEvent,
+    SensorExitEvent, TriggerEnterEvent, TriggerStayEvent, TriggerExitEvent, TriggerTracker,
 };
-pub use joints::{JointComponent, JointKind};
+pub use joints::{JointComponent, JointKind, JointMotor, MotorMode, apply_motor_to_joint, set_joint_motor_velocity, set_joint_motor_position};
 pub use plugin::{PhysicsPlugin, PhysicsResource};
 pub use rigidbody::{BodyType, RigidBodyComponent};
 pub use world::PhysicsWorld;

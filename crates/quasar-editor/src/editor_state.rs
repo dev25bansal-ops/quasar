@@ -209,6 +209,8 @@ pub struct EditorState {
     pub mode: EditorMode,
     pub snapshot: Option<WorldSnapshot>,
     pub undo_stack: UndoStack,
+    /// When `true`, advance exactly one frame then set back to Paused.
+    pub step_requested: bool,
 }
 
 impl EditorState {
@@ -217,6 +219,7 @@ impl EditorState {
             mode: EditorMode::Stopped,
             snapshot: None,
             undo_stack: UndoStack::new(),
+            step_requested: false,
         }
     }
 
@@ -251,6 +254,26 @@ impl EditorState {
 
     pub fn stop_and_restore(&mut self, world: &mut quasar_core::ecs::World) {
         self.stop(world);
+    }
+
+    /// Request a single-frame step while paused.
+    pub fn step_frame(&mut self) {
+        if self.mode == EditorMode::Paused {
+            self.step_requested = true;
+        }
+    }
+
+    /// Returns `true` when the simulation should tick this frame.
+    /// Clears `step_requested` after one tick.
+    pub fn should_tick(&mut self) -> bool {
+        match self.mode {
+            EditorMode::Playing => true,
+            EditorMode::Paused if self.step_requested => {
+                self.step_requested = false;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn take_snapshot(&self, world: &quasar_core::ecs::World) -> WorldSnapshot {

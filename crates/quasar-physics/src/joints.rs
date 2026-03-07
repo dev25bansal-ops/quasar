@@ -163,3 +163,117 @@ pub(crate) fn build_rapier_joint(kind: &JointKind) -> GenericJoint {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Joint motor configuration
+// ---------------------------------------------------------------------------
+
+/// Motor mode (velocity target or position target).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MotorMode {
+    /// Drive the joint DOF to a target velocity.
+    Velocity,
+    /// Drive the joint DOF to a target position.
+    Position,
+}
+
+/// Motor parameters for a single joint DOF.
+#[derive(Debug, Clone, Copy)]
+pub struct JointMotor {
+    pub mode: MotorMode,
+    /// Target value (radians for revolute, metres for prismatic).
+    pub target: f32,
+    /// Maximum force/torque the motor can exert.
+    pub max_force: f32,
+    /// Stiffness (spring constant) — relevant for position mode.
+    pub stiffness: f32,
+    /// Damping coefficient.
+    pub damping: f32,
+}
+
+impl Default for JointMotor {
+    fn default() -> Self {
+        Self {
+            mode: MotorMode::Velocity,
+            target: 0.0,
+            max_force: f32::MAX,
+            stiffness: 0.0,
+            damping: 0.0,
+        }
+    }
+}
+
+impl JointMotor {
+    pub fn velocity(target: f32, max_force: f32) -> Self {
+        Self {
+            mode: MotorMode::Velocity,
+            target,
+            max_force,
+            stiffness: 0.0,
+            damping: 0.0,
+        }
+    }
+
+    pub fn position(target: f32, stiffness: f32, damping: f32) -> Self {
+        Self {
+            mode: MotorMode::Position,
+            target,
+            max_force: f32::MAX,
+            stiffness,
+            damping,
+        }
+    }
+}
+
+/// Apply motor settings to an existing impulse joint in the physics world.
+///
+/// `axis_index`: 0 for single-DOF joints (revolute, prismatic).
+/// For prismatic joints the motor acts on JointAxis::LinX,
+/// for revolute joints it acts on JointAxis::AngX.
+pub fn apply_motor_to_joint(
+    joint_set: &mut ImpulseJointSet,
+    handle: ImpulseJointHandle,
+    motor: &JointMotor,
+    is_prismatic: bool,
+) {
+    if let Some(joint) = joint_set.get_mut(handle) {
+        let axis = if is_prismatic {
+            JointAxis::LinX
+        } else {
+            JointAxis::AngX
+        };
+        match motor.mode {
+            MotorMode::Velocity => {
+                joint.data.set_motor(axis, motor.target, 0.0, 0.0, motor.max_force);
+            }
+            MotorMode::Position => {
+                joint.data.set_motor(axis, motor.target, 0.0, motor.stiffness, motor.damping);
+            }
+        }
+    }
+}
+
+/// Convenience: apply a velocity motor to a joint in the physics world.
+pub fn set_joint_motor_velocity(
+    world: &mut crate::world::PhysicsWorld,
+    handle: ImpulseJointHandle,
+    target_velocity: f32,
+    max_force: f32,
+    is_prismatic: bool,
+) {
+    let motor = JointMotor::velocity(target_velocity, max_force);
+    apply_motor_to_joint(&mut world.impulse_joints, handle, &motor, is_prismatic);
+}
+
+/// Convenience: apply a position motor (spring) to a joint.
+pub fn set_joint_motor_position(
+    world: &mut crate::world::PhysicsWorld,
+    handle: ImpulseJointHandle,
+    target_position: f32,
+    stiffness: f32,
+    damping: f32,
+    is_prismatic: bool,
+) {
+    let motor = JointMotor::position(target_position, stiffness, damping);
+    apply_motor_to_joint(&mut world.impulse_joints, handle, &motor, is_prismatic);
+}

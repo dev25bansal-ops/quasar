@@ -87,19 +87,38 @@ fn fs_ssao(in: VertexOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_ssao_blur(in: VertexOutput) -> @location(0) vec4<f32> {
-    let texel_size = vec2<f32>(1.0) / vec2<f32>(textureDimensions(t_depth));
+    let texel_size = vec2<f32>(1.0) / vec2<f32>(textureDimensions(t_position));
 
+    let center_depth = textureSample(t_depth, s_source, in.uv).r;
+    let center_ao = textureSample(t_position, s_source, in.uv).r;
+
+    let depth_threshold = 0.05;
+    var total_weight = 0.0;
     var result = 0.0;
-    let blur_radius = 2;
 
+    // 5×5 bilateral blur — weights drop off with spatial distance (Gaussian)
+    // and depth difference (edge-preserving).
     for (var x = -2; x <= 2; x++) {
         for (var y = -2; y <= 2; y++) {
             let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            result += textureSample(t_depth, s_source, in.uv + offset).r;
+            let sample_uv = in.uv + offset;
+            let sample_ao = textureSample(t_position, s_source, sample_uv).r;
+            let sample_depth = textureSample(t_depth, s_source, sample_uv).r;
+
+            // Spatial Gaussian weight (σ = 2)
+            let spatial_dist = f32(x * x + y * y);
+            let spatial_w = exp(-spatial_dist / 8.0);
+
+            // Depth-aware (bilateral) weight
+            let depth_diff = abs(center_depth - sample_depth);
+            let depth_w = exp(-depth_diff / depth_threshold);
+
+            let w = spatial_w * depth_w;
+            result += sample_ao * w;
+            total_weight += w;
         }
     }
 
-    result /= 25.0;
-
+    result /= max(total_weight, 0.001);
     return vec4<f32>(result, 0.0, 0.0, 1.0);
 }

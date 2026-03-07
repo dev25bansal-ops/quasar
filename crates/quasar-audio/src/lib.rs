@@ -252,5 +252,6 @@ pub struct AudioListener;
 pub use plugin::{AudioPlugin, AudioResource, SpatialAudioSystem};
 pub use dsp::{
     AudioChannel, AudioMixer, AudioMixerSystem, DopplerSystem, DopplerTracker, ReverbZone,
-    ReverbZoneSystem,
+    ReverbZoneSystem, ConvolutionImpulseResponse, ConvolutionReverb, ConvolutionReverbZone,
+    StreamingAudioSource, StreamingAudioSystem, StreamingBuffer, StreamingMode,
 };
