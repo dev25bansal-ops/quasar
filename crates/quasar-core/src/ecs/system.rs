@@ -1,5 +1,7 @@
 //! System scheduling — defines how game logic runs each frame.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use super::{Commands, World};
 
 /// A system is a function that operates on the [`World`].
@@ -57,8 +59,11 @@ pub enum SystemStage {
 /// An ordered collection of systems grouped by stage.
 ///
 /// Commands are flushed between stages to apply deferred mutations.
+/// Systems within a stage can be ordered using `before` / `after` constraints.
 pub struct Schedule {
     stages: Vec<(SystemStage, Vec<Box<dyn System>>)>,
+    /// Ordering constraints: `"A" -> ["B", "C"]` means A must run before B and C.
+    before: HashMap<String, Vec<String>>,
 }
 
 impl Schedule {
@@ -71,6 +76,7 @@ impl Schedule {
                 (SystemStage::PreRender, Vec::new()),
                 (SystemStage::Render, Vec::new()),
             ],
+            before: HashMap::new(),
         }
     }
 
@@ -105,11 +111,23 @@ impl Schedule {
         None
     }
 
+    /// Declare that `before_name` must run before `after_name` within the same stage.
+    pub fn add_order(&mut self, before_name: &str, after_name: &str) {
+        self.before
+            .entry(before_name.to_string())
+            .or_default()
+            .push(after_name.to_string());
+    }
+
     /// Run all systems in stage order, flushing Commands between stages.
+    ///
+    /// Within each stage, systems are topologically sorted according to
+    /// the constraints registered via [`add_order`].
     pub fn run(&mut self, world: &mut World) {
         for (_stage, systems) in &mut self.stages {
-            for system in systems.iter_mut() {
-                system.run(world);
+            let order = topo_sort_systems(systems, &self.before);
+            for idx in order {
+                systems[idx].run(world);
             }
             // Flush Commands between stages
             if let Some(mut cmds) = world.remove_resource::<Commands>() {
@@ -118,6 +136,73 @@ impl Schedule {
             }
         }
     }
+}
+
+/// Topological sort of systems within a stage based on `before` constraints.
+/// Returns indices in execution order. Falls back to insertion order if no constraints apply.
+fn topo_sort_systems(
+    systems: &[Box<dyn System>],
+    before: &HashMap<String, Vec<String>>,
+) -> Vec<usize> {
+    let n = systems.len();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Build name → index map.
+    let name_to_idx: HashMap<&str, usize> = systems
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.name(), i))
+        .collect();
+
+    // Build in-degree + adjacency list over indices.
+    let mut in_degree = vec![0u32; n];
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+    for (before_name, after_names) in before {
+        let Some(&from) = name_to_idx.get(before_name.as_str()) else {
+            continue;
+        };
+        for after_name in after_names {
+            let Some(&to) = name_to_idx.get(after_name.as_str()) else {
+                continue;
+            };
+            adj[from].push(to);
+            in_degree[to] += 1;
+        }
+    }
+
+    // Kahn's algorithm.
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    for i in 0..n {
+        if in_degree[i] == 0 {
+            queue.push_back(i);
+        }
+    }
+
+    let mut order = Vec::with_capacity(n);
+    while let Some(idx) = queue.pop_front() {
+        order.push(idx);
+        for &next in &adj[idx] {
+            in_degree[next] -= 1;
+            if in_degree[next] == 0 {
+                queue.push_back(next);
+            }
+        }
+    }
+
+    // If there's a cycle, append remaining indices in insertion order.
+    if order.len() < n {
+        let in_order: HashSet<usize> = order.iter().copied().collect();
+        for i in 0..n {
+            if !in_order.contains(&i) {
+                order.push(i);
+            }
+        }
+    }
+
+    order
 }
 
 impl Default for Schedule {

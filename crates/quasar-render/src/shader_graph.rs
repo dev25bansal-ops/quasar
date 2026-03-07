@@ -370,6 +370,14 @@ impl ShaderGraphCompiler {
         writeln!(wgsl, "    out.emissive   = {};", em).unwrap();
         writeln!(wgsl, "    return out;").unwrap();
         writeln!(wgsl, "}}").unwrap();
+        writeln!(wgsl).unwrap();
+
+        // Emit the @fragment entry point that calls evaluate_material.
+        writeln!(wgsl, "@fragment").unwrap();
+        writeln!(wgsl, "fn fs_main(input: MaterialInput) -> @location(0) vec4<f32> {{").unwrap();
+        writeln!(wgsl, "    let mat = evaluate_material(input);").unwrap();
+        writeln!(wgsl, "    return mat.base_color;").unwrap();
+        writeln!(wgsl, "}}").unwrap();
 
         Ok(wgsl)
     }

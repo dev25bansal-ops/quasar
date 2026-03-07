@@ -184,6 +184,24 @@ impl VolumetricFogPass {
             ],
         });
 
+        // Create a 1x1 depth placeholder so the initial bind group is valid.
+        let depth_placeholder = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Volumetric Depth Placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_placeholder_view =
+            depth_placeholder.create_view(&wgpu::TextureViewDescriptor::default());
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Volumetric BG"),
             layout: &bind_group_layout,
@@ -196,10 +214,9 @@ impl VolumetricFogPass {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&scatter_view),
                 },
-                // Depth will be re-bound each frame via update_depth — use a placeholder.
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&scatter_view),
+                    resource: wgpu::BindingResource::TextureView(&depth_placeholder_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

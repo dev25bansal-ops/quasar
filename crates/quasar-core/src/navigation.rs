@@ -88,6 +88,71 @@ impl NavMesh {
             })
             .map(|(i, _)| i)
     }
+
+    /// Build a navigation mesh from a heightmap grid.
+    ///
+    /// * `grid_width` / `grid_height` — number of samples in X and Z.
+    /// * `heights` — row-major array of `grid_width * grid_height` heights.
+    /// * `cell_size` — world-space distance between adjacent samples.
+    /// * `max_slope` — maximum walkable slope angle in radians.
+    ///
+    /// Each grid cell that passes the slope test is converted into two
+    /// triangles. Adjacency is computed automatically.
+    pub fn from_height_grid(
+        grid_width: usize,
+        grid_height: usize,
+        heights: &[f32],
+        cell_size: f32,
+        max_slope: f32,
+    ) -> Self {
+        assert_eq!(
+            heights.len(),
+            grid_width * grid_height,
+            "heights length must equal grid_width * grid_height"
+        );
+
+        let idx = |x: usize, z: usize| -> usize { z * grid_width + x };
+        let cos_max = max_slope.cos();
+
+        // Build vertices.
+        let mut vertices = Vec::with_capacity(grid_width * grid_height);
+        for z in 0..grid_height {
+            for x in 0..grid_width {
+                let y = heights[idx(x, z)];
+                vertices.push(Vec3::new(x as f32 * cell_size, y, z as f32 * cell_size));
+            }
+        }
+
+        // Build triangle polygons, filtering by slope.
+        let mut index_lists: Vec<Vec<usize>> = Vec::new();
+
+        for z in 0..(grid_height - 1) {
+            for x in 0..(grid_width - 1) {
+                let i00 = idx(x, z);
+                let i10 = idx(x + 1, z);
+                let i01 = idx(x, z + 1);
+                let i11 = idx(x + 1, z + 1);
+
+                // Triangle A: (i00, i10, i01)
+                let normal_a = (vertices[i10] - vertices[i00])
+                    .cross(vertices[i01] - vertices[i00])
+                    .normalize_or_zero();
+                if normal_a.y >= cos_max {
+                    index_lists.push(vec![i00, i10, i01]);
+                }
+
+                // Triangle B: (i10, i11, i01)
+                let normal_b = (vertices[i11] - vertices[i10])
+                    .cross(vertices[i01] - vertices[i10])
+                    .normalize_or_zero();
+                if normal_b.y >= cos_max {
+                    index_lists.push(vec![i10, i11, i01]);
+                }
+            }
+        }
+
+        Self::from_polygons(vertices, index_lists)
+    }
 }
 
 impl Default for NavMesh {

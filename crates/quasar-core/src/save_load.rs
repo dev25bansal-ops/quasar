@@ -149,14 +149,15 @@ pub fn capture_game_save(world: &World) -> GameSave {
 }
 
 /// Load a `GameSave` into a fresh world, spawning entities with their saved
-/// transforms.  Returns the list of newly spawned entities.
-pub fn load_game_save(world: &mut World, save: &GameSave) -> Vec<Entity> {
-    let mut spawned: Vec<Entity> = Vec::with_capacity(save.entities.len());
+/// transforms.  Returns `(Entity, &SavedEntity)` pairs so callers can
+/// process `custom_data` and other per-entity fields.
+pub fn load_game_save<'a>(world: &mut World, save: &'a GameSave) -> Vec<(Entity, &'a SavedEntity)> {
+    let mut spawned: Vec<(Entity, &SavedEntity)> = Vec::with_capacity(save.entities.len());
 
     for se in &save.entities {
         let entity = world.spawn();
         world.insert(entity, se.transform);
-        spawned.push(entity);
+        spawned.push((entity, se));
     }
 
     spawned

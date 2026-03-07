@@ -204,23 +204,25 @@ impl System for ReverbZoneSystem {
             return;
         }
 
-        // Apply wet mix as a volume boost to all spatial sources.
-        let spatial: Vec<SoundId> = world
+        // Apply wet mix as a volume boost to all spatial sources,
+        // scaling by each source's base volume to avoid overriding it.
+        let spatial: Vec<(SoundId, f32)> = world
             .query::<AudioSource>()
             .into_iter()
             .filter_map(|(_, src)| {
-                if src.spatial { src.playing_id } else { None }
+                if src.spatial {
+                    src.playing_id.map(|sid| (sid, src.volume))
+                } else {
+                    None
+                }
             })
             .collect();
 
         if let Some(resource) = world.resource_mut::<AudioResource>() {
-            for sid in spatial {
-                // Read the current volume would require handles — instead we
-                // just bump by wet_mix. The main spatial system will reset next
-                // frame so this won't accumulate.
+            for (sid, base_volume) in spatial {
                 resource
                     .audio
-                    .set_volume(sid, 1.0 + max_wet as f64);
+                    .set_volume(sid, base_volume as f64 * (1.0 + max_wet as f64));
             }
         }
     }

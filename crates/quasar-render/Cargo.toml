@@ -17,3 +17,4 @@ glam = { workspace = true }
 serde = { workspace = true }
 gltf = { workspace = true }
 fontdue = { workspace = true }
+rayon = { workspace = true }

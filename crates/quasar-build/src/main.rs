@@ -38,6 +38,7 @@ struct BuildArgs {
     target: BuildTarget,
     release: bool,
     output_dir: Option<PathBuf>,
+    compress_textures: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +81,7 @@ fn parse_args() -> BuildArgs {
     let mut target = BuildTarget::Windows;
     let mut release = false;
     let mut output_dir: Option<PathBuf> = None;
+    let mut compress_textures = false;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -97,6 +99,7 @@ fn parse_args() -> BuildArgs {
                 }
             }
             "--release" | "-r" => release = true,
+            "--compress-textures" => compress_textures = true,
             "--output" | "-o" => {
                 if let Some(v) = args.next() {
                     output_dir = Some(PathBuf::from(v));
@@ -112,6 +115,7 @@ fn parse_args() -> BuildArgs {
         target,
         release,
         output_dir,
+        compress_textures,
     }
 }
 
@@ -166,7 +170,7 @@ fn run(args: BuildArgs) -> Result<(), String> {
     };
     let assets_dst = out_dir.join("assets");
     if assets_src.exists() {
-        copy_assets(&assets_src, &assets_dst)?;
+        copy_assets(&assets_src, &assets_dst, args.compress_textures)?;
         log::info!("Assets copied to {}", assets_dst.display());
     }
 
@@ -188,14 +192,14 @@ fn run(args: BuildArgs) -> Result<(), String> {
 
 // ── asset processing ────────────────────────────────────────────
 
-fn copy_assets(src: &Path, dst: &Path) -> Result<(), String> {
+fn copy_assets(src: &Path, dst: &Path, compress_textures: bool) -> Result<(), String> {
     if dst.exists() {
         fs::remove_dir_all(dst).map_err(|e| format!("clean assets dir: {e}"))?;
     }
-    copy_dir_recursive(src, dst)
+    copy_dir_recursive(src, dst, compress_textures)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
     let entries = fs::read_dir(src).map_err(|e| format!("readdir {}: {e}", src.display()))?;
     for entry in entries {
@@ -203,7 +207,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         let path = entry.path();
         let dest_path = dst.join(entry.file_name());
         if path.is_dir() {
-            copy_dir_recursive(&path, &dest_path)?;
+            copy_dir_recursive(&path, &dest_path, compress_textures)?;
         } else {
             // Skip editor-only files.
             let name = entry.file_name();
@@ -211,11 +215,42 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             if name_str.starts_with(".editor") || name_str.ends_with(".editor.json") {
                 continue;
             }
-            // Optionally compress PNG textures (lossy resize for web).
-            fs::copy(&path, &dest_path)
-                .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
+            // Compress textures if flag is set.
+            if compress_textures && is_texture_file(&name_str) {
+                if let Err(e) = compress_texture(&path, &dest_path) {
+                    log::warn!("Texture compression failed for {}: {e}, copying as-is", path.display());
+                    fs::copy(&path, &dest_path)
+                        .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
+                }
+            } else {
+                fs::copy(&path, &dest_path)
+                    .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
+            }
         }
     }
+    Ok(())
+}
+
+fn is_texture_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".png") || lower.ends_with(".jpg") || lower.ends_with(".jpeg")
+}
+
+fn compress_texture(src: &Path, dst: &Path) -> Result<(), String> {
+    let img = image::open(src).map_err(|e| format!("{e}"))?;
+    // Resize to max 2048×2048 if larger, preserving aspect ratio.
+    let max_dim = 2048u32;
+    let img = if img.width() > max_dim || img.height() > max_dim {
+        img.resize(max_dim, max_dim, image::imageops::FilterType::Lanczos3)
+    } else {
+        img
+    };
+    // Save as JPEG with 80% quality for lossy compression.
+    let dest_path = dst.with_extension("jpg");
+    let mut file = fs::File::create(&dest_path).map_err(|e| format!("{e}"))?;
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 80);
+    img.write_with_encoder(encoder).map_err(|e| format!("{e}"))?;
+    log::debug!("Compressed {} → {}", src.display(), dest_path.display());
     Ok(())
 }
 

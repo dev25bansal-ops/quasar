@@ -2831,6 +2831,7 @@ dependencies = [
  "log",
  "quasar-core",
  "quasar-math",
+ "rayon",
  "serde",
  "wgpu",
  "winit",
@@ -2856,10 +2857,12 @@ dependencies = [
 name = "quasar-ui"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "fontdue",
  "log",
  "quasar-core",
  "quasar-math",
+ "wgpu",
 ]
 
 [[package]]

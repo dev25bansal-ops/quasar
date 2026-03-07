@@ -299,6 +299,196 @@ impl RollbackManager {
     }
 }
 
+// ── Tick-rate accumulator ──────────────────────────────────────
+
+/// Server-side fixed tick-rate accumulator.
+///
+/// Ensures the server runs exactly `tick_rate` network ticks per second,
+/// independent of frame rate.
+pub struct TickAccumulator {
+    pub tick_rate: u32,
+    pub accumulator: f32,
+    pub current_tick: u64,
+}
+
+impl TickAccumulator {
+    pub fn new(tick_rate: u32) -> Self {
+        Self {
+            tick_rate,
+            accumulator: 0.0,
+            current_tick: 0,
+        }
+    }
+
+    /// Feed real elapsed `delta_seconds` and return how many ticks to execute.
+    pub fn advance(&mut self, delta_seconds: f32) -> u32 {
+        let tick_dt = 1.0 / self.tick_rate as f32;
+        self.accumulator += delta_seconds;
+        let mut ticks = 0u32;
+        while self.accumulator >= tick_dt {
+            self.accumulator -= tick_dt;
+            self.current_tick += 1;
+            ticks += 1;
+        }
+        ticks
+    }
+
+    /// The interpolation alpha between the last and next tick (0.0–1.0).
+    pub fn alpha(&self) -> f32 {
+        let tick_dt = 1.0 / self.tick_rate as f32;
+        self.accumulator / tick_dt
+    }
+}
+
+// ── Snapshot interpolation (client-side) ───────────────────────
+
+/// Stores two consecutive server snapshots and interpolates between them
+/// so that remote entities move smoothly.
+pub struct SnapshotInterpolation {
+    /// The older (previous) snapshot.
+    pub prev: Option<(u64, HashMap<NetworkEntityId, EntitySnapshot>)>,
+    /// The newer (current) snapshot.
+    pub curr: Option<(u64, HashMap<NetworkEntityId, EntitySnapshot>)>,
+    /// Server tick rate (used to compute interpolation alpha).
+    pub server_tick_rate: u32,
+    /// Local timer accumulating real time between received snapshots.
+    pub timer: f32,
+}
+
+impl SnapshotInterpolation {
+    pub fn new(server_tick_rate: u32) -> Self {
+        Self {
+            prev: None,
+            curr: None,
+            server_tick_rate,
+            timer: 0.0,
+        }
+    }
+
+    /// Push a new authoritative server snapshot. The old `curr` becomes `prev`.
+    pub fn push_snapshot(&mut self, frame: u64, entities: HashMap<NetworkEntityId, EntitySnapshot>) {
+        self.prev = self.curr.take();
+        self.curr = Some((frame, entities));
+        self.timer = 0.0;
+    }
+
+    /// Advance interpolation timer by real delta and return per-entity
+    /// interpolated transforms.
+    pub fn interpolate(&mut self, delta: f32) -> Vec<(NetworkEntityId, [f32; 3], [f32; 4])> {
+        self.timer += delta;
+
+        let tick_dt = 1.0 / self.server_tick_rate as f32;
+        let alpha = (self.timer / tick_dt).clamp(0.0, 1.0);
+
+        let (prev_map, curr_map) = match (&self.prev, &self.curr) {
+            (Some((_, p)), Some((_, c))) => (p, c),
+            _ => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+        for (id, curr_snap) in curr_map {
+            if let Some(prev_snap) = prev_map.get(id) {
+                let pos = lerp3(prev_snap.position, curr_snap.position, alpha);
+                let rot = slerp(prev_snap.rotation, curr_snap.rotation, alpha);
+                results.push((*id, pos, rot));
+            } else {
+                results.push((*id, curr_snap.position, curr_snap.rotation));
+            }
+        }
+        results
+    }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    // If quaternions are very close, use linear interpolation.
+    if dot.abs() > 0.9995 {
+        let mut r = [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+            a[3] + (b[3] - a[3]) * t,
+        ];
+        let len = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]).sqrt();
+        if len > 0.0 {
+            r[0] /= len;
+            r[1] /= len;
+            r[2] /= len;
+            r[3] /= len;
+        }
+        return r;
+    }
+    let dot = dot.clamp(-1.0, 1.0);
+    let theta = dot.acos();
+    let sin_theta = theta.sin();
+    let wa = ((1.0 - t) * theta).sin() / sin_theta;
+    let wb = (t * theta).sin() / sin_theta;
+    [
+        wa * a[0] + wb * b[0],
+        wa * a[1] + wb * b[1],
+        wa * a[2] + wb * b[2],
+        wa * a[3] + wb * b[3],
+    ]
+}
+
+// ── Delta compression ──────────────────────────────────────────
+
+/// Tracks the last-sent state per entity so only changed fields are sent.
+pub struct DeltaCompressor {
+    last_sent: HashMap<NetworkEntityId, EntitySnapshot>,
+}
+
+impl DeltaCompressor {
+    pub fn new() -> Self {
+        Self {
+            last_sent: HashMap::new(),
+        }
+    }
+
+    /// Compare `current` against the last sent state. Returns `true` if the
+    /// entity has changed enough to warrant re-sending.
+    pub fn needs_update(&self, id: NetworkEntityId, current: &EntitySnapshot) -> bool {
+        match self.last_sent.get(&id) {
+            None => true,
+            Some(prev) => {
+                let pos_diff = (current.position[0] - prev.position[0]).powi(2)
+                    + (current.position[1] - prev.position[1]).powi(2)
+                    + (current.position[2] - prev.position[2]).powi(2);
+                let rot_diff = (current.rotation[0] - prev.rotation[0]).powi(2)
+                    + (current.rotation[1] - prev.rotation[1]).powi(2)
+                    + (current.rotation[2] - prev.rotation[2]).powi(2)
+                    + (current.rotation[3] - prev.rotation[3]).powi(2);
+                // Threshold: ~0.5mm for position, ~0.01 for rotation.
+                pos_diff > 0.000_25 || rot_diff > 0.000_1
+            }
+        }
+    }
+
+    /// Record that we sent `snapshot` for `id`.
+    pub fn mark_sent(&mut self, id: NetworkEntityId, snapshot: EntitySnapshot) {
+        self.last_sent.insert(id, snapshot);
+    }
+
+    /// Remove tracking for a despawned entity.
+    pub fn remove(&mut self, id: &NetworkEntityId) {
+        self.last_sent.remove(id);
+    }
+}
+
+impl Default for DeltaCompressor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct NetworkReplication {
     pub state: Arc<RwLock<NetworkState>>,
     pub rollback: RollbackManager,
@@ -733,179 +923,4 @@ impl DirtyTracker {
     }
 }
 
-// ── snapshot interpolation ──────────────────────────────────────
 
-/// A buffered transform snapshot used by client-side interpolation.
-#[derive(Debug, Clone)]
-pub struct TransformSnapshot {
-    pub position: [f32; 3],
-    pub rotation: [f32; 4],
-    pub scale: [f32; 3],
-    /// Server tick at which this snapshot was authoritative.
-    pub server_tick: u64,
-    /// Local receive time (seconds since app start).
-    pub receive_time: f64,
-}
-
-/// Per-entity interpolation buffer (ring of recent snapshots).
-#[derive(Debug, Clone)]
-pub struct InterpolationBuffer {
-    snapshots: Vec<TransformSnapshot>,
-    max_snapshots: usize,
-}
-
-impl InterpolationBuffer {
-    pub fn new(max_snapshots: usize) -> Self {
-        Self {
-            snapshots: Vec::with_capacity(max_snapshots),
-            max_snapshots,
-        }
-    }
-
-    pub fn push(&mut self, snap: TransformSnapshot) {
-        if self.snapshots.len() >= self.max_snapshots {
-            self.snapshots.remove(0);
-        }
-        self.snapshots.push(snap);
-    }
-
-    /// Interpolate position / rotation / scale for the given render time.
-    /// `render_time` is `current_time - interpolation_delay`.
-    pub fn sample(&self, render_time: f64) -> Option<([f32; 3], [f32; 4], [f32; 3])> {
-        if self.snapshots.len() < 2 {
-            return self.snapshots.last().map(|s| (s.position, s.rotation, s.scale));
-        }
-
-        // Find the two snapshots that straddle render_time.
-        let mut before = &self.snapshots[0];
-        let mut after = &self.snapshots[1];
-        for window in self.snapshots.windows(2) {
-            if window[0].receive_time <= render_time && window[1].receive_time >= render_time {
-                before = &window[0];
-                after = &window[1];
-                break;
-            }
-        }
-
-        let span = after.receive_time - before.receive_time;
-        let t = if span > 0.0 {
-            ((render_time - before.receive_time) / span).clamp(0.0, 1.0) as f32
-        } else {
-            1.0
-        };
-
-        Some((
-            lerp3(before.position, after.position, t),
-            nlerp4(before.rotation, after.rotation, t),
-            lerp3(before.scale, after.scale, t),
-        ))
-    }
-}
-
-fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [
-        a[0] + (b[0] - a[0]) * t,
-        a[1] + (b[1] - a[1]) * t,
-        a[2] + (b[2] - a[2]) * t,
-    ]
-}
-
-/// Normalised lerp for quaternions.
-fn nlerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
-    // Ensure shortest path.
-    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-    let sign = if dot < 0.0 { -1.0f32 } else { 1.0 };
-    let raw = [
-        a[0] + (b[0] * sign - a[0]) * t,
-        a[1] + (b[1] * sign - a[1]) * t,
-        a[2] + (b[2] * sign - a[2]) * t,
-        a[3] + (b[3] * sign - a[3]) * t,
-    ];
-    let len = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2] + raw[3] * raw[3]).sqrt();
-    if len < 1e-10 {
-        return [0.0, 0.0, 0.0, 1.0];
-    }
-    [raw[0] / len, raw[1] / len, raw[2] / len, raw[3] / len]
-}
-
-// ── server-authoritative tick loop ──────────────────────────────
-
-/// Accumulator-based server tick driver.
-///
-/// Sits as a resource; the networking system calls `advance()` every
-/// frame. When enough time has accumulated it returns the ticks to
-/// simulate.
-#[derive(Debug, Clone)]
-pub struct ServerTickAccumulator {
-    pub tick_rate: u32,
-    pub current_tick: u64,
-    accumulator: f64,
-    seconds_per_tick: f64,
-}
-
-impl ServerTickAccumulator {
-    pub fn new(tick_rate: u32) -> Self {
-        Self {
-            tick_rate,
-            current_tick: 0,
-            accumulator: 0.0,
-            seconds_per_tick: 1.0 / tick_rate as f64,
-        }
-    }
-
-    /// Feed in the frame delta (seconds). Returns the number of fixed
-    /// ticks to execute this frame (0, 1 or possibly more if lagging).
-    pub fn advance(&mut self, dt: f64) -> u32 {
-        self.accumulator += dt;
-        let mut ticks = 0u32;
-        while self.accumulator >= self.seconds_per_tick {
-            self.accumulator -= self.seconds_per_tick;
-            self.current_tick += 1;
-            ticks += 1;
-        }
-        ticks
-    }
-
-    /// Interpolation alpha (0.0–1.0) for rendering between ticks.
-    pub fn alpha(&self) -> f64 {
-        self.accumulator / self.seconds_per_tick
-    }
-}
-
-/// Snapshot interpolation state, stored as a resource on clients.
-#[derive(Debug, Default)]
-pub struct SnapshotInterpolation {
-    pub buffers: HashMap<NetworkEntityId, InterpolationBuffer>,
-    /// Delay in seconds behind the latest server snapshot.
-    pub interpolation_delay: f64,
-}
-
-impl SnapshotInterpolation {
-    pub fn new(delay_ms: u32) -> Self {
-        Self {
-            buffers: HashMap::new(),
-            interpolation_delay: delay_ms as f64 / 1000.0,
-        }
-    }
-
-    pub fn push_snapshot(
-        &mut self,
-        entity: NetworkEntityId,
-        snap: TransformSnapshot,
-    ) {
-        self.buffers
-            .entry(entity)
-            .or_insert_with(|| InterpolationBuffer::new(30))
-            .push(snap);
-    }
-
-    /// Get interpolated transform for `entity` at `current_time`.
-    pub fn sample(
-        &self,
-        entity: NetworkEntityId,
-        current_time: f64,
-    ) -> Option<([f32; 3], [f32; 4], [f32; 3])> {
-        let render_time = current_time - self.interpolation_delay;
-        self.buffers.get(&entity)?.sample(render_time)
-    }
-}

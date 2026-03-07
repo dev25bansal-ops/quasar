@@ -9,3 +9,5 @@ quasar-core = { path = "../quasar-core" }
 quasar-math = { path = "../quasar-math" }
 fontdue = { workspace = true }
 log = { workspace = true }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }

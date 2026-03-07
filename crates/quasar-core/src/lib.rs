@@ -45,10 +45,10 @@ pub use asset_server::{
 pub use ecs::{Component, Entity, EntityBuilder, World};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;
-pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState};
+pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor};
 pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, find_path, path_to_waypoints};
 pub use plugin::Plugin;
-pub use prefab::{Prefab, PrefabEntity, PrefabLibrary, PrefabProperty, instantiate_prefab};
+pub use prefab::{Prefab, PrefabEntity, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, instantiate_prefab};
 pub use profiler::{FrameStats, Profiler, ProfilerPlugin};
 pub use scene::{Scene, SceneGraph};
 pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};

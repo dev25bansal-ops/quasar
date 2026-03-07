@@ -23,6 +23,7 @@
 
 pub mod camera;
 pub mod camera_controller;
+pub mod clustered;
 pub mod culling;
 pub mod components;
 pub mod decal;
@@ -91,3 +92,4 @@ pub use deferred::{GBuffer, DeferredLightingPass, InverseCameraUniforms, GBUFFER
 pub use reflection_probe::{ReflectionProbe, ReflectionProbeManager, ReflectionProbeUniform, MAX_REFLECTION_PROBES, PROBE_FACE_SIZE, PROBE_MIP_LEVELS};
 pub use decal::{Decal, DecalBatch, DecalUniform, MAX_DECALS, DECAL_PROJECTION_WGSL};
 pub use terrain::{TerrainConfig, TerrainMesh, TerrainLodLevel, TerrainSplatmap, HeightFieldColliderDesc, MAX_TERRAIN_LODS, MAX_SPLAT_LAYERS, TERRAIN_SPLATMAP_WGSL};
+pub use clustered::{LightClusterGrid, Cluster, ClusterAabb, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, MAX_LIGHTS_PER_CLUSTER, TOTAL_CLUSTERS, CLUSTERED_LIGHT_WGSL};

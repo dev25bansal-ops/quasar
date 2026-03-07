@@ -121,19 +121,39 @@ impl Prefab {
 // Instantiation
 // ---------------------------------------------------------------------------
 
-/// Spawn entities from a prefab into the world. Returns the list of spawned
-/// `Entity` handles in the same order as `prefab.entities`.
-pub fn instantiate_prefab(world: &mut World, prefab: &Prefab) -> Vec<Entity> {
-    let mut spawned: Vec<Entity> = Vec::with_capacity(prefab.entities.len());
+/// Spawn entities from a prefab into the world. Returns a list of
+/// `(Entity, &PrefabEntity)` pairs in the same order as `prefab.entities`,
+/// so callers can process mesh_shape and properties.
+pub fn instantiate_prefab<'a>(world: &mut World, prefab: &'a Prefab) -> Vec<(Entity, &'a PrefabEntity)> {
+    let mut spawned: Vec<(Entity, &PrefabEntity)> = Vec::with_capacity(prefab.entities.len());
 
     for pe in &prefab.entities {
         let entity = world.spawn();
         world.insert(entity, pe.transform);
-        spawned.push(entity);
+
+        // Insert mesh_shape as a Name-like tag that downstream systems can match.
+        if let Some(ref shape) = pe.mesh_shape {
+            world.insert(entity, PrefabMeshTag(shape.clone()));
+        }
+
+        // Insert properties so game systems can read them.
+        if !pe.properties.is_empty() {
+            world.insert(entity, PrefabProperties(pe.properties.clone()));
+        }
+
+        spawned.push((entity, pe));
     }
 
     spawned
 }
+
+/// Tag component inserted for prefab entities that specify a `mesh_shape`.
+#[derive(Debug, Clone)]
+pub struct PrefabMeshTag(pub String);
+
+/// Component holding arbitrary prefab properties for game-specific systems.
+#[derive(Debug, Clone)]
+pub struct PrefabProperties(pub Vec<PrefabProperty>);
 
 // ---------------------------------------------------------------------------
 // Prefab Asset
