@@ -18,11 +18,11 @@ pub struct PhysicsWorld {
     narrow_phase: NarrowPhase,
     pub bodies: RigidBodySet,
     pub colliders: ColliderSet,
-    impulse_joints: ImpulseJointSet,
-    multibody_joints: MultibodyJointSet,
+    pub(crate) impulse_joints: ImpulseJointSet,
+    pub(crate) multibody_joints: MultibodyJointSet,
     ccd_solver: CCDSolver,
-    query_pipeline: QueryPipeline,
-    query_pipeline_dirty: bool,
+    pub(crate) query_pipeline: QueryPipeline,
+    pub(crate) query_pipeline_dirty: bool,
 }
 
 impl PhysicsWorld {

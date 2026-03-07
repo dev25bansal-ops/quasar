@@ -10,6 +10,9 @@ members = [
     "crates/quasar-scripting",
     "crates/quasar-editor",
     "crates/quasar-engine",
+    "crates/quasar-ui",
+    "crates/quasar-mobile",
+    "crates/quasar-build",
     "examples/spinning_cube",
     "examples/showcase",
     "examples/physics_sandbox",
@@ -35,6 +38,9 @@ quasar-physics = { path = "crates/quasar-physics" }
 quasar-audio = { path = "crates/quasar-audio" }
 quasar-scripting = { path = "crates/quasar-scripting" }
 quasar-editor = { path = "crates/quasar-editor" }
+quasar-ui = { path = "crates/quasar-ui" }
+quasar-mobile = { path = "crates/quasar-mobile" }
+quasar-build = { path = "crates/quasar-build" }
 
 # Rendering & windowing
 wgpu = "24"

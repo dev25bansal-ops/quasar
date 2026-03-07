@@ -20,28 +20,37 @@ pub mod asset_server;
 pub mod ecs;
 pub mod error;
 pub mod event;
+pub mod navigation;
 pub mod network;
 pub mod plugin;
+pub mod prefab;
 pub mod profiler;
+pub mod save_load;
 pub mod scene;
 pub mod scene_serde;
 pub mod time;
 
 pub use animation::{
-    AnimationClip, AnimationPlayer, AnimationPlugin, AnimationResource, AnimationState,
-    SkeletalAnimationClip, TransformKeyframe,
+    AnimationBlendTree, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationResource,
+    AnimationState, AnimationStateMachine, AnimationStateMachineSystem, AnimationStateNode,
+    AnimationTransition, BlendTreeNode, SkeletalAnimationClip, TransformKeyframe,
+    TransitionCondition,
 };
 pub use app::{App, TimeSnapshot};
 pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState};
 pub use asset_server::{
-    AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetServer,
+    AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetReloadSystem,
+    AssetReloadedEvent, AssetServer, ReloadKind,
 };
 pub use ecs::{Component, Entity, EntityBuilder, World};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;
 pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState};
+pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, find_path, path_to_waypoints};
 pub use plugin::Plugin;
+pub use prefab::{Prefab, PrefabEntity, PrefabLibrary, PrefabProperty, instantiate_prefab};
 pub use profiler::{FrameStats, Profiler, ProfilerPlugin};
 pub use scene::{Scene, SceneGraph};
+pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};
 pub use scene_serde::{EntityData, SceneData};
 pub use time::Time;

@@ -93,6 +93,18 @@ impl Schedule {
         self.add_system(SystemStage::Update, Box::new(FnSystem::new(name, func)));
     }
 
+    /// Look up a system by name and return (stage_index, system_index) or None.
+    pub fn find_system(&self, name: &str) -> Option<(usize, usize)> {
+        for (si, (_stage, systems)) in self.stages.iter().enumerate() {
+            for (idx, sys) in systems.iter().enumerate() {
+                if sys.name() == name {
+                    return Some((si, idx));
+                }
+            }
+        }
+        None
+    }
+
     /// Run all systems in stage order, flushing Commands between stages.
     pub fn run(&mut self, world: &mut World) {
         for (_stage, systems) in &mut self.stages {

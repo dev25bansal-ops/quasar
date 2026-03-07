@@ -5,6 +5,7 @@
 //! Provides a runtime GUI overlay for inspecting entities, viewing logs,
 //! and tweaking component values — press F12 to toggle.
 
+pub mod asset_browser;
 pub mod console;
 pub mod editor_state;
 pub mod gizmos;
@@ -12,6 +13,7 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod renderer;
 
+pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
 pub use editor_state::{
     EditCommand, EditorMode, EditorState, SetMaterialCommand, SetPositionCommand,
     SetRotationCommand, SetScaleCommand, UndoStack, WorldSnapshot,
@@ -41,12 +43,16 @@ pub struct Editor {
     pub show_console: bool,
     /// Show performance metrics overlay.
     pub show_metrics: bool,
+    /// Show the asset browser panel.
+    pub show_asset_browser: bool,
     /// The currently selected entity (if any).
     pub selected_entity: Option<Entity>,
     /// Console log buffer.
     pub console: console::ConsoleLog,
     /// Editor state for Play/Pause/Stop and undo/redo
     pub state: EditorState,
+    /// Asset browser panel.
+    pub asset_browser: AssetBrowser,
 }
 
 impl Editor {
@@ -57,9 +63,11 @@ impl Editor {
             show_inspector: true,
             show_console: false,
             show_metrics: true,
+            show_asset_browser: false,
             selected_entity: None,
             console: console::ConsoleLog::new(),
             state: EditorState::new(),
+            asset_browser: AssetBrowser::new("assets"),
         }
     }
 
@@ -97,6 +105,7 @@ impl Editor {
                 ui.toggle_value(&mut self.show_inspector, "🔍 Inspector");
                 ui.toggle_value(&mut self.show_console, "📝 Console");
                 ui.toggle_value(&mut self.show_metrics, "📊 Metrics");
+                ui.toggle_value(&mut self.show_asset_browser, "📁 Assets");
                 ui.separator();
 
                 // Play/Pause/Stop buttons
@@ -179,6 +188,11 @@ impl Editor {
                     ui.label("Press F12 to toggle editor");
                     ui.label("Ctrl+Z: Undo | Ctrl+Y: Redo");
                 });
+        }
+
+        // Asset browser panel
+        if self.show_asset_browser {
+            let _drag_path = self.asset_browser.panel(ctx);
         }
 
         (inspector_changed, inspector_action, editor_action)

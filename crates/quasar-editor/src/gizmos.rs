@@ -3,8 +3,7 @@
 //! Renders 3D overlay handles in the viewport and handles mouse-ray
 //! intersection for drag operations.
 
-use quasar_core::ecs::Entity;
-use quasar_math::{Quat, Vec3};
+use quasar_math::Vec3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GizmoMode {
@@ -269,8 +268,6 @@ fn create_scale_gizmo(device: &wgpu::Device) -> crate::renderer::GizmoMesh {
 }
 
 fn create_axis_arrows() -> Vec<crate::renderer::GizmoVertex> {
-    use crate::renderer::GizmoVertex;
-
     let mut vertices = Vec::new();
     let axis_length = 1.0;
     let arrow_size = 0.1;
@@ -397,7 +394,7 @@ fn create_scale_handles() -> Vec<crate::renderer::GizmoVertex> {
 
         for dx in [-box_size, box_size] {
             for dy in [-box_size, box_size] {
-                for dz in [-box_size, box_size] {
+                for _dz in [-box_size, box_size] {
                     let offset = if axis == Vec3::X {
                         Vec3::new(0.0, dx, dy)
                     } else if axis == Vec3::Y {

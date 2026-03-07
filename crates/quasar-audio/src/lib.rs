@@ -5,6 +5,7 @@
 //! Supports one-shot sound effects, looping music, volume/playback-rate
 //! control, and a basic spatial audio model.
 
+pub mod dsp;
 pub mod plugin;
 
 use std::collections::HashMap;
@@ -249,3 +250,7 @@ impl AudioSource {
 pub struct AudioListener;
 
 pub use plugin::{AudioPlugin, AudioResource, SpatialAudioSystem};
+pub use dsp::{
+    AudioChannel, AudioMixer, AudioMixerSystem, DopplerSystem, DopplerTracker, ReverbZone,
+    ReverbZoneSystem,
+};

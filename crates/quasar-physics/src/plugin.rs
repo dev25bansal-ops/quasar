@@ -12,6 +12,7 @@ use quasar_core::ecs::{Entity, System, World};
 use quasar_core::Events;
 use quasar_math::Transform;
 
+use crate::character_controller::CharacterControllerComponent;
 use crate::collider::ColliderComponent;
 use crate::events::{CollisionEvent, CollisionEventType};
 use crate::rigidbody::RigidBodyComponent;
@@ -225,6 +226,117 @@ impl System for CollisionEventSystem {
     }
 }
 
+/// System that creates / destroys Rapier joints for `JointComponent` entities.
+pub struct JointSyncSystem;
+
+impl System for JointSyncSystem {
+    fn name(&self) -> &str {
+        "joint_sync"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        use crate::joints::{build_rapier_joint, JointComponent};
+
+        // Collect joints that still need a Rapier handle.
+        let pending: Vec<(Entity, JointComponent)> = world
+            .query::<JointComponent>()
+            .into_iter()
+            .filter(|(_, j)| j.handle.is_none())
+            .map(|(e, j)| (e, j.clone()))
+            .collect();
+
+        if pending.is_empty() {
+            return;
+        }
+
+        // Create joints in Rapier.
+        let mut created: Vec<(Entity, rapier3d::prelude::ImpulseJointHandle)> = Vec::new();
+        if let Some(resource) = world.resource_mut::<PhysicsResource>() {
+            for (entity, joint) in &pending {
+                let data = build_rapier_joint(&joint.kind);
+                let handle = resource.physics.impulse_joints.insert(
+                    joint.body_a,
+                    joint.body_b,
+                    data,
+                    true,
+                );
+                created.push((*entity, handle));
+            }
+        }
+
+        // Write handles back.
+        for (entity, handle) in created {
+            if let Some(j) = world.get_mut::<JointComponent>(entity) {
+                j.handle = Some(handle);
+            }
+        }
+    }
+}
+
+pub struct CharacterControllerSystem;
+
+impl System for CharacterControllerSystem {
+    fn name(&self) -> &str {
+        "character_controller"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        let delta = world
+            .resource::<quasar_core::TimeSnapshot>()
+            .map(|t| t.delta_seconds)
+            .unwrap_or(1.0 / 60.0);
+
+        // Collect character controllers with their body handles and desired movement.
+        let controllers: Vec<(
+            Entity,
+            rapier3d::prelude::RigidBodyHandle,
+            rapier3d::prelude::ColliderHandle,
+            crate::character_controller::CharacterControllerConfig,
+            [f32; 3],
+        )> = world
+            .query2::<CharacterControllerComponent, RigidBodyComponent>()
+            .into_iter()
+            .map(|(e, cc, rb)| {
+                (
+                    e,
+                    rb.handle,
+                    cc.collider_handle,
+                    cc.config.clone(),
+                    cc.effective_velocity,
+                )
+            })
+            .collect();
+
+        if controllers.is_empty() {
+            return;
+        }
+
+        // Move each character through the physics world.
+        let mut results: Vec<(Entity, crate::character_controller::CharacterMovementResult)> =
+            Vec::new();
+
+        if let Some(resource) = world.resource_mut::<PhysicsResource>() {
+            for (entity, body_handle, collider_handle, config, velocity) in &controllers {
+                let result = resource.physics.move_character(
+                    *body_handle,
+                    *collider_handle,
+                    *velocity,
+                    config,
+                    delta,
+                );
+                results.push((*entity, result));
+            }
+        }
+
+        // Write back grounded state.
+        for (entity, result) in results {
+            if let Some(cc) = world.get_mut::<CharacterControllerComponent>(entity) {
+                cc.grounded = result.grounded;
+            }
+        }
+    }
+}
+
 pub struct PhysicsPlugin {
     enable_collision_events: bool,
 }
@@ -268,6 +380,18 @@ impl quasar_core::Plugin for PhysicsPlugin {
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::PostUpdate,
             Box::new(PhysicsStepSystem),
+        );
+
+        // PostUpdate: Character controller movement (after physics step)
+        app.schedule.add_system(
+            quasar_core::ecs::SystemStage::PostUpdate,
+            Box::new(CharacterControllerSystem),
+        );
+
+        // PreUpdate: Sync ECS joint components → Rapier joints
+        app.schedule.add_system(
+            quasar_core::ecs::SystemStage::PreUpdate,
+            Box::new(JointSyncSystem),
         );
 
         if self.enable_collision_events {

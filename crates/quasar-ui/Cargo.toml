@@ -1,0 +1,11 @@
+[package]
+name = "quasar-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quasar-core = { path = "../quasar-core" }
+quasar-math = { path = "../quasar-math" }
+fontdue = { workspace = true }
+log = { workspace = true }

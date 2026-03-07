@@ -654,3 +654,258 @@ mod tests {
         assert_eq!(rollback.states.len(), 1);
     }
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  ADVANCED NETWORKING — server-authoritative tick, dirty-flag
+//  replication, snapshot interpolation, `Replicated` marker
+// ════════════════════════════════════════════════════════════════════
+
+/// Marker component: attach to any entity that should be replicated.
+///
+/// `owner` indicates which client "owns" the entity for authority purposes.
+/// Server-owned entities have `owner = None`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Replicated {
+    pub network_id: NetworkEntityId,
+    /// `None` → server authority, `Some(id)` → client authority
+    pub owner: Option<ClientId>,
+    /// Component type-names that should be replicated.
+    pub replicated_components: Vec<String>,
+    /// Priority (higher = more frequent updates). Default 1.0.
+    pub priority: f32,
+}
+
+impl Replicated {
+    pub fn server_owned(network_id: NetworkEntityId, components: Vec<String>) -> Self {
+        Self {
+            network_id,
+            owner: None,
+            replicated_components: components,
+            priority: 1.0,
+        }
+    }
+
+    pub fn client_owned(
+        network_id: NetworkEntityId,
+        owner: ClientId,
+        components: Vec<String>,
+    ) -> Self {
+        Self {
+            network_id,
+            owner: Some(owner),
+            replicated_components: components,
+            priority: 1.0,
+        }
+    }
+}
+
+// ── dirty-flag tracker ──────────────────────────────────────────
+
+/// Tracks per-entity, per-component dirty bits so only changed data
+/// is sent over the wire.
+#[derive(Debug, Clone, Default)]
+pub struct DirtyTracker {
+    /// (NetworkEntityId, component type name) → dirty
+    dirty: HashMap<(NetworkEntityId, String), bool>,
+}
+
+impl DirtyTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Mark a specific component on an entity as dirty (needs replication).
+    pub fn mark(&mut self, entity: NetworkEntityId, component: &str) {
+        self.dirty
+            .insert((entity, component.to_string()), true);
+    }
+
+    /// Check and clear the dirty bit. Returns `true` if it was dirty.
+    pub fn take(&mut self, entity: NetworkEntityId, component: &str) -> bool {
+        self.dirty
+            .remove(&(entity, component.to_string()))
+            .unwrap_or(false)
+    }
+
+    /// Clear all dirty bits (typically at end of tick after sending).
+    pub fn clear_all(&mut self) {
+        self.dirty.clear();
+    }
+}
+
+// ── snapshot interpolation ──────────────────────────────────────
+
+/// A buffered transform snapshot used by client-side interpolation.
+#[derive(Debug, Clone)]
+pub struct TransformSnapshot {
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+    pub scale: [f32; 3],
+    /// Server tick at which this snapshot was authoritative.
+    pub server_tick: u64,
+    /// Local receive time (seconds since app start).
+    pub receive_time: f64,
+}
+
+/// Per-entity interpolation buffer (ring of recent snapshots).
+#[derive(Debug, Clone)]
+pub struct InterpolationBuffer {
+    snapshots: Vec<TransformSnapshot>,
+    max_snapshots: usize,
+}
+
+impl InterpolationBuffer {
+    pub fn new(max_snapshots: usize) -> Self {
+        Self {
+            snapshots: Vec::with_capacity(max_snapshots),
+            max_snapshots,
+        }
+    }
+
+    pub fn push(&mut self, snap: TransformSnapshot) {
+        if self.snapshots.len() >= self.max_snapshots {
+            self.snapshots.remove(0);
+        }
+        self.snapshots.push(snap);
+    }
+
+    /// Interpolate position / rotation / scale for the given render time.
+    /// `render_time` is `current_time - interpolation_delay`.
+    pub fn sample(&self, render_time: f64) -> Option<([f32; 3], [f32; 4], [f32; 3])> {
+        if self.snapshots.len() < 2 {
+            return self.snapshots.last().map(|s| (s.position, s.rotation, s.scale));
+        }
+
+        // Find the two snapshots that straddle render_time.
+        let mut before = &self.snapshots[0];
+        let mut after = &self.snapshots[1];
+        for window in self.snapshots.windows(2) {
+            if window[0].receive_time <= render_time && window[1].receive_time >= render_time {
+                before = &window[0];
+                after = &window[1];
+                break;
+            }
+        }
+
+        let span = after.receive_time - before.receive_time;
+        let t = if span > 0.0 {
+            ((render_time - before.receive_time) / span).clamp(0.0, 1.0) as f32
+        } else {
+            1.0
+        };
+
+        Some((
+            lerp3(before.position, after.position, t),
+            nlerp4(before.rotation, after.rotation, t),
+            lerp3(before.scale, after.scale, t),
+        ))
+    }
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+/// Normalised lerp for quaternions.
+fn nlerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    // Ensure shortest path.
+    let dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
+    let sign = if dot < 0.0 { -1.0f32 } else { 1.0 };
+    let raw = [
+        a[0] + (b[0] * sign - a[0]) * t,
+        a[1] + (b[1] * sign - a[1]) * t,
+        a[2] + (b[2] * sign - a[2]) * t,
+        a[3] + (b[3] * sign - a[3]) * t,
+    ];
+    let len = (raw[0] * raw[0] + raw[1] * raw[1] + raw[2] * raw[2] + raw[3] * raw[3]).sqrt();
+    if len < 1e-10 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    [raw[0] / len, raw[1] / len, raw[2] / len, raw[3] / len]
+}
+
+// ── server-authoritative tick loop ──────────────────────────────
+
+/// Accumulator-based server tick driver.
+///
+/// Sits as a resource; the networking system calls `advance()` every
+/// frame. When enough time has accumulated it returns the ticks to
+/// simulate.
+#[derive(Debug, Clone)]
+pub struct ServerTickAccumulator {
+    pub tick_rate: u32,
+    pub current_tick: u64,
+    accumulator: f64,
+    seconds_per_tick: f64,
+}
+
+impl ServerTickAccumulator {
+    pub fn new(tick_rate: u32) -> Self {
+        Self {
+            tick_rate,
+            current_tick: 0,
+            accumulator: 0.0,
+            seconds_per_tick: 1.0 / tick_rate as f64,
+        }
+    }
+
+    /// Feed in the frame delta (seconds). Returns the number of fixed
+    /// ticks to execute this frame (0, 1 or possibly more if lagging).
+    pub fn advance(&mut self, dt: f64) -> u32 {
+        self.accumulator += dt;
+        let mut ticks = 0u32;
+        while self.accumulator >= self.seconds_per_tick {
+            self.accumulator -= self.seconds_per_tick;
+            self.current_tick += 1;
+            ticks += 1;
+        }
+        ticks
+    }
+
+    /// Interpolation alpha (0.0–1.0) for rendering between ticks.
+    pub fn alpha(&self) -> f64 {
+        self.accumulator / self.seconds_per_tick
+    }
+}
+
+/// Snapshot interpolation state, stored as a resource on clients.
+#[derive(Debug, Default)]
+pub struct SnapshotInterpolation {
+    pub buffers: HashMap<NetworkEntityId, InterpolationBuffer>,
+    /// Delay in seconds behind the latest server snapshot.
+    pub interpolation_delay: f64,
+}
+
+impl SnapshotInterpolation {
+    pub fn new(delay_ms: u32) -> Self {
+        Self {
+            buffers: HashMap::new(),
+            interpolation_delay: delay_ms as f64 / 1000.0,
+        }
+    }
+
+    pub fn push_snapshot(
+        &mut self,
+        entity: NetworkEntityId,
+        snap: TransformSnapshot,
+    ) {
+        self.buffers
+            .entry(entity)
+            .or_insert_with(|| InterpolationBuffer::new(30))
+            .push(snap);
+    }
+
+    /// Get interpolated transform for `entity` at `current_time`.
+    pub fn sample(
+        &self,
+        entity: NetworkEntityId,
+        current_time: f64,
+    ) -> Option<([f32; 3], [f32; 4], [f32; 3])> {
+        let render_time = current_time - self.interpolation_delay;
+        self.buffers.get(&entity)?.sample(render_time)
+    }
+}

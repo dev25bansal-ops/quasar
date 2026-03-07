@@ -69,8 +69,8 @@ impl World {
 
         // Remove from archetype storage
         if let Some(arch_id) = self.entity_archetype.remove(&entity.index()) {
-            let mut graph = self.archetype_graph.write();
-            if let Some(arch) = graph.get(arch_id) {
+            let graph = self.archetype_graph.write();
+            if let Some(_arch) = graph.get(arch_id) {
                 // Get mutable access through the graph
                 // For now, just mark as removed
             }
@@ -254,6 +254,19 @@ impl World {
     // Query helpers
     // ------------------------------------------------------------------
 
+    /// Advance the change-detection tick for all storages.
+    /// Call once per frame before running systems.
+    pub fn tick_change_detection(&mut self) {
+        for storage in self.storages.values_mut() {
+            storage.tick();
+        }
+    }
+
+    /// Return the current change-detection tick for storage of type `T`.
+    pub fn current_tick<T: Component>(&self) -> u64 {
+        self.storage::<T>().map_or(0, |s| s.current_tick)
+    }
+
     /// Iterate over all `(Entity, &T)` pairs.
     /// Uses archetype metadata to iterate only entities known to carry `T`.
     pub fn query<T: Component>(&self) -> Vec<(Entity, &T)> {
@@ -374,6 +387,120 @@ impl World {
             }
         }
 
+        results
+    }
+
+    // ------------------------------------------------------------------
+    // Change-detection queries
+    // ------------------------------------------------------------------
+
+    /// Iterate over all `(Entity, &T)` where `T` was changed since `since_tick`.
+    ///
+    /// A component is considered "changed" if it was inserted or mutably
+    /// accessed via `get_mut` since the given tick.
+    pub fn query_changed<T: Component>(&self, since_tick: u64) -> Vec<(Entity, &T)> {
+        let type_id = TypeId::of::<T>();
+
+        let storage = match self
+            .storages
+            .get(&type_id)
+            .and_then(|s| s.as_any().downcast_ref::<TypedStorage<T>>())
+        {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_id).is_ok() {
+                if storage.changed_since(idx, since_tick) {
+                    if let Some(component) = storage.data.get(&idx) {
+                        let generation = self.allocator.generation_of(idx);
+                        results.push((Entity::new(idx, generation), component));
+                    }
+                }
+            }
+        }
+
+        results
+    }
+
+    // ------------------------------------------------------------------
+    // Filtered queries (With / Without / Optional)
+    // ------------------------------------------------------------------
+
+    /// Query entities with component `T` that also have component `W`.
+    pub fn query_with<T: Component, W: Component>(&self) -> Vec<(Entity, &T)> {
+        let type_t = TypeId::of::<T>();
+        let type_w = TypeId::of::<W>();
+
+        let storage = match self.storage::<T>() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_t).is_ok()
+                && components.binary_search(&type_w).is_ok()
+            {
+                if let Some(component) = storage.data.get(&idx) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), component));
+                }
+            }
+        }
+        results
+    }
+
+    /// Query entities with component `T` that do NOT have component `W`.
+    pub fn query_without<T: Component, W: Component>(&self) -> Vec<(Entity, &T)> {
+        let type_t = TypeId::of::<T>();
+        let type_w = TypeId::of::<W>();
+
+        let storage = match self.storage::<T>() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
+        let mut results = Vec::new();
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_t).is_ok()
+                && components.binary_search(&type_w).is_err()
+            {
+                if let Some(component) = storage.data.get(&idx) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), component));
+                }
+            }
+        }
+        results
+    }
+
+    /// Query entities for component `T`, returning `Option<&U>` for an
+    /// optional second component.
+    pub fn query_optional<T: Component, U: Component>(
+        &self,
+    ) -> Vec<(Entity, &T, Option<&U>)> {
+        let type_t = TypeId::of::<T>();
+
+        let storage_t = match self.storage::<T>() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let storage_u = self.storage::<U>();
+
+        let mut results = Vec::new();
+        for (&idx, components) in &self.entity_components {
+            if components.binary_search(&type_t).is_ok() {
+                if let Some(t_comp) = storage_t.data.get(&idx) {
+                    let generation = self.allocator.generation_of(idx);
+                    let u_comp = storage_u.and_then(|su| su.data.get(&idx));
+                    results.push((Entity::new(idx, generation), t_comp, u_comp));
+                }
+            }
+        }
         results
     }
 

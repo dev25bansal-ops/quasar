@@ -65,8 +65,8 @@ pub struct AssetServer {
     watcher: Option<RecommendedWatcher>,
     event_receiver: Receiver<AssetEvent>,
     event_sender: Sender<AssetEvent>,
-    watch_thread: Option<JoinHandle<()>>,
-    pending_reloads: RwLock<Vec<(AssetId, PathBuf)>>,
+    _watch_thread: Option<JoinHandle<()>>,
+    _pending_reloads: RwLock<Vec<(AssetId, PathBuf)>>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +74,40 @@ pub enum AssetEvent {
     Loaded { handle: AssetHandle, path: PathBuf },
     Reloaded { handle: AssetHandle, path: PathBuf },
     Failed { path: PathBuf, error: String },
+}
+
+/// Identifies the kind of asset that was reloaded, allowing
+/// dependent systems (renderer, audio, etc.) to react.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReloadKind {
+    Shader,
+    Texture,
+    Hdr,
+    Other,
+}
+
+/// Event sent when a specific asset file has been hot-reloaded from disk.
+/// Renderer and other systems should listen for this to recreate GPU
+/// resources.
+#[derive(Debug, Clone)]
+pub struct AssetReloadedEvent {
+    pub path: PathBuf,
+    pub kind: ReloadKind,
+}
+
+impl AssetReloadedEvent {
+    pub fn from_path(path: &Path) -> Self {
+        let kind = match path.extension().and_then(|e| e.to_str()) {
+            Some("wgsl" | "glsl") => ReloadKind::Shader,
+            Some("png" | "jpg" | "jpeg") => ReloadKind::Texture,
+            Some("hdr" | "exr") => ReloadKind::Hdr,
+            _ => ReloadKind::Other,
+        };
+        Self {
+            path: path.to_path_buf(),
+            kind,
+        }
+    }
 }
 
 impl AssetServer {
@@ -89,8 +123,8 @@ impl AssetServer {
             watcher: None,
             event_receiver: receiver,
             event_sender: sender.clone(),
-            watch_thread: None,
-            pending_reloads: RwLock::new(Vec::new()),
+            _watch_thread: None,
+            _pending_reloads: RwLock::new(Vec::new()),
         }
     }
 
@@ -324,6 +358,39 @@ impl<L: AssetLoader + 'static> AnyAssetLoader for LoaderWrapper<L> {
 
 pub struct AssetPlugin;
 
+/// System that polls the asset server for hot-reload events and feeds them
+/// into the ECS event bus so downstream systems can react.
+pub struct AssetReloadSystem;
+
+impl crate::ecs::System for AssetReloadSystem {
+    fn name(&self) -> &str {
+        "asset_reload"
+    }
+
+    fn run(&mut self, world: &mut crate::ecs::World) {
+        // Collect events from the asset server.
+        let events: Vec<AssetEvent> = world
+            .resource::<AssetServer>()
+            .map(|server| server.poll_events())
+            .unwrap_or_default();
+
+        if events.is_empty() {
+            return;
+        }
+
+        // Forward reload events to the ECS event bus.
+        if let Some(ecs_events) = world.resource_mut::<crate::Events>() {
+            for event in events {
+                if let AssetEvent::Reloaded { path, .. } = event {
+                    let reload_event = AssetReloadedEvent::from_path(&path);
+                    log::info!("Asset reload event: {:?} ({:?})", path, reload_event.kind);
+                    ecs_events.send(reload_event);
+                }
+            }
+        }
+    }
+}
+
 impl crate::Plugin for AssetPlugin {
     fn name(&self) -> &str {
         "AssetPlugin"
@@ -335,6 +402,13 @@ impl crate::Plugin for AssetPlugin {
             log::warn!("AssetPlugin: hot-reload watcher failed to start: {}", e);
         }
         app.world.insert_resource(server);
+
+        // Register the reload polling system.
+        app.schedule.add_system(
+            crate::ecs::SystemStage::PreUpdate,
+            Box::new(AssetReloadSystem),
+        );
+
         log::info!("AssetPlugin loaded — asset hot-reload active");
     }
 }

@@ -22,6 +22,8 @@ pub struct ScriptingResource {
     /// Registry key of the Lua table that maps entity_index → per-entity
     /// behaviour table (the table returned by each script file).
     entity_scripts_key: Option<mlua::RegistryKey>,
+    /// Tracks which entity script paths have been registered with the file watcher.
+    watched_entity_scripts: Vec<String>,
 }
 
 impl ScriptingResource {
@@ -36,6 +38,7 @@ impl ScriptingResource {
         Self {
             engine,
             entity_scripts_key,
+            watched_entity_scripts: Vec::new(),
         }
     }
 }
@@ -264,9 +267,11 @@ impl ScriptingSystem {
     /// Load and run per-entity scripts.
     ///
     /// Each entity's script file (pointed to by [`ScriptComponent::path`]) is
-    /// expected to return a Lua table.  If the table contains an `on_init`
-    /// function it is called once after loading.  Every frame, `on_update`
-    /// is called with `(entity_id, dt)`.
+    /// expected to return a Lua table.  If the table contains an `on_start`
+    /// (or legacy `on_init`) function it is called once after loading.
+    /// Every frame, `on_update(entity_id, dt)` is called.
+    /// When an entity is despawned or its script removed, `on_destroy(entity_id)`
+    /// is called if present.
     fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
         // Collect (entity_index, path, loaded) for entities with a ScriptComponent.
         let scripts: Vec<(u32, String, bool)> = world
@@ -293,15 +298,82 @@ impl ScriptingSystem {
             return;
         };
 
+        // Hot-reload: check which entity script files changed on disk.
+        let changed_paths: Vec<String> = {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            resource.engine.check_hot_reload()
+        };
+
+        // Determine which entities need script re-evaluation.
+        let mut reload_entities: Vec<(u32, String)> = Vec::new();
+        if !changed_paths.is_empty() {
+            for (eid, path, _) in &scripts {
+                for cp in &changed_paths {
+                    // Normalise comparison — match on file name ending.
+                    if path.ends_with(cp.as_str()) || cp.ends_with(path.as_str()) || path == cp {
+                        reload_entities.push((*eid, path.clone()));
+                    }
+                }
+            }
+        }
+
+        // Re-evaluate changed entity scripts.
+        for (eid, path) in &reload_entities {
+            match std::fs::read_to_string(path) {
+                Ok(source) => match lua.load(&source).eval::<LuaTable>() {
+                    Ok(behaviour) => {
+                        // Call on_destroy on the old behaviour if present.
+                        if let Ok(old) = entity_table.get::<LuaTable>(*eid) {
+                            if let Ok(destroy_fn) = old.get::<LuaFunction>("on_destroy") {
+                                let _ = destroy_fn.call::<()>(*eid);
+                            }
+                        }
+                        // Call on_start (or legacy on_init) on the new behaviour.
+                        if let Ok(start_fn) = behaviour.get::<LuaFunction>("on_start") {
+                            if let Err(e) = start_fn.call::<()>(*eid) {
+                                log::error!("[lua] {}: on_start error: {}", path, e);
+                            }
+                        } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
+                            if let Err(e) = init_fn.call::<()>(*eid) {
+                                log::error!("[lua] {}: on_init error: {}", path, e);
+                            }
+                        }
+                        let _ = entity_table.set(*eid, behaviour);
+                        log::info!("[lua] Hot-reloaded entity {} script: {}", eid, path);
+                    }
+                    Err(e) => {
+                        log::error!("[lua] Failed to hot-reload {}: {}", path, e);
+                    }
+                },
+                Err(e) => {
+                    log::error!("[lua] Cannot read {}: {}", path, e);
+                }
+            }
+        }
+
         for (eid, path, loaded) in &scripts {
             // ── First-time load ──────────────────────────────────
             if !loaded {
+                // Register with file watcher if not already tracked.
+                if let Some(resource) = world.resource_mut::<ScriptingResource>() {
+                    if !resource.watched_entity_scripts.contains(path) {
+                        let _ = resource.engine.exec_file(path.as_str());
+                        resource.watched_entity_scripts.push(path.clone());
+                    }
+                }
+
                 match std::fs::read_to_string(path) {
                     Ok(source) => {
                         match lua.load(&source).eval::<LuaTable>() {
                             Ok(behaviour) => {
-                                // Call on_init(entity_id) if present.
-                                if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
+                                // Call on_start (or legacy on_init) if present.
+                                if let Ok(start_fn) = behaviour.get::<LuaFunction>("on_start") {
+                                    if let Err(e) = start_fn.call::<()>(*eid) {
+                                        log::error!("[lua] {}: on_start error: {}", path, e);
+                                    }
+                                } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
                                     if let Err(e) = init_fn.call::<()>(*eid) {
                                         log::error!("[lua] {}: on_init error: {}", path, e);
                                     }
@@ -320,8 +392,6 @@ impl ScriptingSystem {
 
                 // Mark as loaded — need mutable access.
                 if let Some(sc) = world.get_mut::<ScriptComponent>(
-                    // Reconstruct Entity from index — query to find it.
-                    // We already collected the index above.
                     {
                         let found: Option<Entity> = world
                             .query::<ScriptComponent>()
@@ -349,10 +419,37 @@ impl ScriptingSystem {
         }
     }
 
+    /// Call `on_destroy(entity_id)` for entities that are about to be despawned.
+    ///
+    /// Should be called before the entity is actually removed from the world.
+    fn call_on_destroy(lua: &Lua, world: &World, entity_index: u32) {
+        let registry_key = {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            match &resource.entity_scripts_key {
+                Some(k) => lua.registry_value::<LuaTable>(k).ok(),
+                None => None,
+            }
+        };
+        let Some(entity_table) = registry_key else {
+            return;
+        };
+        if let Ok(behaviour) = entity_table.get::<LuaTable>(entity_index) {
+            if let Ok(destroy_fn) = behaviour.get::<LuaFunction>("on_destroy") {
+                if let Err(e) = destroy_fn.call::<()>(entity_index) {
+                    log::error!("[lua] entity {}: on_destroy error: {}", entity_index, e);
+                }
+            }
+            // Remove from registry so it's not called again.
+            let _ = entity_table.set(entity_index, mlua::Value::Nil);
+        }
+    }
+
     /// Apply queued commands to the world.
     ///
     /// We need an entity-index → Entity map for mutations on existing entities.
-    fn apply_commands(world: &mut World, commands: Vec<ScriptCommand>) {
+    fn apply_commands(lua: &Lua, world: &mut World, commands: Vec<ScriptCommand>) {
         // Build a map of entity_index → Entity for live entities with transforms.
         let entity_map: std::collections::HashMap<u32, Entity> = world
             .query::<Transform>()
@@ -399,6 +496,8 @@ impl ScriptingSystem {
                 }
                 ScriptCommand::Despawn { entity_index } => {
                     if let Some(&entity) = entity_map.get(&entity_index) {
+                        // Call on_destroy before despawning.
+                        Self::call_on_destroy(lua, world, entity_index);
                         world.despawn(entity);
                         log::debug!("[lua] Despawned entity {:?}", entity);
                     }
@@ -495,7 +594,7 @@ impl System for ScriptingSystem {
         // ── Phase 3: Apply queued commands ────────────────────────
         let commands = Self::read_commands(lua);
         if !commands.is_empty() {
-            Self::apply_commands(world, commands);
+            Self::apply_commands(lua, world, commands);
         }
     }
 }

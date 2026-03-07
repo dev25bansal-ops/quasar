@@ -242,7 +242,7 @@ impl<T0: 'static, T1: 'static, T2: 'static, T3: 'static> ComponentSet for (T0, T
 pub struct ArchetypeGraph {
     archetypes: HashMap<ArchetypeId, Arc<Archetype>>,
     signature_to_id: HashMap<ArchetypeSignature, ArchetypeId>,
-    edges: HashMap<ArchetypeId, HashMap<TypeId, ArchetypeId>>,
+    _edges: HashMap<ArchetypeId, HashMap<TypeId, ArchetypeId>>,
     next_id: ArchetypeId,
 }
 
@@ -251,7 +251,7 @@ impl ArchetypeGraph {
         Self {
             archetypes: HashMap::new(),
             signature_to_id: HashMap::new(),
-            edges: HashMap::new(),
+            _edges: HashMap::new(),
             next_id: 0,
         }
     }

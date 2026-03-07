@@ -25,7 +25,7 @@ use winit::{
 use quasar_core::asset::AssetManager;
 use quasar_core::scene::SceneGraph;
 use quasar_core::App;
-use quasar_editor::{renderer::EditorRenderer, Editor, EditorAction};
+use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
     Camera, DirectionalLight, LightData, LightsUniform, MeshCache, MeshShape, OrbitController,
     PointLight, RenderConfig, Renderer,

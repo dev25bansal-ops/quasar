@@ -327,7 +327,7 @@ impl FontAtlas {
                 continue;
             }
 
-            let (metrics, bitmap) = self.font.rasterize(ch, self.size as f32);
+            let (metrics, _bitmap) = self.font.rasterize(ch, self.size as f32);
 
             let glyph_width = metrics.width as u32;
             let glyph_height = metrics.height as u32;
@@ -470,8 +470,8 @@ impl TextRenderer {
     ) {
         self.font_atlas.rasterize(device, queue, text);
 
-        let mut x = position[0];
-        let y = position[1];
+        let mut _x = position[0];
+        let _y = position[1];
 
         for ch in text.chars() {
             if let Some(glyph) = self.font_atlas.get_glyph(ch) {
@@ -488,7 +488,7 @@ impl TextRenderer {
                 };
 
                 self.sprite_batch.add_sprite(sprite);
-                x += glyph.advance;
+                _x += glyph.advance;
             }
         }
     }

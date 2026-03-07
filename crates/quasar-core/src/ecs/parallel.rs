@@ -50,6 +50,12 @@ pub struct SystemNode {
     pub resource_writes: HashSet<TypeId>,
     pub dependencies: Vec<usize>,
     pub dependents: Vec<usize>,
+    /// Explicit ordering: this system must run after all systems whose names
+    /// are listed here.
+    pub after: Vec<String>,
+    /// Explicit ordering: this system must run before all systems whose names
+    /// are listed here.
+    pub before: Vec<String>,
 }
 
 impl SystemNode {
@@ -62,7 +68,21 @@ impl SystemNode {
             resource_writes: HashSet::new(),
             dependencies: Vec::new(),
             dependents: Vec::new(),
+            after: Vec::new(),
+            before: Vec::new(),
         }
+    }
+
+    /// Declare that this system must run **after** the named system.
+    pub fn after(mut self, name: impl Into<String>) -> Self {
+        self.after.push(name.into());
+        self
+    }
+
+    /// Declare that this system must run **before** the named system.
+    pub fn before(mut self, name: impl Into<String>) -> Self {
+        self.before.push(name.into());
+        self
     }
 
     pub fn with_component_access(mut self, access: ComponentAccess) -> Self {
@@ -120,14 +140,14 @@ impl SystemNode {
 
 pub struct SystemGraph {
     nodes: Vec<SystemNode>,
-    stage: SystemStage,
+    _stage: SystemStage,
 }
 
 impl SystemGraph {
     pub fn new(stage: SystemStage) -> Self {
         Self {
             nodes: Vec::new(),
-            stage,
+            _stage: stage,
         }
     }
 
@@ -138,11 +158,45 @@ impl SystemGraph {
     }
 
     pub fn build_dependencies(&mut self) {
-        for i in 0..self.nodes.len() {
-            for j in (i + 1)..self.nodes.len() {
+        // Build name → index map for explicit ordering lookups.
+        let name_map: HashMap<String, usize> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.system.name().to_string(), i))
+            .collect();
+
+        // Apply explicit .after() / .before() constraints.
+        let n = self.nodes.len();
+        let mut explicit_edges: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n {
+            for after_name in &self.nodes[i].after.clone() {
+                if let Some(&dep_idx) = name_map.get(after_name) {
+                    explicit_edges.push((dep_idx, i)); // dep_idx runs before i
+                }
+            }
+            for before_name in &self.nodes[i].before.clone() {
+                if let Some(&later_idx) = name_map.get(before_name) {
+                    explicit_edges.push((i, later_idx)); // i runs before later_idx
+                }
+            }
+        }
+        for (earlier, later) in explicit_edges {
+            self.nodes[later].dependencies.push(earlier);
+            self.nodes[earlier].dependents.push(later);
+        }
+
+        // Auto-detect data conflicts for remaining pairs.
+        for i in 0..n {
+            for j in (i + 1)..n {
                 if self.nodes[i].conflicts_with(&self.nodes[j]) {
-                    self.nodes[j].dependencies.push(i);
-                    self.nodes[i].dependents.push(j);
+                    // Only add if not already connected by explicit ordering.
+                    if !self.nodes[j].dependencies.contains(&i)
+                        && !self.nodes[i].dependencies.contains(&j)
+                    {
+                        self.nodes[j].dependencies.push(i);
+                        self.nodes[i].dependents.push(j);
+                    }
                 }
             }
         }

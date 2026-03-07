@@ -24,10 +24,21 @@ pub use archetype::{
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
 pub use entity::Entity;
-pub use parallel::{AccessMode, ComponentAccess, ParallelSchedule, SystemNode};
+pub use parallel::{AccessMode, ComponentAccess, ParallelSchedule, SystemGraph, SystemNode};
 pub use query::{Query, QueryIter};
 pub use system::{Schedule, System, SystemStage};
 pub use world::{EntityBuilder, World};
+
+/// Marker type for change-detection queries.
+/// Use with `World::query_changed::<T>(since_tick)` to find entities whose
+/// component `T` was inserted or mutably accessed since a given tick.
+pub struct Changed<T: Component>(std::marker::PhantomData<T>);
+
+/// Marker for "entity must also have component W" filter.
+pub struct With<T: Component>(std::marker::PhantomData<T>);
+
+/// Marker for "entity must NOT have component W" filter.
+pub struct Without<T: Component>(std::marker::PhantomData<T>);
 
 #[macro_export]
 macro_rules! query {

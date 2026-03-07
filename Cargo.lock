@@ -2721,6 +2721,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quasar-build"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "image",
+ "log",
+ "quasar-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "quasar-core"
 version = "0.1.0"
 dependencies = [
@@ -2783,6 +2795,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "quasar-mobile"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "quasar-core",
+ "quasar-math",
+ "quasar-window",
+ "winit",
+]
+
+[[package]]
 name = "quasar-physics"
 version = "0.1.0"
 dependencies = [
@@ -2826,6 +2850,16 @@ dependencies = [
  "quasar-physics",
  "quasar-window",
  "winit",
+]
+
+[[package]]
+name = "quasar-ui"
+version = "0.1.0"
+dependencies = [
+ "fontdue",
+ "log",
+ "quasar-core",
+ "quasar-math",
 ]
 
 [[package]]
