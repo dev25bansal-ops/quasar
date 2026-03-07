@@ -15,7 +15,7 @@ pub struct PhysicsWorld {
     pipeline: PhysicsPipeline,
     island_manager: IslandManager,
     broad_phase: DefaultBroadPhase,
-    narrow_phase: NarrowPhase,
+    pub(crate) narrow_phase: NarrowPhase,
     pub bodies: RigidBodySet,
     pub colliders: ColliderSet,
     pub(crate) impulse_joints: ImpulseJointSet,

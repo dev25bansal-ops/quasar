@@ -454,6 +454,53 @@ impl RollbackManager {
         self.is_rolling_back = false;
     }
 
+    /// Run the full rollback re-simulation loop.
+    ///
+    /// 1. Detects misprediction against a server-authoritative snapshot.
+    /// 2. If misprediction is found, rewinds state to the corrected frame.
+    /// 3. Re-simulates forward from `server_frame + 1` to `current_frame - 1`,
+    ///    calling `simulate_fn` for each tick with that frame's stored inputs.
+    /// 4. Ends the rollback.
+    ///
+    /// `simulate_fn(frame, inputs)` should run one tick of game logic using
+    /// the provided inputs, then return the resulting entity snapshots.
+    ///
+    /// Returns `true` if a rollback was performed.
+    pub fn run_rollback<F>(
+        &mut self,
+        server_frame: u64,
+        server_entities: &HashMap<NetworkEntityId, EntitySnapshot>,
+        mut simulate_fn: F,
+    ) -> bool
+    where
+        F: FnMut(u64, &HashMap<ClientId, Vec<InputData>>) -> HashMap<NetworkEntityId, EntitySnapshot>,
+    {
+        // 1. Detect misprediction.
+        let misprediction = match self.detect_misprediction(server_frame, server_entities) {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let target_frame = misprediction.frame;
+        let resim_end = self.current_frame;
+
+        // 2. Rewind state to the corrected frame.
+        if !self.begin_rollback(target_frame, server_entities.clone()) {
+            return false;
+        }
+
+        // 3. Re-simulate forward.
+        for frame in (target_frame + 1)..resim_end {
+            let inputs = self.input_history.get(frame).cloned().unwrap_or_default();
+            let entities = simulate_fn(frame, &inputs);
+            self.advance_rollback(entities);
+        }
+
+        // 4. End rollback.
+        self.end_rollback();
+        true
+    }
+
     /// How many frames behind the current frame can we still rollback to.
     pub fn available_rollback_frames(&self) -> u64 {
         if self.states.is_empty() {

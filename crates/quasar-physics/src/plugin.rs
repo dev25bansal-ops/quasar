@@ -14,7 +14,7 @@ use quasar_math::Transform;
 
 use crate::character_controller::CharacterControllerComponent;
 use crate::collider::ColliderComponent;
-use crate::events::{CollisionEvent, CollisionEventType};
+use crate::events::{CollisionEvent, CollisionEventType, TriggerTracker};
 use crate::rigidbody::RigidBodyComponent;
 use crate::world::PhysicsWorld;
 
@@ -386,20 +386,114 @@ impl System for ColliderSyncSystem {
     }
 }
 
+/// System that dispatches trigger Enter/Stay/Exit events into the ECS event bus.
+///
+/// After the physics step, iterates over Rapier colliders marked as sensors
+/// and feeds overlapping pairs into a [`TriggerTracker`]. The resulting events
+/// are sent through `Events`.
+pub struct TriggerEventSystem {
+    tracker: TriggerTracker,
+}
+
+impl TriggerEventSystem {
+    pub fn new() -> Self {
+        Self {
+            tracker: TriggerTracker::new(),
+        }
+    }
+}
+
+impl Default for TriggerEventSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl System for TriggerEventSystem {
+    fn name(&self) -> &str {
+        "trigger_events"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        // Build collider_handle → Entity map.
+        let collider_to_entity: std::collections::HashMap<
+            rapier3d::prelude::ColliderHandle,
+            Entity,
+        > = world
+            .query::<ColliderComponent>()
+            .into_iter()
+            .map(|(e, cc)| (cc.handle, e))
+            .collect();
+
+        // Collect current sensor overlap pairs from Rapier.
+        let mut current_pairs: Vec<(
+            Entity,
+            Entity,
+            rapier3d::prelude::ColliderHandle,
+            rapier3d::prelude::ColliderHandle,
+        )> = Vec::new();
+
+        if let Some(resource) = world.resource::<PhysicsResource>() {
+            // Iterate over narrow-phase contact pairs where at least one
+            // collider is a sensor.
+            for pair in resource.physics.narrow_phase.intersection_pairs() {
+                let (h1, h2, intersecting) = pair;
+                if !intersecting {
+                    continue;
+                }
+                if let (Some(&e1), Some(&e2)) =
+                    (collider_to_entity.get(&h1), collider_to_entity.get(&h2))
+                {
+                    // Determine which is the sensor (trigger).
+                    let c1_sensor = resource
+                        .physics
+                        .colliders
+                        .get(h1)
+                        .map(|c| c.is_sensor())
+                        .unwrap_or(false);
+                    if c1_sensor {
+                        current_pairs.push((e1, e2, h1, h2));
+                    } else {
+                        current_pairs.push((e2, e1, h2, h1));
+                    }
+                }
+            }
+        }
+
+        let (enters, stays, exits) = self.tracker.update(&current_pairs);
+
+        // Dispatch into ECS events.
+        if let Some(events) = world.resource_mut::<quasar_core::Events>() {
+            for ev in enters {
+                events.send(ev);
+            }
+            for ev in stays {
+                events.send(ev);
+            }
+            for ev in exits {
+                events.send(ev);
+            }
+        }
+    }
+}
+
 pub struct PhysicsPlugin {
     enable_collision_events: bool,
+    enable_trigger_events: bool,
 }
 
 impl PhysicsPlugin {
     pub fn new() -> Self {
         Self {
             enable_collision_events: true,
+            enable_trigger_events: true,
         }
     }
 
     pub fn without_collision_events() -> Self {
         Self {
             enable_collision_events: false,
+            enable_trigger_events: true,
         }
     }
 }
@@ -453,6 +547,13 @@ impl quasar_core::Plugin for PhysicsPlugin {
             app.schedule.add_system(
                 quasar_core::ecs::SystemStage::PostUpdate,
                 Box::new(CollisionEventSystem::new()),
+            );
+        }
+
+        if self.enable_trigger_events {
+            app.schedule.add_system(
+                quasar_core::ecs::SystemStage::PostUpdate,
+                Box::new(TriggerEventSystem::new()),
             );
         }
 

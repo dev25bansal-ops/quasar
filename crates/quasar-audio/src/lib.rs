@@ -13,16 +13,67 @@ use std::path::Path;
 
 use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
+use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
 use kira::tween::Tween;
 
 /// Unique identifier for a loaded sound.
 pub type SoundId = u64;
 
+/// Handle wrapper that unifies static and streaming playback.
+enum SoundHandle {
+    Static(StaticSoundHandle),
+    Streaming(StreamingSoundHandle<kira::sound::FromFileError>),
+}
+
+impl SoundHandle {
+    fn pause(&mut self) {
+        match self {
+            Self::Static(h) => h.pause(Tween::default()),
+            Self::Streaming(h) => h.pause(Tween::default()),
+        }
+    }
+
+    fn resume(&mut self) {
+        match self {
+            Self::Static(h) => h.resume(Tween::default()),
+            Self::Streaming(h) => h.resume(Tween::default()),
+        }
+    }
+
+    fn stop(&mut self) {
+        match self {
+            Self::Static(h) => h.stop(Tween::default()),
+            Self::Streaming(h) => h.stop(Tween::default()),
+        }
+    }
+
+    fn set_volume(&mut self, volume: kira::Volume) {
+        match self {
+            Self::Static(h) => h.set_volume(volume, Tween::default()),
+            Self::Streaming(h) => h.set_volume(volume, Tween::default()),
+        }
+    }
+
+    fn set_playback_rate(&mut self, rate: f64) {
+        match self {
+            Self::Static(h) => h.set_playback_rate(rate, Tween::default()),
+            Self::Streaming(h) => h.set_playback_rate(rate, Tween::default()),
+        }
+    }
+
+    fn set_panning(&mut self, panning: f64) {
+        match self {
+            Self::Static(h) => h.set_panning(panning, Tween::default()),
+            Self::Streaming(h) => h.set_panning(panning, Tween::default()),
+        }
+    }
+}
+
 /// The engine's audio system — manages sound playback and mixing.
 pub struct AudioSystem {
     manager: Option<AudioManager>,
     next_id: SoundId,
-    handles: HashMap<SoundId, StaticSoundHandle>,
+    handles: HashMap<SoundId, SoundHandle>,
     sound_cache: HashMap<String, StaticSoundData>,
 }
 
@@ -64,7 +115,7 @@ impl AudioSystem {
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
-        self.handles.insert(id, handle);
+        self.handles.insert(id, SoundHandle::Static(handle));
         Some(id)
     }
 
@@ -83,49 +134,75 @@ impl AudioSystem {
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
-        self.handles.insert(id, handle);
+        self.handles.insert(id, SoundHandle::Static(handle));
+        Some(id)
+    }
+
+    /// Play a sound via streaming — reads from disk incrementally instead of
+    /// loading the entire file into memory. Ideal for music and long audio.
+    pub fn play_streaming<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        let manager = self.manager.as_mut()?;
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let data = StreamingSoundData::from_file(&path_str).ok()?;
+        let handle = manager.play(data).ok()?;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, SoundHandle::Streaming(handle));
+        Some(id)
+    }
+
+    /// Play a streaming sound in a loop.
+    pub fn play_streaming_looped<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        let manager = self.manager.as_mut()?;
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let mut data = StreamingSoundData::from_file(&path_str).ok()?;
+        data.settings.loop_region = Some(kira::sound::Region::default());
+        let handle = manager.play(data).ok()?;
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, SoundHandle::Streaming(handle));
         Some(id)
     }
 
     /// Pause a playing sound.
     pub fn pause(&mut self, id: SoundId) {
         if let Some(handle) = self.handles.get_mut(&id) {
-            handle.pause(Tween::default());
+            handle.pause();
         }
     }
 
     /// Resume a paused sound.
     pub fn resume(&mut self, id: SoundId) {
         if let Some(handle) = self.handles.get_mut(&id) {
-            handle.resume(Tween::default());
+            handle.resume();
         }
     }
 
     /// Stop a sound and free its handle.
     pub fn stop(&mut self, id: SoundId) {
         if let Some(mut handle) = self.handles.remove(&id) {
-            handle.stop(Tween::default());
+            handle.stop();
         }
     }
 
     /// Stop all sounds.
     pub fn stop_all(&mut self) {
         for (_, mut handle) in self.handles.drain() {
-            handle.stop(Tween::default());
+            handle.stop();
         }
     }
 
     /// Set the volume of a sound (0.0 = silent, 1.0 = full).
     pub fn set_volume(&mut self, id: SoundId, volume: f64) {
         if let Some(handle) = self.handles.get_mut(&id) {
-            handle.set_volume(kira::Volume::Amplitude(volume), Tween::default());
+            handle.set_volume(kira::Volume::Amplitude(volume));
         }
     }
 
     /// Set the playback rate (1.0 = normal, 2.0 = double speed).
     pub fn set_playback_rate(&mut self, id: SoundId, rate: f64) {
         if let Some(handle) = self.handles.get_mut(&id) {
-            handle.set_playback_rate(rate, Tween::default());
+            handle.set_playback_rate(rate);
         }
     }
 
@@ -162,8 +239,8 @@ impl AudioSystem {
             (g * source.volume).clamp(0.0, 1.0)
         };
 
-        handle.set_volume(kira::Volume::Amplitude(gain as f64), Tween::default());
-        handle.set_panning(panning, Tween::default());
+        handle.set_volume(kira::Volume::Amplitude(gain as f64));
+        handle.set_panning(panning);
     }
 }
 
