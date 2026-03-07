@@ -152,90 +152,62 @@ impl LightmapBaker {
     /// 1. Direct-light visibility (shadow) ray cast against the triangle soup.
     /// 2. Ambient occlusion sampling via hemisphere cosine-weighted rays.
     ///
-    /// The bake loop is parallelized with rayon for multi-core throughput.
+    /// The bake loop uses **per-pixel parallelism** with rayon so that every
+    /// texel is an independent work item, giving uniform load-balancing even
+    /// when triangle sizes vary.
     pub fn bake(triangles: &[BakerTriangle], config: &BakeConfig) -> Lightmap {
-        let mut lightmap = Lightmap::new("baked", config.width, config.height);
         let w = config.width as f32;
         let h = config.height as f32;
+        let total = config.width * config.height;
 
-        // Collect per-triangle texel ranges, then process in parallel.
-        struct TexelWork {
-            px: u32,
-            py: u32,
-            color: [f32; 3],
-        }
+        let pixels: Vec<[f32; 4]> = (0..total)
+            .into_par_iter()
+            .map(|idx| {
+                let px = idx % config.width;
+                let py = idx / config.width;
+                let u = (px as f32 + 0.5) / w;
+                let v = (py as f32 + 0.5) / h;
 
-        let results: Vec<TexelWork> = triangles
-            .par_iter()
-            .flat_map(|tri| {
-                let uv0 = tri.lightmap_uvs[0];
-                let uv1 = tri.lightmap_uvs[1];
-                let uv2 = tri.lightmap_uvs[2];
+                // Find the first triangle covering this texel.
+                for tri in triangles {
+                    if let Some((_bary, world_pos, world_normal)) =
+                        Self::barycentric_sample(tri, u, v)
+                    {
+                        let n_dot_l = world_normal.dot(-config.direct_light_dir).max(0.0);
 
-                let min_u = uv0[0].min(uv1[0]).min(uv2[0]).max(0.0);
-                let max_u = uv0[0].max(uv1[0]).max(uv2[0]).min(1.0);
-                let min_v = uv0[1].min(uv1[1]).min(uv2[1]).max(0.0);
-                let max_v = uv0[1].max(uv1[1]).max(uv2[1]).min(1.0);
+                        let shadowed = Self::ray_hits_any(
+                            triangles,
+                            world_pos + world_normal * 0.001,
+                            -config.direct_light_dir,
+                            100.0,
+                        );
+                        let direct = if shadowed {
+                            Vec3::ZERO
+                        } else {
+                            config.direct_light_color * n_dot_l
+                        };
 
-                let x0 = (min_u * w) as u32;
-                let x1 = ((max_u * w) as u32).min(config.width - 1);
-                let y0 = (min_v * h) as u32;
-                let y1 = ((max_v * h) as u32).min(config.height - 1);
+                        let ao = Self::compute_ao(
+                            triangles,
+                            world_pos,
+                            world_normal,
+                            config.ao_rays,
+                            config.ao_distance,
+                            px,
+                            py,
+                        );
+                        let ao_term = 1.0 - config.ao_strength * (1.0 - ao);
 
-                let mut texels = Vec::new();
-                for py in y0..=y1 {
-                    for px in x0..=x1 {
-                        let u = (px as f32 + 0.5) / w;
-                        let v = (py as f32 + 0.5) / h;
-
-                        if let Some((bary, world_pos, world_normal)) =
-                            Self::barycentric_sample(tri, u, v)
-                        {
-                            let _ = bary;
-                            let n_dot_l = world_normal.dot(-config.direct_light_dir).max(0.0);
-
-                            let shadowed = Self::ray_hits_any(
-                                triangles,
-                                world_pos + world_normal * 0.001,
-                                -config.direct_light_dir,
-                                100.0,
-                            );
-                            let direct = if shadowed {
-                                Vec3::ZERO
-                            } else {
-                                config.direct_light_color * n_dot_l
-                            };
-
-                            let ao = Self::compute_ao(
-                                triangles,
-                                world_pos,
-                                world_normal,
-                                config.ao_rays,
-                                config.ao_distance,
-                                px,
-                                py,
-                            );
-                            let ao_term = 1.0 - config.ao_strength * (1.0 - ao);
-
-                            let final_color = direct * ao_term;
-                            texels.push(TexelWork {
-                                px,
-                                py,
-                                color: [final_color.x, final_color.y, final_color.z],
-                            });
-                        }
+                        let c = direct * ao_term;
+                        return [c.x, c.y, c.z, 1.0];
                     }
                 }
-                texels
+                [0.0, 0.0, 0.0, 1.0]
             })
             .collect();
 
-        // Write results (sequential — lightmap is a flat array).
-        for texel in results {
-            let idx = (texel.py * config.width + texel.px) as usize;
-            lightmap.pixels[idx] = [texel.color[0], texel.color[1], texel.color[2], 1.0];
-        }
-
+        let mut lightmap = Lightmap::new("baked", config.width, config.height);
+        lightmap.pixels = pixels;
         lightmap
     }
 

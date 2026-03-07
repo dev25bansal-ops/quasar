@@ -314,6 +314,111 @@ impl ReflectionProbeManager {
     }
 }
 
+// ── ECS system integration ─────────────────────────────────────────
+
+/// System that bakes dirty reflection probes each frame.
+///
+/// Runs during the `PreRender` stage.  For each probe whose `dirty` flag
+/// is `true`, it invokes `bake_probe()` with the user-supplied render
+/// closure, submits the resulting command buffer, and clears the flag.
+///
+/// # Usage
+///
+/// ```ignore
+/// let system = ReflectionProbeSystem::new(|encoder, face_view, view, proj| {
+///     // draw scene geometry into `face_view`
+/// });
+/// app.schedule.add_system(SystemStage::PreRender, Box::new(system));
+/// ```
+pub struct ReflectionProbeSystem<F> {
+    render_face: F,
+}
+
+impl<F> ReflectionProbeSystem<F>
+where
+    F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, glam::Mat4, glam::Mat4)
+        + Send
+        + Sync
+        + 'static,
+{
+    pub fn new(render_face: F) -> Self {
+        Self { render_face }
+    }
+}
+
+impl<F> quasar_core::ecs::System for ReflectionProbeSystem<F>
+where
+    F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, glam::Mat4, glam::Mat4)
+        + Send
+        + Sync
+        + 'static,
+{
+    fn name(&self) -> &str {
+        "reflection_probe_bake"
+    }
+
+    fn run(&mut self, world: &mut quasar_core::ecs::World) {
+        // Collect dirty probes.
+        let dirty_probes: Vec<(quasar_core::ecs::Entity, ReflectionProbe)> = world
+            .query::<ReflectionProbe>()
+            .into_iter()
+            .filter(|(_, p)| p.dirty && p.slot.is_some())
+            .map(|(e, p)| (e, p.clone()))
+            .collect();
+
+        if dirty_probes.is_empty() {
+            return;
+        }
+
+        // We need the device, queue, and probe manager from the world.
+        // These are stored as resources by the renderer.
+        let manager_ptr: *const ReflectionProbeManager = {
+            let Some(mgr) = world.resource::<ReflectionProbeManager>() else {
+                return;
+            };
+            mgr as *const _
+        };
+
+        // SAFETY: Single-threaded system access; we don't mutate the manager
+        // during bake — only the encoder and the render closure.
+        let manager = unsafe { &*manager_ptr };
+
+        for (entity, probe) in &dirty_probes {
+            let cmd = manager.bake_probe(
+                // The device is needed only for CommandEncoder creation.
+                // We get it from a GpuDevice resource.
+                {
+                    let Some(gpu) = world.resource::<GpuDevice>() else {
+                        return;
+                    };
+                    &gpu.device
+                },
+                probe,
+                &mut self.render_face,
+            );
+
+            // Submit the command buffer.
+            if let Some(gpu) = world.resource::<GpuDevice>() {
+                gpu.queue.submit(std::iter::once(cmd));
+            }
+
+            // Mark the probe as no longer dirty.
+            if let Some(p) = world.get_mut::<ReflectionProbe>(*entity) {
+                p.dirty = false;
+            }
+        }
+    }
+}
+
+/// Resource holding the wgpu device and queue for rendering subsystems.
+///
+/// Inserted by the renderer at startup so that PreRender systems can
+/// submit GPU work without direct access to the renderer.
+pub struct GpuDevice {
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

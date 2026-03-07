@@ -582,7 +582,25 @@ impl System for ScriptingSystem {
             let _reloaded = resource.engine.hot_reload();
 
             // Call the global `on_update(dt)` if it exists.
-            let _ = resource.engine.call_function::<_, ()>("on_update", dt);
+            //
+            // **DEPRECATED** — The global `on_update(dt)` pattern is deprecated.
+            // Prefer attaching a `ScriptComponent` to an entity and defining
+            // `on_update(entity_id, dt)` in the per-entity behaviour table.
+            // If you need a "global" script, model it as a singleton entity
+            // with a `ScriptComponent`.  The global callback will be removed
+            // in a future release.
+            if resource.engine.lua().globals().get::<LuaFunction>("on_update").is_ok() {
+                use std::sync::Once;
+                static DEPRECATION_WARNING: Once = Once::new();
+                DEPRECATION_WARNING.call_once(|| {
+                    log::warn!(
+                        "[scripting] Global `on_update(dt)` is DEPRECATED. \
+                         Use per-entity ScriptComponent with on_update(entity_id, dt) instead. \
+                         For global logic, attach a ScriptComponent to a singleton entity."
+                    );
+                });
+                let _ = resource.engine.call_function::<_, ()>("on_update", dt);
+            }
         }
 
         // ── Phase 2b: Per-entity script execution ─────────────────

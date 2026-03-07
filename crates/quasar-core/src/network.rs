@@ -262,6 +262,30 @@ pub struct RollbackState {
     pub inputs: HashMap<ClientId, Vec<InputData>>,
 }
 
+/// **STUB** — Rollback netcode manager.
+///
+/// `RollbackManager` provides state snapshot storage and retrieval, but the
+/// following features are **not yet implemented**:
+///
+/// - **Input history buffer**: upstream must feed per-frame inputs via
+///   [`save_state`](Self::save_state).
+/// - **Deterministic simulation tick**: the physics / game-logic step must
+///   be fully deterministic for rollback to produce correct results.
+/// - **Re-simulation after misprediction**: when a server-authoritative
+///   snapshot disagrees with a predicted frame, the caller is responsible
+///   for calling [`rollback_to`](Self::rollback_to) and re-simulating
+///   forward with corrected inputs.
+///
+/// `NetworkConfig::rollback_frame_count` controls how many frames of
+/// history are kept (default 8).  This is sufficient for typical
+/// round-trip latencies ≤130 ms at 60 Hz.
+///
+/// **Next steps** (in order of priority):
+/// 1. Add an `InputHistory` ring-buffer that stores per-client inputs.
+/// 2. Teach the server tick loop to call `save_state` every tick.
+/// 3. On receiving a correction, rewind via `rollback_to` and re-simulate
+///    with the corrected inputs, then fast-forward back to the current
+///    frame.
 pub struct RollbackManager {
     pub states: Vec<RollbackState>,
     pub max_frames: u32,
@@ -920,6 +944,164 @@ impl DirtyTracker {
     /// Clear all dirty bits (typically at end of tick after sending).
     pub fn clear_all(&mut self) {
         self.dirty.clear();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  RELIABILITY LAYER — ACK / retransmission over UDP
+// ════════════════════════════════════════════════════════════════════
+
+/// Whether a given network payload requires reliable delivery.
+pub fn payload_needs_reliability(payload: &NetworkPayload) -> bool {
+    matches!(
+        payload,
+        NetworkPayload::EntitySpawn { .. }
+            | NetworkPayload::EntityDespawn { .. }
+            | NetworkPayload::Rpc { .. }
+            | NetworkPayload::ConnectionRequest { .. }
+            | NetworkPayload::ConnectionAccepted { .. }
+            | NetworkPayload::ConnectionDenied { .. }
+            | NetworkPayload::Disconnect { .. }
+    )
+}
+
+/// ACK payload piggybacked on regular messages or sent standalone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AckMessage {
+    /// Sequences being acknowledged.
+    pub acked_sequences: Vec<u64>,
+}
+
+/// A pending reliable message awaiting acknowledgement.
+#[derive(Debug, Clone)]
+struct PendingReliable {
+    message: NetworkMessage,
+    destination: SocketAddr,
+    /// Monotonic time of last (re)send.
+    last_send_time: f64,
+    /// Number of times we have (re)sent this message.
+    send_count: u32,
+}
+
+/// Sliding-window reliability manager for a single connection direction.
+///
+/// Reliable messages are tracked by sequence number. The remote peer must
+/// ACK each sequence; un-ACKed messages are retransmitted after a timeout.
+/// Fire-and-forget payloads (transforms, snapshots) bypass this entirely.
+pub struct ReliabilityManager {
+    /// Reliable messages waiting for ACK, keyed by sequence number.
+    pending: HashMap<u64, PendingReliable>,
+    /// Set of sequences we have received and should ACK back.
+    received_sequences: Vec<u64>,
+    /// Sequences already processed — used for duplicate rejection.
+    processed_sequences: std::collections::HashSet<u64>,
+    /// Maximum number of remembered processed sequences (ring eviction).
+    max_processed_history: usize,
+    /// Retransmit timeout in seconds.
+    pub retransmit_timeout: f64,
+    /// Maximum retransmit attempts before giving up.
+    pub max_retransmits: u32,
+}
+
+impl ReliabilityManager {
+    pub fn new() -> Self {
+        Self {
+            pending: HashMap::new(),
+            received_sequences: Vec::new(),
+            processed_sequences: std::collections::HashSet::new(),
+            max_processed_history: 1024,
+            retransmit_timeout: 0.2, // 200 ms
+            max_retransmits: 20,
+        }
+    }
+
+    /// Track an outgoing reliable message.
+    pub fn track_send(
+        &mut self,
+        message: NetworkMessage,
+        destination: SocketAddr,
+        now: f64,
+    ) {
+        let seq = message.sequence;
+        self.pending.insert(
+            seq,
+            PendingReliable {
+                message,
+                destination,
+                last_send_time: now,
+                send_count: 1,
+            },
+        );
+    }
+
+    /// Process incoming ACKs — remove acknowledged messages from the pending set.
+    pub fn process_acks(&mut self, acks: &[u64]) {
+        for seq in acks {
+            self.pending.remove(seq);
+        }
+    }
+
+    /// Record that we received a reliable message with the given sequence.
+    /// Returns `true` if this is a NEW message (not a duplicate).
+    pub fn record_received(&mut self, sequence: u64) -> bool {
+        if self.processed_sequences.contains(&sequence) {
+            return false; // duplicate
+        }
+        // Evict oldest entries when history is full.
+        if self.processed_sequences.len() >= self.max_processed_history {
+            // Remove the smallest sequence (oldest).
+            if let Some(&oldest) = self.processed_sequences.iter().min() {
+                self.processed_sequences.remove(&oldest);
+            }
+        }
+        self.processed_sequences.insert(sequence);
+        self.received_sequences.push(sequence);
+        true
+    }
+
+    /// Drain the set of received sequences that need to be ACKed back.
+    pub fn drain_pending_acks(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.received_sequences)
+    }
+
+    /// Collect messages that need retransmission.
+    pub fn collect_retransmits(&mut self, now: f64) -> Vec<(NetworkMessage, SocketAddr)> {
+        let mut retransmits = Vec::new();
+        let mut expired = Vec::new();
+
+        for (&seq, pending) in &mut self.pending {
+            if now - pending.last_send_time >= self.retransmit_timeout {
+                if pending.send_count >= self.max_retransmits {
+                    log::warn!(
+                        "Reliable message seq={} dropped after {} retransmits",
+                        seq,
+                        pending.send_count
+                    );
+                    expired.push(seq);
+                } else {
+                    pending.send_count += 1;
+                    pending.last_send_time = now;
+                    retransmits.push((pending.message.clone(), pending.destination));
+                }
+            }
+        }
+
+        for seq in expired {
+            self.pending.remove(&seq);
+        }
+
+        retransmits
+    }
+
+    /// Number of messages still awaiting ACK.
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+impl Default for ReliabilityManager {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

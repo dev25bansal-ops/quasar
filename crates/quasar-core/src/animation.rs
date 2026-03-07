@@ -451,8 +451,8 @@ pub struct AnimationStateMachine {
     pub current_state: String,
     pub float_params: HashMap<String, f32>,
     pub bool_params: HashMap<String, bool>,
-    /// Active cross-fade (from_clip, to_clip, elapsed, duration).
-    pub crossfade: Option<(String, String, f32, f32)>,
+    /// Active cross-fade (from_clip, from_time, to_clip, elapsed, duration).
+    pub crossfade: Option<(String, f32, String, f32, f32)>,
 }
 
 impl AnimationStateMachine {
@@ -648,8 +648,15 @@ impl System for AnimationStateMachineSystem {
                     .unwrap_or_default();
 
                 sm.current_state = to_state;
+
+                // Capture the outgoing clip's time BEFORE resetting the player.
+                let from_time = world
+                    .get::<AnimationPlayer>(entity)
+                    .map(|p| p.time)
+                    .unwrap_or(0.0);
+
                 if blend_dur > 0.0 {
-                    sm.crossfade = Some((from_clip, to_clip.clone(), 0.0, blend_dur));
+                    sm.crossfade = Some((from_clip, from_time, to_clip.clone(), 0.0, blend_dur));
                 }
 
                 // Update the player's clip.
@@ -661,19 +668,22 @@ impl System for AnimationStateMachineSystem {
             }
 
             // Advance cross-fade.
-            if let Some((ref from_clip, ref to_clip, ref mut elapsed, duration)) =
+            if let Some((ref from_clip, from_time, ref to_clip, ref mut elapsed, duration)) =
                 sm.crossfade
             {
                 *elapsed += delta;
                 let t = (*elapsed / duration).clamp(0.0, 1.0);
 
                 // Blend the two clips.
+                // Sample the "from" clip at its captured time (where it was
+                // when the transition fired), and the "to" clip at the current
+                // player time.
                 if let (Some(from), Some(to)) = (clips.get(from_clip), clips.get(to_clip)) {
                     let player_time = world
                         .get::<AnimationPlayer>(entity)
                         .map(|p| p.time)
                         .unwrap_or(0.0);
-                    if let (Some(tf_a), Some(tf_b)) = (from.sample(player_time), to.sample(player_time)) {
+                    if let (Some(tf_a), Some(tf_b)) = (from.sample(from_time), to.sample(player_time)) {
                         let blended = Transform {
                             position: tf_a.position.lerp(tf_b.position, t),
                             rotation: tf_a.rotation.slerp(tf_b.rotation, t),

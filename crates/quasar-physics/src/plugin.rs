@@ -337,6 +337,55 @@ impl System for CharacterControllerSystem {
     }
 }
 
+/// System that creates Rapier colliders from [`PendingCollider`] components.
+///
+/// For each entity with a `PendingCollider` the system calls
+/// `PhysicsWorld::add_collider` (or `add_static_collider`), inserts a
+/// `ColliderComponent`, and removes the pending marker.
+pub struct ColliderSyncSystem;
+
+impl System for ColliderSyncSystem {
+    fn name(&self) -> &str {
+        "collider_sync"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        use crate::collider::PendingCollider;
+
+        let pending: Vec<(Entity, PendingCollider)> = world
+            .query::<PendingCollider>()
+            .into_iter()
+            .map(|(e, pc)| (e, pc.clone()))
+            .collect();
+
+        if pending.is_empty() {
+            return;
+        }
+
+        let mut created: Vec<(Entity, rapier3d::prelude::ColliderHandle)> = Vec::new();
+
+        if let Some(resource) = world.resource_mut::<PhysicsResource>() {
+            for (entity, pc) in &pending {
+                let handle = match pc.parent_body {
+                    Some(body) => resource.physics.add_collider(
+                        body,
+                        &pc.shape,
+                        pc.restitution,
+                        pc.friction,
+                    ),
+                    None => resource.physics.add_static_collider(&pc.shape, pc.position),
+                };
+                created.push((*entity, handle));
+            }
+        }
+
+        for (entity, handle) in created {
+            world.insert(entity, ColliderComponent::new(handle));
+            world.remove_raw(entity, std::any::TypeId::of::<PendingCollider>());
+        }
+    }
+}
+
 pub struct PhysicsPlugin {
     enable_collision_events: bool,
 }
@@ -392,6 +441,12 @@ impl quasar_core::Plugin for PhysicsPlugin {
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::PreUpdate,
             Box::new(JointSyncSystem),
+        );
+
+        // PreUpdate: Create colliders from PendingCollider components
+        app.schedule.add_system(
+            quasar_core::ecs::SystemStage::PreUpdate,
+            Box::new(ColliderSyncSystem),
         );
 
         if self.enable_collision_events {

@@ -16,7 +16,7 @@ pub mod world;
 pub use character_controller::{
     CharacterControllerComponent, CharacterControllerConfig, CharacterMovementResult,
 };
-pub use collider::{ColliderComponent, ColliderShape};
+pub use collider::{ColliderComponent, ColliderShape, PendingCollider};
 pub use events::{
     CollisionEvent, CollisionEventType, CollisionStartEvent, CollisionStopEvent, SensorEnterEvent,
     SensorExitEvent,

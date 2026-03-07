@@ -89,7 +89,7 @@ pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
 pub use occlusion::{HiZBuffer, HiZMip, HIZ_MIP_LEVELS};
 pub use deferred::{GBuffer, DeferredLightingPass, InverseCameraUniforms, GBUFFER_TARGET_COUNT};
-pub use reflection_probe::{ReflectionProbe, ReflectionProbeManager, ReflectionProbeUniform, MAX_REFLECTION_PROBES, PROBE_FACE_SIZE, PROBE_MIP_LEVELS};
+pub use reflection_probe::{ReflectionProbe, ReflectionProbeManager, ReflectionProbeSystem, ReflectionProbeUniform, GpuDevice, MAX_REFLECTION_PROBES, PROBE_FACE_SIZE, PROBE_MIP_LEVELS};
 pub use decal::{Decal, DecalBatch, DecalUniform, MAX_DECALS, DECAL_PROJECTION_WGSL, DECAL_RENDER_WGSL};
 pub use terrain::{TerrainConfig, TerrainMesh, TerrainLodLevel, TerrainSplatmap, HeightFieldColliderDesc, MAX_TERRAIN_LODS, MAX_SPLAT_LAYERS, TERRAIN_SPLATMAP_WGSL};
 pub use clustered::{LightClusterGrid, Cluster, ClusterAabb, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, MAX_LIGHTS_PER_CLUSTER, TOTAL_CLUSTERS, CLUSTERED_LIGHT_WGSL};

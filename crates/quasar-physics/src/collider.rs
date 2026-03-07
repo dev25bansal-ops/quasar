@@ -85,6 +85,47 @@ impl ColliderShape {
     }
 }
 
+/// ECS component: attach to an entity to request automatic collider creation.
+///
+/// The [`ColliderSyncSystem`](crate::plugin::ColliderSyncSystem) will pick up
+/// entities with this component, create the Rapier collider, insert a
+/// [`ColliderComponent`], and remove the `PendingCollider`.
+#[derive(Debug, Clone)]
+pub struct PendingCollider {
+    pub shape: ColliderShape,
+    /// Optional parent rigid body handle.  When `None` the collider is
+    /// inserted as static geometry (no parent body).
+    pub parent_body: Option<rapier3d::prelude::RigidBodyHandle>,
+    /// Position for static colliders (ignored when `parent_body` is `Some`).
+    pub position: [f32; 3],
+    pub restitution: f32,
+    pub friction: f32,
+}
+
+impl PendingCollider {
+    /// Create a pending static collider (no rigid body parent).
+    pub fn new_static(shape: ColliderShape, position: [f32; 3]) -> Self {
+        Self {
+            shape,
+            parent_body: None,
+            position,
+            restitution: 0.3,
+            friction: 0.5,
+        }
+    }
+
+    /// Create a pending collider attached to a rigid body.
+    pub fn with_body(shape: ColliderShape, body: rapier3d::prelude::RigidBodyHandle) -> Self {
+        Self {
+            shape,
+            parent_body: Some(body),
+            position: [0.0; 3],
+            restitution: 0.3,
+            friction: 0.5,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
