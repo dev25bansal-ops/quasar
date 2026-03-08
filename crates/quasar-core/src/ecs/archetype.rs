@@ -72,7 +72,7 @@ pub struct Archetype {
     /// Parallel column storage — indexed same as `column_types`.
     pub columns: Vec<Box<dyn ColumnStorage>>,
     /// Fast lookup from TypeId to column index.
-    type_to_column: HashMap<TypeId, usize>,
+    pub type_to_column: HashMap<TypeId, usize>,
 }
 
 impl Archetype {
@@ -98,20 +98,65 @@ impl Archetype {
 
     pub fn remove_entity(&mut self, entity: Entity) -> Option<usize> {
         let row = self.entity_to_row.remove(&entity.index())?;
-        let last_row = self.entities.len() - 1;
+        let last_row = self.entities.len().saturating_sub(1);
 
         if row != last_row {
             let last_entity = self.entities[last_row];
             self.entities[row] = last_entity;
             self.entity_to_row.insert(last_entity.index(), row);
+        }
 
-            for column in self.components.values_mut() {
-                column.swap_remove(row, last_row);
+        // Swap-remove from ArchetypeColumn storage
+        for column in self.components.values_mut() {
+            column.swap_remove(row, last_row);
+        }
+        // Swap-remove from SoA columns
+        for col in &mut self.columns {
+            if col.len() > row {
+                col.swap_remove_entry(row);
             }
         }
 
         self.entities.pop();
         Some(row)
+    }
+
+    /// Remove an entity and extract its SoA column data for migration.
+    /// Returns the freed row and a vec of (TypeId, value, empty_column_template).
+    pub fn remove_entity_extract_soa(
+        &mut self,
+        entity: Entity,
+    ) -> Option<(usize, Vec<(TypeId, Box<dyn Any + Send + Sync>, Box<dyn ColumnStorage>)>)> {
+        let row = *self.entity_to_row.get(&entity.index())?;
+        let last_row = self.entities.len().saturating_sub(1);
+
+        // 1. Extract SoA column data at `row` via swap-remove
+        let type_col_pairs: Vec<(TypeId, usize)> = self
+            .type_to_column
+            .iter()
+            .map(|(&tid, &idx)| (tid, idx))
+            .collect();
+        let mut extracted = Vec::new();
+        for (type_id, col_idx) in type_col_pairs {
+            let empty = self.columns[col_idx].create_empty_of_same_type();
+            if let Some(value) = self.columns[col_idx].swap_remove_raw(row) {
+                extracted.push((type_id, value, empty));
+            }
+        }
+
+        // 2. Clean up entities list, entity_to_row, and ArchetypeColumn storage
+        self.entity_to_row.remove(&entity.index());
+        if row != last_row {
+            let last_entity = self.entities[last_row];
+            self.entities[row] = last_entity;
+            self.entity_to_row.insert(last_entity.index(), row);
+            for column in self.components.values_mut() {
+                column.swap_remove(row, last_row);
+            }
+        }
+        self.entities.pop();
+
+        Some((row, extracted))
     }
 
     pub fn get_column<T: 'static + Send + Sync>(&self) -> Option<&Vec<T>> {
@@ -187,6 +232,10 @@ pub trait ArchetypeColumn: Send + Sync {
     fn swap_remove(&mut self, row: usize, last_row: usize);
     fn len(&self) -> usize;
     fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>);
+    /// Swap-remove entry at `row` and return it as a boxed Any.
+    fn swap_remove_and_return(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>>;
+    /// Create an empty column of the same concrete type.
+    fn create_empty_of_same_type(&self) -> Box<dyn ArchetypeColumn>;
 }
 
 pub struct ArchetypeColumnTyped<T: Send + Sync> {
@@ -248,6 +297,18 @@ impl<T: 'static + Send + Sync> ArchetypeColumn for ArchetypeColumnTyped<T> {
             self.data.push(*typed);
         }
     }
+
+    fn swap_remove_and_return(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>> {
+        if row >= self.data.len() {
+            return None;
+        }
+        let val = self.data.swap_remove(row);
+        Some(Box::new(val))
+    }
+
+    fn create_empty_of_same_type(&self) -> Box<dyn ArchetypeColumn> {
+        Box::new(ArchetypeColumnTyped::<T>::new())
+    }
 }
 
 // ── SoA Column Storage ────────────────────────────────────────────
@@ -268,6 +329,10 @@ pub trait ColumnStorage: Send + Sync {
     fn raw_ptr_mut(&mut self) -> *mut u8;
     /// Size of each element in bytes.
     fn element_size(&self) -> usize;
+    /// Swap-remove entry at `row` and return it as a boxed Any.
+    fn swap_remove_raw(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>>;
+    /// Create an empty column of the same concrete type.
+    fn create_empty_of_same_type(&self) -> Box<dyn ColumnStorage>;
 }
 
 /// Strongly-typed SoA column backed by a contiguous `Vec<T>`.
@@ -328,6 +393,18 @@ impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
 
     fn element_size(&self) -> usize {
         std::mem::size_of::<T>()
+    }
+
+    fn swap_remove_raw(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>> {
+        if row >= self.data.len() {
+            return None;
+        }
+        let val = self.data.swap_remove(row);
+        Some(Box::new(val))
+    }
+
+    fn create_empty_of_same_type(&self) -> Box<dyn ColumnStorage> {
+        Box::new(TypedColumn::<T>::new())
     }
 }
 

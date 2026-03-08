@@ -4,7 +4,20 @@ use quasar_core::ecs::System;
 use quasar_core::ecs::World;
 use quasar_core::AssetServer;
 
+use crate::mesh::MeshShape;
 use crate::ParticleEmitter;
+use crate::render_graph::{
+    Attachment, RenderContext, RenderGraph, RenderPass,
+    attachment_ids, pass_ids,
+};
+
+/// Staging resource written by [`RenderSyncSystem`] each frame.
+///
+/// The runner reads this after `tick()` and uploads the matrices to the GPU
+/// instance buffer — keeping the `Renderer` out of the ECS world.
+pub struct RenderSyncOutput {
+    pub instance_transforms: Vec<glam::Mat4>,
+}
 
 /// System that syncs transforms to GPU buffers and updates render state.
 pub struct RenderSyncSystem;
@@ -14,12 +27,19 @@ impl System for RenderSyncSystem {
         "render_sync"
     }
 
-    fn run(&mut self, _world: &mut World) {
-        // In a full implementation, this would:
-        // 1. Update instance buffers for instanced rendering
-        // 2. Update bone matrices for skinned meshes
-        // 3. Update particle emitter positions
-        // 4. Frustum culling
+    fn run(&mut self, world: &mut World) {
+        use quasar_math::Transform;
+
+        // Collect model matrices from all entities with MeshShape + Transform.
+        let pairs = world.query2::<MeshShape, Transform>();
+        let transforms: Vec<glam::Mat4> = pairs
+            .iter()
+            .map(|(_, _shape, t)| t.matrix())
+            .collect();
+
+        world.insert_resource(RenderSyncOutput {
+            instance_transforms: transforms,
+        });
     }
 }
 
@@ -32,9 +52,15 @@ impl System for ParticleUpdateSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        // Note: Particle emitters need mutable access, which requires
-        // a different query pattern. This is a placeholder.
-        let _count = world.query::<ParticleEmitter>().len();
+        let dt = world
+            .resource::<quasar_core::time::Time>()
+            .map(|t| t.delta_seconds())
+            .unwrap_or(1.0 / 60.0);
+        let gravity = glam::Vec3::new(0.0, -9.81, 0.0);
+
+        world.for_each_mut(|_entity, emitter: &mut ParticleEmitter| {
+            emitter.update(dt, gravity);
+        });
     }
 }
 
@@ -120,19 +146,117 @@ impl Default for RenderPlugin {
     }
 }
 
+// ── Stub render passes ─────────────────────────────────────────────
+
+struct ShadowPass;
+impl RenderPass for ShadowPass {
+    fn name(&self) -> &str { "shadow" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+        log::trace!("ShadowPass::execute");
+    }
+}
+
+struct OpaquePass;
+impl RenderPass for OpaquePass {
+    fn name(&self) -> &str { "opaque" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+        log::trace!("OpaquePass::execute");
+    }
+}
+
+struct TransparentPass;
+impl RenderPass for TransparentPass {
+    fn name(&self) -> &str { "transparent" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+        log::trace!("TransparentPass::execute");
+    }
+}
+
+struct PostProcessPass;
+impl RenderPass for PostProcessPass {
+    fn name(&self) -> &str { "post_process" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+        log::trace!("PostProcessPass::execute");
+    }
+}
+
+struct UiPass;
+impl RenderPass for UiPass {
+    fn name(&self) -> &str { "ui" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+        log::trace!("UiPass::execute");
+    }
+}
+
 impl quasar_core::Plugin for RenderPlugin {
     fn name(&self) -> &str {
         "RenderPlugin"
     }
 
     fn build(&self, app: &mut quasar_core::App) {
-        // Add render sync system
+        // ── Build the render graph ────────────────────────────────
+        let mut graph = RenderGraph::new();
+
+        // Attachments
+        graph.add_attachment(
+            attachment_ids::HDR_COLOR,
+            Attachment {
+                name: "HDR Color".into(),
+                format: wgpu::TextureFormat::Rgba16Float,
+                size: (1920, 1080),
+                texture: None,
+                view: None,
+            },
+        );
+        graph.add_attachment(
+            attachment_ids::DEPTH,
+            Attachment {
+                name: "Depth".into(),
+                format: wgpu::TextureFormat::Depth32Float,
+                size: (1920, 1080),
+                texture: None,
+                view: None,
+            },
+        );
+        graph.add_attachment(
+            attachment_ids::SHADOW_MAP,
+            Attachment {
+                name: "Shadow Map".into(),
+                format: wgpu::TextureFormat::Depth32Float,
+                size: (2048, 2048),
+                texture: None,
+                view: None,
+            },
+        );
+
+        // Passes (declared order = topological fallback)
+        graph.add_pass(pass_ids::SHADOW, Box::new(ShadowPass));
+        graph.add_pass(pass_ids::OPAQUE, Box::new(OpaquePass));
+        graph.add_pass(pass_ids::TRANSPARENT, Box::new(TransparentPass));
+        graph.add_pass(pass_ids::POST_PROCESS, Box::new(PostProcessPass));
+        graph.add_pass(pass_ids::UI, Box::new(UiPass));
+
+        // Dependencies
+        graph.add_dependency(pass_ids::OPAQUE, pass_ids::SHADOW);
+        graph.add_dependency(pass_ids::TRANSPARENT, pass_ids::OPAQUE);
+        graph.add_dependency(pass_ids::POST_PROCESS, pass_ids::TRANSPARENT);
+        graph.add_dependency(pass_ids::UI, pass_ids::POST_PROCESS);
+
+        // Output attachments
+        graph.add_output(pass_ids::SHADOW, attachment_ids::SHADOW_MAP);
+        graph.add_output(pass_ids::OPAQUE, attachment_ids::HDR_COLOR);
+        graph.add_output(pass_ids::OPAQUE, attachment_ids::DEPTH);
+        graph.add_output(pass_ids::TRANSPARENT, attachment_ids::HDR_COLOR);
+        graph.add_output(pass_ids::POST_PROCESS, attachment_ids::HDR_COLOR);
+
+        app.world.insert_resource(graph);
+
+        // ── Systems ───────────────────────────────────────────────
         app.schedule.add_system(
             quasar_core::ecs::SystemStage::PostUpdate,
             Box::new(RenderSyncSystem),
         );
 
-        // Add particle update system
         if self.particles_enabled {
             app.schedule.add_system(
                 quasar_core::ecs::SystemStage::Update,
@@ -140,7 +264,6 @@ impl quasar_core::Plugin for RenderPlugin {
             );
         }
 
-        // Add GPU asset sync system
         if self.asset_sync_enabled {
             app.schedule.add_system(
                 quasar_core::ecs::SystemStage::PostUpdate,
@@ -148,6 +271,6 @@ impl quasar_core::Plugin for RenderPlugin {
             );
         }
 
-        log::info!("RenderPlugin loaded — render systems active");
+        log::info!("RenderPlugin loaded — render graph + systems active");
     }
 }

@@ -3,7 +3,7 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
-use super::archetype::{ArchetypeGraph, ArchetypeId, ArchetypeSignature};
+use super::archetype::{ArchetypeGraph, ArchetypeId, ArchetypeSignature, TypedColumn};
 use super::component::{Component, ComponentStorage, TypedStorage};
 use super::entity::{Entity, EntityAllocator};
 use parking_lot::RwLock;
@@ -119,7 +119,10 @@ impl World {
     // ------------------------------------------------------------------
 
     /// Attach (or replace) a component on an entity.
-    pub fn insert<T: Component>(&mut self, entity: Entity, component: T) {
+    ///
+    /// Populates both archetype SoA columns (for fast queries) and legacy
+    /// HashMap storage (for backward-compatible `get`/`get_mut` access).
+    pub fn insert<T: Component + Clone>(&mut self, entity: Entity, component: T) {
         debug_assert!(self.is_alive(entity), "inserting on a dead entity");
 
         let type_id = TypeId::of::<T>();
@@ -138,10 +141,11 @@ impl World {
         }
 
         // Check if entity needs to migrate to new archetype
+        let old_arch_id = self.entity_archetype.get(&entity.index()).copied();
         let needs_migration =
-            if let Some(current_arch_id) = self.entity_archetype.get(&entity.index()) {
+            if let Some(current_arch_id) = old_arch_id {
                 let graph = self.archetype_graph.read();
-                if let Some(current_arch) = graph.get(*current_arch_id) {
+                if let Some(current_arch) = graph.get(current_arch_id) {
                     !current_arch.signature.contains(&type_id)
                 } else {
                     true
@@ -151,18 +155,95 @@ impl World {
             };
 
         if needs_migration {
-            // Get or create new archetype
-            let mut graph = self.archetype_graph.write();
-            let new_arch = graph.get_or_create(&sig);
-            let row = new_arch.entity_count();
-            drop(graph);
+            let graph = self.archetype_graph.get_mut();
+            // get_or_create returns an Arc clone — extract only the id, then drop
+            // so the Arc refcount goes back to 1 (only the HashMap holds it).
+            let new_arch_id = {
+                let arc = graph.get_or_create(&sig);
+                let id = arc.id;
+                drop(arc);
+                id
+            };
 
-            self.entity_archetype.insert(entity.index(), new_arch.id);
-            self.entity_row.insert(entity.index(), row);
+            // ── Phase 1: extract SoA data from old archetype (if any) ──
+            let extracted = if let Some(old_id) = old_arch_id {
+                if let Some(old_arch) = graph.get_mut(old_id) {
+                    if let Some((_freed_row, data)) =
+                        old_arch.remove_entity_extract_soa(entity)
+                    {
+                        // Update entity_row for the entity that was swapped
+                        // into the freed row (if any).
+                        if _freed_row < old_arch.entities.len() {
+                            let swapped = old_arch.entities[_freed_row];
+                            self.entity_row.insert(swapped.index(), _freed_row);
+                        }
+                        data
+                    } else {
+                        Vec::new()
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            };
+
+            // ── Phase 2: push into new archetype ──
+            if let Some(new_arch) = graph.get_mut(new_arch_id) {
+                let row = new_arch.add_entity(entity);
+                self.entity_archetype.insert(entity.index(), new_arch_id);
+                self.entity_row.insert(entity.index(), row);
+
+                // Re-insert extracted columns from old archetype
+                for (tid, value, empty_col) in extracted {
+                    if !new_arch.type_to_column.contains_key(&tid) {
+                        let idx = new_arch.columns.len();
+                        new_arch.column_types.push(tid);
+                        new_arch.columns.push(empty_col);
+                        new_arch.type_to_column.insert(tid, idx);
+                    }
+                    let ci: usize = *new_arch.type_to_column.get(&tid).unwrap();
+                    (*new_arch.columns[ci]).push_raw(value);
+                }
+
+                // Push the NEW component T into its SoA column
+                new_arch.ensure_column::<T>();
+                let ci: usize = *new_arch.type_to_column.get(&type_id).unwrap();
+                if let Some(col) = (*new_arch.columns[ci])
+                    .as_any_mut()
+                    .downcast_mut::<TypedColumn<T>>()
+                {
+                    col.data.push(component.clone());
+                }
+            } else {
+                // Fallback: just record the archetype mapping
+                self.entity_archetype.insert(entity.index(), new_arch_id);
+                self.entity_row.insert(entity.index(), 0);
+            }
+        } else {
+            // No migration — replace the existing value at the entity's row.
+            if let Some(&arch_id) = self.entity_archetype.get(&entity.index()) {
+                let graph = self.archetype_graph.get_mut();
+                if let Some(arch) = graph.get_mut(arch_id) {
+                    arch.ensure_column::<T>();
+                    if let Some(&col_idx) = arch.type_to_column.get(&type_id) {
+                        let ci: usize = col_idx;
+                        if let Some(col) = (*arch.columns[ci])
+                            .as_any_mut()
+                            .downcast_mut::<TypedColumn<T>>()
+                        {
+                            if let Some(&row) = arch.entity_to_row.get(&entity.index()) {
+                                if row < col.data.len() {
+                                    col.data[row] = component.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // Store the component in legacy storage for now
-        // (full archetype integration requires more complex migration logic)
+        // Also store in legacy storage (keeps fallback path working)
         self.storage_mut::<T>().insert(entity, component);
     }
 
@@ -414,13 +495,53 @@ impl World {
 
     /// Query entities that have components `A`, `B`, **and** `C`.
     ///
-    /// Uses archetype metadata to pre-filter to entities with all three types.
+    /// Fast path: if archetypes have SoA columns populated for all three
+    /// types, iterate via raw `column_ptr<T>()` slices. Falls back to
+    /// legacy HashMap storage otherwise.
     pub fn query3<A: Component, B: Component, C: Component>(
         &self,
     ) -> Vec<(Entity, &A, &B, &C)> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
         let type_c = TypeId::of::<C>();
+
+        // Try SoA fast path via archetype columns.
+        {
+            let graph = self.archetype_graph.read();
+            let matching = graph.find_with_components(&[type_a, type_b, type_c]);
+            if !matching.is_empty() {
+                let mut results = Vec::new();
+                for arch in &matching {
+                    let n = arch.column_len::<A>();
+                    if n == 0 {
+                        continue;
+                    }
+                    unsafe {
+                        if let (Some(pa), Some(pb), Some(pc)) = (
+                            arch.column_ptr::<A>(),
+                            arch.column_ptr::<B>(),
+                            arch.column_ptr::<C>(),
+                        ) {
+                            let sa = std::slice::from_raw_parts(pa, n);
+                            let sb = std::slice::from_raw_parts(pb, n);
+                            let sc = std::slice::from_raw_parts(pc, n);
+                            for (i, ((a, b), c)) in
+                                sa.iter().zip(sb).zip(sc).enumerate()
+                            {
+                                if i < arch.entities.len() {
+                                    results.push((arch.entities[i], a, b, c));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // Fallback: legacy HashMap path.
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
         let sc = self.storage::<C>();
@@ -692,7 +813,7 @@ pub struct EntityBuilder<'w> {
 
 impl<'w> EntityBuilder<'w> {
     /// Attach a component to this entity.
-    pub fn with<T: Component>(self, component: T) -> Self {
+    pub fn with<T: Component + Clone>(self, component: T) -> Self {
         self.world.insert(self.entity, component);
         self
     }
@@ -708,19 +829,19 @@ mod tests {
     use super::*;
     use crate::query;
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct Position {
         x: f32,
         y: f32,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct Velocity {
         dx: f32,
         dy: f32,
     }
 
-    #[derive(Debug, PartialEq)]
+    #[derive(Debug, Clone, PartialEq)]
     struct Health(u32);
 
     #[test]
@@ -989,7 +1110,7 @@ mod tests {
     #[test]
     fn commands_spawn_and_apply() {
         let mut world = World::new();
-        let mut cmds = super::Commands::new();
+        let mut cmds = crate::ecs::Commands::new();
         cmds.spawn().with(Position { x: 5.0, y: 6.0 }).id();
         cmds.spawn().with(Health(200)).id();
         assert_eq!(world.entity_count(), 0);
@@ -1002,7 +1123,7 @@ mod tests {
         let mut world = World::new();
         let e = world.spawn();
         world.insert(e, Health(1));
-        let mut cmds = super::Commands::new();
+        let mut cmds = crate::ecs::Commands::new();
         cmds.despawn(e);
         cmds.apply(&mut world);
         assert!(!world.is_alive(e));
@@ -1114,5 +1235,40 @@ mod tests {
         assert_ne!(e1.generation(), e2.generation());
         assert!(!world.is_alive(e1));
         assert!(world.is_alive(e2));
+    }
+
+    #[test]
+    fn soa_query2_uses_fast_path() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+        world.insert(e, Velocity { dx: 3.0, dy: 4.0 });
+
+        // After insert, archetype SoA columns should be populated.
+        {
+            let graph = world.archetype_graph.read();
+            let matching = graph.find_with_components(&[
+                std::any::TypeId::of::<Position>(),
+                std::any::TypeId::of::<Velocity>(),
+            ]);
+            assert!(!matching.is_empty(), "should find a matching archetype");
+            let arch = matching[0];
+            assert_eq!(
+                arch.column_len::<Position>(),
+                1,
+                "SoA column for Position must have 1 entry"
+            );
+            assert_eq!(
+                arch.column_len::<Velocity>(),
+                1,
+                "SoA column for Velocity must have 1 entry"
+            );
+        }
+
+        // query2 should return data from the SoA fast path.
+        let results = world.query2::<Position, Velocity>();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].1, &Position { x: 1.0, y: 2.0 });
+        assert_eq!(results[0].2, &Velocity { dx: 3.0, dy: 4.0 });
     }
 }

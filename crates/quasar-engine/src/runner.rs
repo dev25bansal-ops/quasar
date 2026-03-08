@@ -242,6 +242,15 @@ impl ApplicationHandler for QuasarRunner {
                 // Run one full ECS frame (updates time, runs all systems).
                 self.app.tick();
 
+                // Upload instance transforms collected by RenderSyncSystem.
+                if let Some(sync) =
+                    self.app.world.remove_resource::<quasar_render::RenderSyncOutput>()
+                {
+                    state
+                        .renderer
+                        .upload_instance_transforms(&sync.instance_transforms);
+                }
+
                 // Propagate scene-graph transforms (if user built a hierarchy).
                 if let Some(scene) = self.app.world.remove_resource::<SceneGraph>() {
                     scene.propagate_transforms(&mut self.app.world);

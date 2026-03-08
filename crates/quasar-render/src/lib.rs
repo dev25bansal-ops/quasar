@@ -71,7 +71,7 @@ pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
 pub use render_graph::{RenderGraph, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids};
-pub use render_plugin::{RenderPlugin};
+pub use render_plugin::{RenderPlugin, RenderSyncOutput};
 pub use renderer::{RenderConfig, Renderer};
 pub use shadow::{ShadowMap, ShadowCamera};
 pub use texture::Texture;

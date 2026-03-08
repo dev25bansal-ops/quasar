@@ -344,6 +344,21 @@ impl Renderer {
         self.depth_view = depth_view;
     }
 
+    /// Upload instance transform matrices to the GPU instance buffer.
+    ///
+    /// Called by the runner after ECS systems have collected the matrices
+    /// into [`RenderSyncOutput`].
+    pub fn upload_instance_transforms(&self, transforms: &[glam::Mat4]) {
+        if transforms.is_empty() {
+            return;
+        }
+        let bytes = bytemuck::cast_slice(transforms);
+        let max = self.instance_buffer.size() as usize;
+        let len = bytes.len().min(max);
+        self.queue
+            .write_buffer(&self.instance_buffer, 0, &bytes[..len]);
+    }
+
     /// Update the camera uniform buffer on the GPU.
     pub fn update_camera(&mut self, camera: &Camera, model: glam::Mat4) {
         self.camera_uniform.update(camera, model);
