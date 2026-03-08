@@ -6,14 +6,24 @@
 
 use std::any::TypeId;
 
+use super::archetype::{ColumnStorage, TypedColumn};
 use super::{Component, Entity, World};
+
+/// Helper to create a column factory for type T.
+fn create_column<T: 'static + Send + Sync>() -> Box<dyn ColumnStorage> {
+    Box::new(TypedColumn::<T>::new())
+}
 
 /// A single deferred command to be executed on the World.
 pub enum Command {
     /// Spawn a new entity and optionally insert initial components.
     Spawn {
-        /// Pre-serialized component data to insert.
-        components: Vec<(TypeId, Box<dyn std::any::Any + Send + Sync>)>,
+        /// Pre-serialized component data to insert, with column factories.
+        components: Vec<(
+            TypeId,
+            Box<dyn std::any::Any + Send + Sync>,
+            fn() -> Box<dyn ColumnStorage>,
+        )>,
     },
     /// Despawn an entity.
     Despawn(Entity),
@@ -22,6 +32,7 @@ pub enum Command {
         entity: Entity,
         type_id: TypeId,
         component: Box<dyn std::any::Any + Send + Sync>,
+        column_factory: fn() -> Box<dyn ColumnStorage>,
     },
     /// Remove a component from an entity.
     Remove { entity: Entity, type_id: TypeId },
@@ -75,6 +86,7 @@ impl Commands {
             entity,
             type_id: TypeId::of::<T>(),
             component: Box::new(component),
+            column_factory: create_column::<T>,
         });
     }
 
@@ -105,8 +117,8 @@ impl Commands {
             match cmd {
                 Command::Spawn { components } => {
                     let entity = world.spawn();
-                    for (type_id, component) in components {
-                        world.insert_raw(entity, type_id, component);
+                    for (type_id, component, factory) in components {
+                        world.insert_raw(entity, type_id, component, factory);
                     }
                 }
                 Command::Despawn(entity) => {
@@ -116,8 +128,9 @@ impl Commands {
                     entity,
                     type_id,
                     component,
+                    column_factory,
                 } => {
-                    world.insert_raw(entity, type_id, component);
+                    world.insert_raw(entity, type_id, component, column_factory);
                 }
                 Command::Remove { entity, type_id } => {
                     world.remove_raw(entity, type_id);
@@ -152,14 +165,18 @@ impl Default for Commands {
 /// Builder for spawning an entity with components.
 pub struct EntitySpawnBuilder<'a> {
     commands: &'a mut Commands,
-    components: Vec<(TypeId, Box<dyn std::any::Any + Send + Sync>)>,
+    components: Vec<(
+        TypeId,
+        Box<dyn std::any::Any + Send + Sync>,
+        fn() -> Box<dyn ColumnStorage>,
+    )>,
 }
 
 impl<'a> EntitySpawnBuilder<'a> {
     /// Add a component to the entity being spawned.
     pub fn with<T: Component + Send + Sync>(mut self, component: T) -> Self {
         self.components
-            .push((TypeId::of::<T>(), Box::new(component)));
+            .push((TypeId::of::<T>(), Box::new(component), create_column::<T>));
         self
     }
 

@@ -1,6 +1,6 @@
 //! Application builder and main loop.
 
-use crate::ecs::{Schedule, SystemStage, World};
+use crate::ecs::{ParallelSchedule, Schedule, SystemNode, SystemStage, World};
 use crate::event::Events;
 use crate::plugin::Plugin;
 use crate::time::{FixedUpdateAccumulator, Time};
@@ -35,8 +35,10 @@ pub struct App {
     pub events: Events,
     /// Frame timing information.
     pub time: Time,
-    /// System schedule.
+    /// System schedule (sequential).
     pub schedule: Schedule,
+    /// Optional parallel schedule for systems with declared access.
+    pub parallel_schedule: Option<ParallelSchedule>,
 }
 
 impl App {
@@ -47,6 +49,7 @@ impl App {
             events: Events::new(),
             time: Time::new(),
             schedule: Schedule::new(),
+            parallel_schedule: None,
         }
     }
 
@@ -74,6 +77,30 @@ impl App {
         system: Box<dyn crate::ecs::System>,
     ) -> &mut Self {
         self.schedule.add_system(stage, system);
+        self
+    }
+
+    /// Enable parallel system execution.
+    ///
+    /// Creates a [`ParallelSchedule`] that runs systems with declared
+    /// component/resource access concurrently when safe to do so.
+    /// Systems added via [`add_parallel_system`] use this schedule;
+    /// systems added via [`add_system`] continue to run sequentially.
+    pub fn enable_parallel(&mut self) -> &mut Self {
+        if self.parallel_schedule.is_none() {
+            self.parallel_schedule = Some(ParallelSchedule::new());
+        }
+        self
+    }
+
+    /// Add a system with declared access to the parallel schedule.
+    ///
+    /// Call [`enable_parallel`] first. If the parallel schedule is not
+    /// enabled, the system's node is silently dropped.
+    pub fn add_parallel_system(&mut self, stage: SystemStage, node: SystemNode) -> &mut Self {
+        if let Some(ps) = &mut self.parallel_schedule {
+            ps.add_system(stage, node);
+        }
         self
     }
 
@@ -105,6 +132,11 @@ impl App {
         }
 
         self.schedule.run_with_fixed_update(&mut self.world, self.time.delta_seconds());
+
+        // Run parallel schedule (if enabled) after sequential schedule.
+        if let Some(ps) = &mut self.parallel_schedule {
+            ps.run_with_fixed_update(&mut self.world, self.time.delta_seconds());
+        }
 
         // Sync events back from world (systems may have added events)
         if let Some(events) = self.world.resource_mut::<Events>() {

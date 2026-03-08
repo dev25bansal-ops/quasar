@@ -6,6 +6,7 @@
 //! input state, and engine utilities. Supports hot-reloading of scripts.
 
 pub mod bridge;
+pub mod component_registry;
 pub mod plugin;
 
 use mlua::prelude::*;
@@ -240,3 +241,4 @@ impl ScriptComponent {
 }
 
 pub use plugin::{ScriptingPlugin, ScriptingResource};
+pub use component_registry::{ComponentDescriptor, ComponentRegistry};

@@ -584,6 +584,53 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     )?;
     quasar.set("remove_component", remove_component_fn)?;
 
+    // ── Event system ───────────────────────────────────────────────
+
+    // Internal table: quasar._event_handlers[event_name] = { handler1, handler2, ... }
+    quasar.set("_event_handlers", lua.create_table()?)?;
+
+    // quasar.on_event(event_name, handler_fn)
+    // Register a callback for a named event.
+    let on_event_fn = lua.create_function(
+        |lua, (event_name, handler): (String, LuaFunction)| {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let handlers: LuaTable = quasar.get("_event_handlers")?;
+            let list: LuaTable = match handlers.get::<Option<LuaTable>>(event_name.as_str())? {
+                Some(existing) => existing,
+                None => {
+                    let new_list = lua.create_table()?;
+                    handlers.set(event_name.as_str(), new_list.clone())?;
+                    new_list
+                }
+            };
+            let len = list.len()?;
+            list.set(len + 1, handler)?;
+            Ok(())
+        },
+    )?;
+    quasar.set("on_event", on_event_fn)?;
+
+    // quasar.emit_event(event_name, data_table_or_nil)
+    // Fire an event, calling all registered handlers.
+    let emit_event_fn = lua.create_function(
+        |lua, (event_name, data): (String, LuaValue)| {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let handlers: LuaTable = quasar.get("_event_handlers")?;
+            if let Some(list) = handlers.get::<Option<LuaTable>>(event_name.as_str())? {
+                let len = list.len()?;
+                for i in 1..=len {
+                    if let Ok(handler) = list.get::<LuaFunction>(i) {
+                        if let Err(e) = handler.call::<()>(data.clone()) {
+                            log::error!("[lua] Event '{}' handler error: {}", event_name, e);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        },
+    )?;
+    quasar.set("emit_event", emit_event_fn)?;
+
     Ok(())
 }
 

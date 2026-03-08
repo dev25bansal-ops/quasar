@@ -153,6 +153,7 @@ impl Default for RenderPlugin {
 // the context before the graph is executed.
 
 use crate::shadow::ShadowMap;
+use crate::hdr::TonemappingPass;
 
 /// Resource key constants for `RenderContext::resources`.
 pub mod resource_keys {
@@ -160,6 +161,7 @@ pub mod resource_keys {
     pub const RENDER_PIPELINE: &str = "render_pipeline";
     pub const MESH_DRAW_LIST: &str = "mesh_draw_list";
     pub const POST_PROCESS: &str = "post_process";
+    pub const TONEMAPPING: &str = "tonemapping";
     pub const UI_RENDER_PASS: &str = "ui_render_pass";
 }
 
@@ -396,6 +398,39 @@ impl RenderPass for PostProcessRenderPass {
     }
 }
 
+struct TonemapRenderPass;
+impl RenderPass for TonemapRenderPass {
+    fn name(&self) -> &str { "tonemap" }
+    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+        let tonemap = match ctx.resources.get(resource_keys::TONEMAPPING) {
+            Some(res) => match res.downcast_ref::<TonemappingPass>() {
+                Some(tp) => tp,
+                None => return,
+            },
+            None => {
+                log::trace!("TonemapPass: no tonemapping resource — skipping");
+                return;
+            }
+        };
+
+        // Tonemap from HDR target to a swapchain-compatible surface view.
+        // The runner must provide a "surface_view" resource for the final output.
+        let surface_view = match ctx.resources.get("surface_view") {
+            Some(res) => match res.downcast_ref::<wgpu::TextureView>() {
+                Some(v) => v,
+                None => return,
+            },
+            None => {
+                log::trace!("TonemapPass: no surface_view resource — skipping");
+                return;
+            }
+        };
+
+        tonemap.execute(encoder, surface_view);
+        log::trace!("TonemapPass::execute — completed");
+    }
+}
+
 struct UiRenderPass;
 impl RenderPass for UiRenderPass {
     fn name(&self) -> &str { "ui" }
@@ -452,13 +487,15 @@ impl quasar_core::Plugin for RenderPlugin {
         graph.add_pass(pass_ids::OPAQUE, Box::new(OpaqueRenderPass));
         graph.add_pass(pass_ids::TRANSPARENT, Box::new(TransparentRenderPass));
         graph.add_pass(pass_ids::POST_PROCESS, Box::new(PostProcessRenderPass));
+        graph.add_pass(pass_ids::TONEMAP, Box::new(TonemapRenderPass));
         graph.add_pass(pass_ids::UI, Box::new(UiRenderPass));
 
         // Dependencies
         graph.add_dependency(pass_ids::OPAQUE, pass_ids::SHADOW);
         graph.add_dependency(pass_ids::TRANSPARENT, pass_ids::OPAQUE);
         graph.add_dependency(pass_ids::POST_PROCESS, pass_ids::TRANSPARENT);
-        graph.add_dependency(pass_ids::UI, pass_ids::POST_PROCESS);
+        graph.add_dependency(pass_ids::TONEMAP, pass_ids::POST_PROCESS);
+        graph.add_dependency(pass_ids::UI, pass_ids::TONEMAP);
 
         // Output attachments
         graph.add_output(pass_ids::SHADOW, attachment_ids::SHADOW_MAP);

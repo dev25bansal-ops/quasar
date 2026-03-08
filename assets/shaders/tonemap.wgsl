@@ -5,7 +5,7 @@
 // group(0) binding(1) = sampler
 
 @group(0) @binding(0)
-var t_hdr: texture_2D<f32>;
+var t_hdr: texture_2d<f32>;
 
 @group(0) @binding(1)
 var s_hdr: sampler;

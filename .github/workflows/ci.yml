@@ -69,3 +69,23 @@ jobs:
       - run: cargo doc --workspace --no-deps
       env:
         RUSTDOCFLAGS: -Dwarnings
+
+  wasm:
+    name: WebGPU/WASM Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p web-demo --target wasm32-unknown-unknown
+
+  bench:
+    name: Benchmarks Compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --bench ecs_bench -p quasar-core

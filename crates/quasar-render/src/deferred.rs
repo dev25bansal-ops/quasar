@@ -194,7 +194,7 @@ impl DeferredLightingPass {
         output_format: wgpu::TextureFormat,
         gbuffer_read_layout: &wgpu::BindGroupLayout,
     ) -> Self {
-        // Light uniform buffer + bind group
+        // Light storage buffer + bind group
         let light_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Deferred Light BGL"),
@@ -202,7 +202,7 @@ impl DeferredLightingPass {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -213,7 +213,7 @@ impl DeferredLightingPass {
         let light_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Deferred Light Buffer"),
             size: std::mem::size_of::<LightsUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -281,19 +281,17 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 }
 
 struct LightData {
-    position_or_direction: vec4<f32>,
-    color_intensity: vec4<f32>,
-    light_type: u32,
-    inner_angle: u32,
-    outer_angle: u32,
-    range: u32,
-    falloff: f32,
-    _pad: vec3<f32>,
+    position: vec4<f32>,
+    color: vec4<f32>,
+    direction: vec4<f32>,
+    params: vec4<f32>,
 };
 
 struct LightsUniform {
-    lights: array<LightData, 16>,
+    lights: array<LightData, 256>,
     count: u32,
+    _pad: vec3<u32>,
+    ambient: vec4<f32>,
 };
 
 struct InvCamera {
@@ -307,7 +305,7 @@ struct InvCamera {
 @group(0) @binding(3) var t_depth: texture_depth_2d;
 @group(0) @binding(4) var t_sampler: sampler;
 
-@group(1) @binding(0) var<uniform> lights: LightsUniform;
+@group(1) @binding(0) var<storage, read> lights: LightsUniform;
 @group(2) @binding(0) var<uniform> inv_cam: InvCamera;
 
 fn reconstruct_position(uv: vec2<f32>, depth: f32) -> vec3<f32> {
@@ -330,7 +328,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let view_dir = normalize(inv_cam.camera_position.xyz - world_pos);
 
     var color = vec3(0.0);
-    let ambient = albedo * 0.03;
+    let ambient = lights.ambient.rgb * lights.ambient.a * albedo;
     color += ambient;
 
     for (var i: u32 = 0u; i < lights.count; i++) {
@@ -338,27 +336,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         var L: vec3<f32>;
         var attenuation = 1.0;
+        let light_type = u32(light.params.x);
 
-        if light.light_type == 0u {
+        if light_type == 0u {
             // Directional
-            L = normalize(-light.position_or_direction.xyz);
+            L = normalize(-light.direction.xyz);
         } else {
             // Point / Spot
-            let to_light = light.position_or_direction.xyz - world_pos;
+            let to_light = light.position.xyz - world_pos;
             let dist = length(to_light);
             L = to_light / dist;
-            let range = bitcast<f32>(light.range);
+            let range = light.params.y;
             attenuation = max(1.0 - dist / range, 0.0);
             attenuation = attenuation * attenuation;
         }
 
         let ndl = max(dot(normal, L), 0.0);
-        let diffuse = albedo * light.color_intensity.rgb * ndl * attenuation;
+        let diffuse = albedo * light.color.rgb * light.color.a * ndl * attenuation;
 
         let H = normalize(L + view_dir);
         let ndh = max(dot(normal, H), 0.0);
         let spec_power = mix(8.0, 256.0, 1.0 - roughness);
-        let specular = light.color_intensity.rgb * pow(ndh, spec_power) * attenuation * mix(0.04, 1.0, metallic);
+        let specular = light.color.rgb * light.color.a * pow(ndh, spec_power) * attenuation * mix(0.04, 1.0, metallic);
 
         color += diffuse + specular;
     }

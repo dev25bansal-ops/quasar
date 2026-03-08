@@ -27,25 +27,27 @@ pub trait WorldQuery {
     fn fetch<'w>(world: &'w World, entity_index: u32) -> Option<Self::Item<'w>>;
 }
 
-/// Fetch a single immutable component reference.
+/// Fetch a single immutable component reference via archetype SoA.
 impl<T: Component> WorldQuery for &T {
     type Item<'w> = &'w T;
     fn type_ids() -> Vec<TypeId> {
         vec![TypeId::of::<T>()]
     }
     fn fetch<'w>(world: &'w World, entity_index: u32) -> Option<Self::Item<'w>> {
-        world.storage::<T>()?.data.get(&entity_index)
+        let generation = world.generation_of(entity_index);
+        world.get::<T>(super::entity::Entity::new(entity_index, generation))
     }
 }
 
-/// Fetch an optional immutable component reference.
+/// Fetch an optional immutable component reference via archetype SoA.
 impl<T: Component> WorldQuery for Option<&T> {
     type Item<'w> = Option<&'w T>;
     fn type_ids() -> Vec<TypeId> {
         vec![] // optional — no required types
     }
     fn fetch<'w>(world: &'w World, entity_index: u32) -> Option<Self::Item<'w>> {
-        Some(world.storage::<T>().and_then(|s| s.data.get(&entity_index)))
+        let generation = world.generation_of(entity_index);
+        Some(world.get::<T>(super::entity::Entity::new(entity_index, generation)))
     }
 }
 
@@ -309,17 +311,26 @@ impl<T: Component> FilterChanged<T> {
     }
 }
 
-/// Filter: component `T` was added this tick (change_tick == current_tick of storage).
+/// When used as a `QueryFilter`, `FilterChanged<T>` uses the active system's
+/// last-run tick (set by `World::begin_system`) to detect components that
+/// changed since the current system last ran.
+impl<T: Component> QueryFilter for FilterChanged<T> {
+    fn matches(world: &World, entity_index: u32) -> bool {
+        let since = world.active_system_last_run();
+        world
+            .change_tick_for(TypeId::of::<T>(), entity_index)
+            .map_or(false, |tick| tick > since)
+    }
+}
+
+/// Filter: component `T` was added this tick (change_tick == current world tick).
 pub struct FilterAdded<T: Component>(PhantomData<T>);
 
 impl<T: Component> QueryFilter for FilterAdded<T> {
     fn matches(world: &World, entity_index: u32) -> bool {
-        if let Some(storage) = world.storage::<T>() {
-            if let Some(&tick) = storage.change_ticks.get(&entity_index) {
-                return tick == storage.current_tick;
-            }
-        }
-        false
+        world
+            .change_tick_for(TypeId::of::<T>(), entity_index)
+            .map_or(false, |tick| tick == world.current_tick::<T>())
     }
 }
 

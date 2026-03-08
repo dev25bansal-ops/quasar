@@ -6,7 +6,7 @@
 use quasar_math::Vec3;
 
 /// Maximum number of lights supported in the shader.
-pub const MAX_LIGHTS: usize = 16;
+pub const MAX_LIGHTS: usize = 256;
 
 /// A directional light (sun-like, infinite distance).
 #[derive(Debug, Clone, Copy)]
@@ -143,85 +143,65 @@ impl Default for AmbientLight {
 }
 
 /// Uniform structure for passing light data to shaders.
-/// Matches the layout expected by the WGSL shader.
+/// Matches the layout expected by the WGSL shader (4 × vec4<f32>).
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct LightData {
-    /// Position (for point/spot) or direction (for directional).
-    pub position_or_direction: [f32; 4],
-    /// Color + intensity packed as RGB + unused.
-    pub color_intensity: [f32; 4],
-    /// Type: 0 = directional, 1 = point, 2 = spot.
-    pub light_type: u32,
-    /// Inner angle (for spot).
-    pub inner_angle: u32,
-    /// Outer angle (for spot).
-    pub outer_angle: u32,
-    /// Range (for point/spot).
-    pub range: u32,
-    /// Falloff parameter.
-    pub falloff: f32,
-    /// Padding for alignment.
-    pub _padding: [f32; 3],
+    /// Position (xyz, w=1) for point/spot, or unused (0,0,0,0) for directional.
+    pub position: [f32; 4],
+    /// Color (rgb) and intensity (a).
+    pub color: [f32; 4],
+    /// Direction (xyz) for directional/spot lights (w unused).
+    pub direction: [f32; 4],
+    /// x = light_type (0.0=dir, 1.0=point, 2.0=spot).
+    /// Point: y=range. Spot: y=inner_cutoff, z=outer_cutoff, w=range.
+    pub params: [f32; 4],
 }
-
 impl LightData {
     pub fn from_directional(light: &DirectionalLight) -> Self {
         Self {
-            position_or_direction: [light.direction.x, light.direction.y, light.direction.z, 0.0],
-            color_intensity: [
+            position: [0.0, 0.0, 0.0, 0.0],
+            color: [
                 light.color.x * light.intensity,
                 light.color.y * light.intensity,
                 light.color.z * light.intensity,
-                0.0,
+                light.intensity,
             ],
-            light_type: 0,
-            inner_angle: 0,
-            outer_angle: 0,
-            range: 0,
-            falloff: 0.0,
-            _padding: [0.0; 3],
+            direction: [light.direction.x, light.direction.y, light.direction.z, 0.0],
+            params: [0.0, 0.0, 0.0, 0.0],
         }
     }
 
     pub fn from_point(light: &PointLight) -> Self {
         Self {
-            position_or_direction: [light.position.x, light.position.y, light.position.z, 1.0],
-            color_intensity: [
+            position: [light.position.x, light.position.y, light.position.z, 1.0],
+            color: [
                 light.color.x * light.intensity,
                 light.color.y * light.intensity,
                 light.color.z * light.intensity,
-                0.0,
+                light.intensity,
             ],
-            light_type: 1,
-            inner_angle: 0,
-            outer_angle: 0,
-            range: light.range.to_bits(),
-            falloff: light.falloff,
-            _padding: [0.0; 3],
+            direction: [0.0, 0.0, 0.0, 0.0],
+            params: [1.0, light.range, 0.0, 0.0],
         }
     }
 
     pub fn from_spot(light: &SpotLight) -> Self {
         Self {
-            position_or_direction: [light.position.x, light.position.y, light.position.z, 1.0],
-            color_intensity: [
+            position: [light.position.x, light.position.y, light.position.z, 1.0],
+            color: [
                 light.color.x * light.intensity,
                 light.color.y * light.intensity,
                 light.color.z * light.intensity,
-                0.0,
+                light.intensity,
             ],
-            light_type: 2,
-            inner_angle: light.inner_angle.to_bits(),
-            outer_angle: light.outer_angle.to_bits(),
-            range: light.range.to_bits(),
-            falloff: 0.0,
-            _padding: [0.0; 3],
+            direction: [light.direction.x, light.direction.y, light.direction.z, 0.0],
+            params: [2.0, light.inner_angle, light.outer_angle, light.range],
         }
     }
 }
 
-/// Uniform buffer containing all active lights.
+/// Storage buffer containing all active lights.
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct LightsUniform {
@@ -231,23 +211,22 @@ pub struct LightsUniform {
     pub count: u32,
     /// Padding for alignment.
     pub _padding: [u32; 3],
+    /// Ambient color (rgb) and intensity (a).
+    pub ambient: [f32; 4],
 }
 
 impl Default for LightsUniform {
     fn default() -> Self {
         Self {
             lights: [LightData {
-                position_or_direction: [0.0; 4],
-                color_intensity: [0.0; 4],
-                light_type: 0,
-                inner_angle: 0,
-                outer_angle: 0,
-                range: 0,
-                falloff: 0.0,
-                _padding: [0.0; 3],
+                position: [0.0; 4],
+                color: [0.0; 4],
+                direction: [0.0; 4],
+                params: [0.0; 4],
             }; MAX_LIGHTS],
             count: 0,
             _padding: [0; 3],
+            ambient: [0.1, 0.1, 0.1, 1.0],
         }
     }
 }
@@ -264,22 +243,27 @@ mod tests {
             intensity: 2.0,
         };
         let data = LightData::from_directional(&light);
-        assert_eq!(data.light_type, 0);
-        assert_eq!(data.color_intensity[0], 2.0);
+        assert_eq!(data.params[0], 0.0); // light_type = directional
+        assert_eq!(data.color[0], 2.0);
+        assert_eq!(data.direction[1], -1.0);
     }
 
     #[test]
     fn point_light_data() {
         let light = PointLight::new(Vec3::new(1.0, 2.0, 3.0)).with_intensity(0.5);
         let data = LightData::from_point(&light);
-        assert_eq!(data.light_type, 1);
-        assert_eq!(data.position_or_direction[0], 1.0);
+        assert_eq!(data.params[0], 1.0); // light_type = point
+        assert_eq!(data.position[0], 1.0);
+        assert_eq!(data.params[1], 10.0); // default range
     }
 
     #[test]
     fn spot_light_data() {
         let light = SpotLight::new(Vec3::ZERO, Vec3::new(0.0, -1.0, 0.0)).with_angles(0.5, 1.0);
         let data = LightData::from_spot(&light);
-        assert_eq!(data.light_type, 2);
+        assert_eq!(data.params[0], 2.0); // light_type = spot
+        assert_eq!(data.direction[1], -1.0);
+        assert_eq!(data.params[1], 0.5); // inner_angle
+        assert_eq!(data.params[2], 1.0); // outer_angle
     }
 }

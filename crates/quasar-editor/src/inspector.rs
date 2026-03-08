@@ -28,7 +28,7 @@ pub struct InspectorData {
 /// - `Option<InspectorAction>` contains any action requested (despawn/spawn)
 pub fn inspector_panel(
     ctx: &egui::Context,
-    selected: Option<Entity>,
+    selected: &[Entity],
     data: Option<&mut InspectorData>,
 ) -> (bool, Option<InspectorAction>) {
     let mut changed = false;
@@ -40,8 +40,16 @@ pub fn inspector_panel(
             ui.heading("🔍 Inspector");
             ui.separator();
 
-            let (entity, data) = match (selected, data) {
-                (Some(e), Some(d)) => (e, d),
+            if selected.len() > 1 {
+                ui.label(format!("{} entities selected", selected.len()));
+                for e in selected {
+                    ui.label(format!("  • [{}:{}]", e.index(), e.generation()));
+                }
+                return;
+            }
+
+            let (entity, data) = match (selected.first(), data) {
+                (Some(&e), Some(d)) => (e, d),
                 (Some(e), None) => {
                     ui.label(format!(
                         "Entity [{}:{}] — no editable data",

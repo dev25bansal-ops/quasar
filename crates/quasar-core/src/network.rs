@@ -1041,6 +1041,7 @@ fn network_system(world: &mut crate::World) {
 
     // Decode messages and collect connection-level updates vs entity updates.
     let mut transform_updates: Vec<(NetworkEntityId, [f32; 3], [f32; 4], [f32; 3])> = Vec::new();
+    let mut snapshot_updates: Vec<(u64, Vec<EntitySnapshot>)> = Vec::new();
 
     {
         let Some(replication) = world.resource::<NetworkReplication>() else {
@@ -1073,6 +1074,10 @@ fn network_system(world: &mut crate::World) {
                 }
                 NetworkPayload::Input { client_id, inputs } => {
                     state.input_buffer.insert(*client_id, inputs.clone());
+                }
+                NetworkPayload::StateSnapshot { frame, entities } => {
+                    // Store for rollback reconciliation + interpolation.
+                    snapshot_updates.push((*frame, entities.clone()));
                 }
                 _ => {}
             }
@@ -1109,6 +1114,24 @@ fn network_system(world: &mut crate::World) {
                     }
                 }
             }
+        }
+    }
+
+    // Feed received state snapshots into interpolation + rollback.
+    for (frame, entities) in &snapshot_updates {
+        // Build map for both interpolation and rollback.
+        let map: HashMap<NetworkEntityId, EntitySnapshot> = entities
+            .iter()
+            .map(|s| (s.entity_id, s.clone()))
+            .collect();
+
+        // Push into SnapshotInterpolation for smooth rendering.
+        if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
+            rep_res.interpolation.push_snapshot(*frame, map.clone());
+        }
+        // Push into PendingServerSnapshot for rollback reconciliation.
+        if let Some(pending) = world.resource_mut::<PendingServerSnapshot>() {
+            pending.snapshot = Some((*frame, map));
         }
     }
 
@@ -1217,7 +1240,11 @@ impl crate::Plugin for NetworkPlugin {
         }
 
         app.world.insert_resource(replication);
+        app.world.insert_resource(ReplicationResource::new(self.config.tick_rate));
+        app.world.insert_resource(PendingServerSnapshot::default());
         app.add_system("network_system", network_system);
+        app.add_system("replication_system", replication_system);
+        app.add_system("rollback_system", rollback_system);
 
         log::info!(
             "NetworkPlugin loaded — {} mode on port {}",
@@ -1268,6 +1295,64 @@ mod tests {
 
         rollback.save_state(entities, HashMap::new());
         assert_eq!(rollback.states.len(), 1);
+    }
+
+    #[test]
+    fn replication_resource_spawn_despawn() {
+        let mut res = ReplicationResource::new(60);
+        let id = NetworkEntityId(42);
+        res.queue_spawn(id);
+        res.queue_despawn(NetworkEntityId(7));
+        assert_eq!(res.pending_spawns.len(), 1);
+        assert_eq!(res.pending_despawns.len(), 1);
+        assert_eq!(res.pending_spawns[0], id);
+    }
+
+    #[test]
+    fn delta_compressor_round_trip() {
+        let mut dc = DeltaCompressor::new();
+        let id = NetworkEntityId(1);
+        let snap = EntitySnapshot {
+            entity_id: id,
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+        // First update should always report needs_update.
+        assert!(dc.needs_update(id, &snap));
+        let encoded = dc.encode_delta(id, &snap);
+        assert!(encoded.is_some());
+        dc.mark_sent(id, snap.clone());
+        // Same snap again — no update needed.
+        assert!(!dc.needs_update(id, &snap));
+
+        // Changed position → needs update.
+        let snap2 = EntitySnapshot {
+            position: [4.0, 5.0, 6.0],
+            ..snap.clone()
+        };
+        assert!(dc.needs_update(id, &snap2));
+    }
+
+    #[test]
+    fn dirty_tracker_mark_take() {
+        let mut dt = DirtyTracker::new();
+        let id = NetworkEntityId(1);
+        dt.mark(id, "Transform");
+        assert!(dt.take(id, "Transform"));
+        // Second take should return false.
+        assert!(!dt.take(id, "Transform"));
+    }
+
+    #[test]
+    fn replicated_constructors() {
+        let server = Replicated::server_owned(NetworkEntityId(1), vec!["Transform".into()]);
+        assert!(server.owner.is_none());
+        assert_eq!(server.priority, 1.0);
+
+        let client = Replicated::client_owned(NetworkEntityId(2), ClientId(5), vec![]);
+        assert_eq!(client.owner, Some(ClientId(5)));
     }
 }
 
@@ -1653,6 +1738,377 @@ impl QuicTransport {
 
     pub fn disconnect(&mut self, addr: SocketAddr) {
         self.backend.disconnect(addr);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  REPLICATION SYSTEM — ties Replicated + DirtyTracker +
+//  DeltaCompressor + SnapshotInterpolation into one ECS system
+// ════════════════════════════════════════════════════════════════════
+
+/// High-level replication resource that the `replication_system` consumes.
+pub struct ReplicationResource {
+    pub dirty_tracker: DirtyTracker,
+    pub delta_compressor: DeltaCompressor,
+    pub interpolation: SnapshotInterpolation,
+    pub tick_accumulator: TickAccumulator,
+    /// Entities awaiting initial spawn replication.
+    pending_spawns: Vec<NetworkEntityId>,
+    /// Entities awaiting despawn replication.
+    pending_despawns: Vec<NetworkEntityId>,
+}
+
+impl ReplicationResource {
+    pub fn new(tick_rate: u32) -> Self {
+        Self {
+            dirty_tracker: DirtyTracker::new(),
+            delta_compressor: DeltaCompressor::new(),
+            interpolation: SnapshotInterpolation::new(tick_rate),
+            tick_accumulator: TickAccumulator::new(tick_rate),
+            pending_spawns: Vec::new(),
+            pending_despawns: Vec::new(),
+        }
+    }
+
+    pub fn queue_spawn(&mut self, id: NetworkEntityId) {
+        self.pending_spawns.push(id);
+    }
+
+    pub fn queue_despawn(&mut self, id: NetworkEntityId) {
+        self.pending_despawns.push(id);
+    }
+}
+
+/// Server-side replication system — runs once per network tick.
+///
+/// 1. Gathers all entities with [`Replicated`] component.
+/// 2. Collects dirty transforms into delta-compressed packets.
+/// 3. Broadcasts deltas + reliable spawn/despawn messages.
+/// 4. On clients, feeds received snapshots into `SnapshotInterpolation`.
+pub fn replication_system(world: &mut crate::World) {
+    // Phase 1: read-only gather — collect all data we need before mutating.
+    let is_server = world
+        .resource::<NetworkReplication>()
+        .map(|r| r.state.read().unwrap().is_server())
+        .unwrap_or(false);
+
+    if is_server {
+        server_replication_tick(world);
+    } else {
+        client_interpolation_tick(world);
+    }
+}
+
+fn server_replication_tick(world: &mut crate::World) {
+    // ── Gather snapshots (read-only) ─────────────────
+    let snapshots: Vec<(NetworkEntityId, EntitySnapshot)> = {
+        let replicated_entities: Vec<(crate::ecs::Entity, NetworkEntityId)> = world
+            .query::<Replicated>()
+            .into_iter()
+            .map(|(e, rep)| (e, rep.network_id))
+            .collect();
+
+        let mut out = Vec::with_capacity(replicated_entities.len());
+        for (entity, net_id) in replicated_entities {
+            if let Some(t) = world.get::<quasar_math::Transform>(entity) {
+                out.push((
+                    net_id,
+                    EntitySnapshot {
+                        entity_id: net_id,
+                        position: [t.position.x, t.position.y, t.position.z],
+                        rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                        scale: [t.scale.x, t.scale.y, t.scale.z],
+                        frame: 0,
+                    },
+                ));
+            }
+        }
+        out
+    };
+
+    // ── Gather metadata (read-only) ──────────────────
+    let (frame_number, client_addrs) = {
+        let default = (0u64, Vec::new());
+        world
+            .resource::<NetworkReplication>()
+            .map(|r| {
+                let state = r.state.read().unwrap();
+                let addrs: Vec<SocketAddr> = state
+                    .clients
+                    .values()
+                    .filter(|c| c.connected)
+                    .map(|c| c.addr)
+                    .collect();
+                (state.frame_number, addrs)
+            })
+            .unwrap_or(default)
+    };
+
+    if client_addrs.is_empty() {
+        return;
+    }
+
+    // ── Delta-compress (mutable ReplicationResource, no other borrows) ──
+    let (outgoing_messages, _has_deltas) = {
+        let Some(rep_res) = world.resource_mut::<ReplicationResource>() else {
+            return;
+        };
+
+        let spawns = std::mem::take(&mut rep_res.pending_spawns);
+        let despawns = std::mem::take(&mut rep_res.pending_despawns);
+
+        let mut has_deltas = false;
+        for (net_id, snap) in &snapshots {
+            if rep_res.delta_compressor.needs_update(*net_id, snap) {
+                let _ = rep_res.delta_compressor.encode_delta(*net_id, snap);
+                rep_res.delta_compressor.mark_sent(*net_id, snap.clone());
+                has_deltas = true;
+            }
+        }
+
+        for net_id in &despawns {
+            rep_res.delta_compressor.remove(net_id);
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        let mut msgs: Vec<NetworkMessage> = Vec::new();
+
+        // Reliable spawn/despawn messages.
+        for net_id in spawns {
+            msgs.push(NetworkMessage {
+                sequence: frame_number,
+                timestamp: now,
+                payload: NetworkPayload::EntitySpawn {
+                    entity_id: net_id,
+                    components: Vec::new(),
+                },
+            });
+        }
+        for net_id in despawns {
+            msgs.push(NetworkMessage {
+                sequence: frame_number,
+                timestamp: now,
+                payload: NetworkPayload::EntityDespawn { entity_id: net_id },
+            });
+        }
+
+        // Snapshot message with all dirty entity states.
+        if has_deltas {
+            let snap_entities: Vec<EntitySnapshot> =
+                snapshots.iter().map(|(_, s)| s.clone()).collect();
+            msgs.push(NetworkMessage {
+                sequence: frame_number,
+                timestamp: now,
+                payload: NetworkPayload::StateSnapshot {
+                    frame: frame_number,
+                    entities: snap_entities,
+                },
+            });
+        }
+
+        (msgs, has_deltas)
+    };
+
+    // ── Send (mutable transport, no other borrows) ───
+    if !outgoing_messages.is_empty() {
+        if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
+            for msg in &outgoing_messages {
+                for &addr in &client_addrs {
+                    let _ = transport.send(addr, msg);
+                }
+            }
+        }
+    }
+}
+
+fn client_interpolation_tick(world: &mut crate::World) {
+    // Advance interpolation and collect results.
+    let results: Vec<(NetworkEntityId, [f32; 3], [f32; 4])> = {
+        let Some(rep_res) = world.resource_mut::<ReplicationResource>() else {
+            return;
+        };
+        rep_res.interpolation.interpolate(1.0 / 60.0)
+    };
+
+    if results.is_empty() {
+        return;
+    }
+
+    // Map network IDs → entity indices.
+    let entity_map: Vec<(u32, [f32; 3], [f32; 4])> = {
+        let Some(replication) = world.resource::<NetworkReplication>() else {
+            return;
+        };
+        let state = replication.state.read().unwrap();
+        results
+            .iter()
+            .filter_map(|(net_id, pos, rot)| {
+                state.network_to_entity.get(net_id).map(|&idx| (idx, *pos, *rot))
+            })
+            .collect()
+    };
+
+    // Find entities and apply transforms.
+    let all_entities: Vec<(crate::ecs::Entity, u32)> = world
+        .query::<quasar_math::Transform>()
+        .into_iter()
+        .map(|(e, _)| (e, e.index()))
+        .collect();
+
+    for (target_idx, pos, rot) in &entity_map {
+        for &(entity, idx) in &all_entities {
+            if idx == *target_idx {
+                if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
+                    t.position = quasar_math::Vec3::new(pos[0], pos[1], pos[2]);
+                    t.rotation = quasar_math::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
+                }
+            }
+        }
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ROLLBACK SYSTEM — client-side prediction + server reconciliation
+// ════════════════════════════════════════════════════════════════════
+
+/// Resource holding the latest authoritative server snapshot that has not yet
+/// been reconciled. `network_system` pushes into this; `rollback_system`
+/// consumes it.
+#[derive(Default)]
+pub struct PendingServerSnapshot {
+    pub snapshot: Option<(u64, HashMap<NetworkEntityId, EntitySnapshot>)>,
+}
+
+/// Client-side rollback system.
+///
+/// Each frame:
+/// 1. Saves the current predicted state.
+/// 2. Checks if the server snapshot diverges from our prediction.
+/// 3. If so, runs `RollbackManager::run_rollback` to rewind and re-simulate.
+pub fn rollback_system(world: &mut crate::World) {
+    // Only clients use rollback prediction.
+    let is_client = world
+        .resource::<NetworkReplication>()
+        .map(|r| !r.state.read().unwrap().is_server())
+        .unwrap_or(false);
+
+    if !is_client {
+        return;
+    }
+
+    // 1. Save current predicted state.
+    let current_entities: HashMap<NetworkEntityId, EntitySnapshot> = {
+        world
+            .query::<Replicated>()
+            .into_iter()
+            .filter_map(|(entity, rep)| {
+                let t = world.get::<quasar_math::Transform>(entity)?;
+                Some((
+                    rep.network_id,
+                    EntitySnapshot {
+                        entity_id: rep.network_id,
+                        position: [t.position.x, t.position.y, t.position.z],
+                        rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                        scale: [t.scale.x, t.scale.y, t.scale.z],
+                        frame: 0,
+                    },
+                ))
+            })
+            .collect()
+    };
+
+    // Save to rollback history.
+    if let Some(replication) = world.resource_mut::<NetworkReplication>() {
+        replication.rollback.save_state(current_entities, HashMap::new());
+    }
+
+    // 2. Check for pending server snapshot.
+    let pending = world
+        .resource_mut::<PendingServerSnapshot>()
+        .and_then(|p| p.snapshot.take());
+
+    let Some((server_frame, server_entities)) = pending else {
+        return;
+    };
+
+    // 3. Detect misprediction and run rollback if needed.
+    let did_rollback = {
+        let Some(replication) = world.resource_mut::<NetworkReplication>() else {
+            return;
+        };
+        // run_rollback needs a simulate_fn — use a no-op that returns the
+        // server entities as the "re-simulated" state. In a real game, this
+        // closure would run the physics/gameplay systems for one tick.
+        replication.rollback.run_rollback(
+            server_frame,
+            &server_entities,
+            |_frame, _inputs| {
+                // Placeholder: real games replace this with actual re-simulation.
+                server_entities.clone()
+            },
+        )
+    };
+
+    if did_rollback {
+        // Apply corrected state back to the world.
+        let corrected: Vec<(NetworkEntityId, EntitySnapshot)> = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                return;
+            };
+            replication
+                .rollback
+                .states
+                .last()
+                .map(|s| s.entities.iter().map(|(k, v)| (*k, v.clone())).collect())
+                .unwrap_or_default()
+        };
+
+        let entity_map: HashMap<NetworkEntityId, u32> = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                return;
+            };
+            let state = replication.state.read().unwrap();
+            state.network_to_entity.clone()
+        };
+
+        let all_entities: Vec<(crate::ecs::Entity, u32)> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .map(|(e, _)| (e, e.index()))
+            .collect();
+
+        for (net_id, snap) in &corrected {
+            if let Some(&target_idx) = entity_map.get(net_id) {
+                for &(entity, idx) in &all_entities {
+                    if idx == target_idx {
+                        if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
+                            t.position = quasar_math::Vec3::new(
+                                snap.position[0],
+                                snap.position[1],
+                                snap.position[2],
+                            );
+                            t.rotation = quasar_math::Quat::from_xyzw(
+                                snap.rotation[0],
+                                snap.rotation[1],
+                                snap.rotation[2],
+                                snap.rotation[3],
+                            );
+                            t.scale = quasar_math::Vec3::new(
+                                snap.scale[0],
+                                snap.scale[1],
+                                snap.scale[2],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        log::debug!("Rollback reconciliation applied for server frame {}", server_frame);
     }
 }
 

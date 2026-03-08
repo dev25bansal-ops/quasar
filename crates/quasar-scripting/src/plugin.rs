@@ -14,11 +14,14 @@ use quasar_math::Transform;
 use quasar_window::Input;
 
 use crate::bridge;
+use crate::component_registry::{self, ComponentRegistry};
 use crate::{ScriptComponent, ScriptEngine};
 
 /// Resource wrapper so the scripting engine lives in the ECS as a global resource.
 pub struct ScriptingResource {
     pub engine: ScriptEngine,
+    /// Registry of component types accessible from Lua.
+    pub component_registry: ComponentRegistry,
     /// Registry key of the Lua table that maps entity_index → per-entity
     /// behaviour table (the table returned by each script file).
     entity_scripts_key: Option<mlua::RegistryKey>,
@@ -37,6 +40,7 @@ impl ScriptingResource {
             .ok();
         Self {
             engine,
+            component_registry: component_registry::default_registry(),
             entity_scripts_key,
             watched_entity_scripts: Vec::new(),
         }
@@ -58,6 +62,8 @@ enum ScriptCommand {
     Despawn { entity_index: u32 },
     ApplyForce { entity_index: u32, force: Vec3 },
     PlayAudio { path: String },
+    AddComponent { entity_index: u32, component_name: String, data_key: mlua::RegistryKey },
+    RemoveComponent { entity_index: u32, component_name: String },
 }
 
 /// System that calls `on_update(dt)` in Lua every frame and checks hot-reload.
@@ -90,6 +96,20 @@ impl ScriptingSystem {
         }
 
         let _ = quasar.set("_transforms", transforms);
+    }
+
+    /// Populate `quasar._component_data` using the ComponentRegistry.
+    fn write_component_data(lua: &Lua, world: &World) {
+        let Ok(quasar) = lua.globals().get::<LuaTable>("quasar") else {
+            return;
+        };
+        let Some(resource) = world.resource::<ScriptingResource>() else {
+            return;
+        };
+        match resource.component_registry.serialize_all_to_lua(lua, world) {
+            Ok(table) => { let _ = quasar.set("_component_data", table); }
+            Err(e) => { log::error!("[scripting] Failed to serialize component data: {}", e); }
+        }
     }
 
     /// Serialize pressed keys and mouse buttons into Lua.
@@ -248,6 +268,34 @@ impl ScriptingSystem {
                 "play_audio" => {
                     if let Ok(path) = cmd.get::<String>("path") {
                         commands.push(ScriptCommand::PlayAudio { path });
+                    }
+                }
+                "add_component" => {
+                    if let (Ok(eid), Ok(comp_name), Ok(data)) = (
+                        cmd.get::<u32>("entity"),
+                        cmd.get::<String>("component"),
+                        cmd.get::<LuaTable>("data"),
+                    ) {
+                        // Store the data table in the Lua registry so it survives
+                        // past the _commands table clear.
+                        if let Ok(key) = lua.create_registry_value(data) {
+                            commands.push(ScriptCommand::AddComponent {
+                                entity_index: eid,
+                                component_name: comp_name,
+                                data_key: key,
+                            });
+                        }
+                    }
+                }
+                "remove_component" => {
+                    if let (Ok(eid), Ok(comp_name)) = (
+                        cmd.get::<u32>("entity"),
+                        cmd.get::<String>("component"),
+                    ) {
+                        commands.push(ScriptCommand::RemoveComponent {
+                            entity_index: eid,
+                            component_name: comp_name,
+                        });
                     }
                 }
                 _ => {
@@ -528,6 +576,67 @@ impl ScriptingSystem {
                         log::warn!("[lua] Audio system not available");
                     }
                 }
+                ScriptCommand::AddComponent {
+                    entity_index,
+                    component_name,
+                    data_key,
+                } => {
+                    if let Some(&entity) = entity_map.get(&entity_index) {
+                        let data_table: Option<LuaTable> = lua.registry_value(&data_key).ok();
+                        if let Some(data) = data_table {
+                            let inserted = {
+                                let reg = &world.resource::<ScriptingResource>()
+                                    .map(|r| &r.component_registry);
+                                if let Some(reg) = reg {
+                                    if let Some(desc) = reg.get(&component_name) {
+                                        if let Err(e) = (desc.insert)(world, entity, &data) {
+                                            log::error!(
+                                                "[lua] Failed to add component '{}' to entity {}: {}",
+                                                component_name, entity_index, e
+                                            );
+                                        }
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            };
+                            if !inserted {
+                                log::warn!(
+                                    "[lua] Unknown component type '{}' — not in registry",
+                                    component_name
+                                );
+                            }
+                        }
+                        let _ = lua.remove_registry_value(data_key);
+                    }
+                }
+                ScriptCommand::RemoveComponent {
+                    entity_index,
+                    component_name,
+                } => {
+                    if let Some(&entity) = entity_map.get(&entity_index) {
+                        let found = if let Some(resource) = world.resource::<ScriptingResource>() {
+                            resource.component_registry.get(&component_name).is_some()
+                        } else {
+                            false
+                        };
+                        if found {
+                            if let Some(resource) = world.resource::<ScriptingResource>() {
+                                if let Some(desc) = resource.component_registry.get(&component_name) {
+                                    (desc.remove)(world, entity);
+                                }
+                            }
+                        } else {
+                            log::warn!(
+                                "[lua] Cannot remove unknown component '{}'",
+                                component_name
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -572,6 +681,7 @@ impl System for ScriptingSystem {
         }
         Self::write_transforms(lua, world);
         Self::write_input(lua, world);
+        Self::write_component_data(lua, world);
 
         // ── Phase 2: Run Lua scripts ──────────────────────────────
         {

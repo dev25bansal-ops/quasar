@@ -15,11 +15,13 @@ mod component;
 mod entity;
 pub mod parallel;
 mod query;
+pub mod relation;
+pub mod sparse_set;
 mod system;
 mod world;
 
 pub use archetype::{
-    Archetype, ArchetypeColumnTyped, ArchetypeGraph, ArchetypeId, ArchetypeSignature,
+    Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature,
 };
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
@@ -33,6 +35,8 @@ pub use query::{
     QueryIter, QueryState, WorldQuery,
 };
 pub use system::{Schedule, System, SystemStage};
+pub use sparse_set::{SparseSet, SparseSetStorage};
+pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
 pub use world::{EntityBuilder, World};
 
 /// Marker type for change-detection queries.

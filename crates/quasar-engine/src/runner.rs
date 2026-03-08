@@ -28,8 +28,9 @@ use quasar_core::scene::SceneGraph;
 use quasar_core::App;
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
-    Camera, DirectionalLight, LightData, LightsUniform, MeshCache, MeshShape, OrbitController,
-    PointLight, RenderConfig, Renderer, ShadowCamera, ShadowMap,
+    AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData, LightsUniform, MeshCache,
+    MeshShape, OrbitController, PointLight, RenderConfig, Renderer, ShadowCamera, ShadowMap,
+    SpotLight, TonemappingPass,
 };
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -50,6 +51,10 @@ struct RunnerState {
     shadow_camera: ShadowCamera,
     /// Frame profiler for CPU timing
     profiler: Profiler,
+    /// HDR render target for linear-space rendering
+    hdr_target: HdrRenderTarget,
+    /// Tonemapping pass (HDR → LDR)
+    tonemap_pass: TonemappingPass,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -124,6 +129,9 @@ impl ApplicationHandler for QuasarRunner {
         let shadow_map = ShadowMap::new(&renderer.device, 2048);
         let shadow_camera = ShadowCamera::default();
 
+        let hdr_target = HdrRenderTarget::new(&renderer.device, size.width, size.height);
+        let tonemap_pass = TonemappingPass::new(&renderer.device, renderer.config.format);
+
         self.state = Some(RunnerState {
             window,
             renderer,
@@ -136,6 +144,8 @@ impl ApplicationHandler for QuasarRunner {
             shadow_map,
             shadow_camera,
             profiler: Profiler::new(),
+            hdr_target,
+            tonemap_pass,
         });
 
         log::info!(
@@ -242,6 +252,7 @@ impl ApplicationHandler for QuasarRunner {
                 if new_size.width > 0 && new_size.height > 0 {
                     state.renderer.resize(new_size.width, new_size.height);
                     state.camera.set_aspect(new_size.width, new_size.height);
+                    state.hdr_target.resize(&state.renderer.device, new_size.width, new_size.height);
                 }
             }
 
@@ -354,6 +365,14 @@ impl ApplicationHandler for QuasarRunner {
                         }
                     }
 
+                    // Collect spot lights
+                    for (_, light) in self.app.world.query::<SpotLight>() {
+                        if light_count < quasar_render::MAX_LIGHTS {
+                            lights.lights[light_count] = LightData::from_spot(light);
+                            light_count += 1;
+                        }
+                    }
+
                     // If no lights in scene, use default directional light
                     if light_count == 0 {
                         lights.lights[0] = LightData::from_directional(&state.default_light);
@@ -361,6 +380,18 @@ impl ApplicationHandler for QuasarRunner {
                     }
 
                     lights.count = light_count as u32;
+
+                    // Collect ambient light
+                    for (_, ambient) in self.app.world.query::<AmbientLight>() {
+                        lights.ambient = [
+                            ambient.color.x,
+                            ambient.color.y,
+                            ambient.color.z,
+                            ambient.intensity,
+                        ];
+                        break;
+                    }
+
                     lights
                 };
 
@@ -375,7 +406,7 @@ impl ApplicationHandler for QuasarRunner {
                 state.profiler.begin_scope("shadow_pass");
                 {
                     // Position the shadow camera along the primary directional light
-                    let dir = lights_uniform.lights[0].position_or_direction;
+                    let dir = lights_uniform.lights[0].direction;
                     let light_dir =
                         glam::Vec3::new(dir[0], dir[1], dir[2]).normalize_or_zero();
                     if light_dir != glam::Vec3::ZERO {
@@ -428,13 +459,55 @@ impl ApplicationHandler for QuasarRunner {
                             })
                             .collect();
 
-                        // 3D pass (using batched rendering for better performance).
+                        // Apply TAA jitter to camera projection (if TAA enabled).
+                        if let Some(taa) = state.renderer.taa_pass.as_ref() {
+                            state.camera.jitter = taa.jitter_offset();
+                        }
+
+                        // 3D pass — render to HDR target (linear space, no tonemapping).
                         state.renderer.render_3d_pass_batched(
                             &state.camera,
                             &objects,
-                            &view,
+                            &state.hdr_target.view,
                             &mut encoder,
                         );
+
+                        // Clear jitter so non-rendering code sees unjittered projection.
+                        state.camera.jitter = (0.0, 0.0);
+
+                        // SSGI compute — trace indirect diffuse from colour + depth.
+                        if let Some(ssgi) = state.renderer.ssgi_pass.as_mut() {
+                            let inv_proj = state.camera.projection_matrix().inverse();
+                            ssgi.dispatch(
+                                &state.renderer.device,
+                                &state.renderer.queue,
+                                &mut encoder,
+                                &state.hdr_target.view,
+                                &state.renderer.depth_view,
+                                &inv_proj,
+                            );
+                        }
+
+                        // TAA resolve → tonemapping.  Without TAA the HDR target
+                        // feeds directly into the tonemapping pass.
+                        let tonemap_source: &wgpu::TextureView;
+                        if let Some(taa) = state.renderer.taa_pass.as_mut() {
+                            let mv_view = state.renderer.motion_vector_view.as_ref().unwrap();
+                            taa.resolve(
+                                &state.renderer.device,
+                                &state.renderer.queue,
+                                &mut encoder,
+                                &state.hdr_target.view,
+                                mv_view,
+                            );
+                            tonemap_source = taa.output_view();
+                        } else {
+                            tonemap_source = &state.hdr_target.view;
+                        }
+
+                        // Tonemapping pass — HDR → LDR on the surface view.
+                        state.tonemap_pass.update_texture(&state.renderer.device, tonemap_source);
+                        state.tonemap_pass.execute(&mut encoder, &view);
 
                         // egui pass (editor overlay).
                         let egui_commands = if state.editor.enabled {
@@ -464,8 +537,8 @@ impl ApplicationHandler for QuasarRunner {
 
                             state.editor_renderer.begin_frame(&state.window);
 
-                            // Build inspector data for the selected entity.
-                            let mut inspector_data = state.editor.selected_entity.and_then(|e| {
+                            // Build inspector data for the first selected entity.
+                            let mut inspector_data = state.editor.selected_entities.first().and_then(|&e| {
                                 let transform = self.app.world.get::<quasar_math::Transform>(e)?;
                                 let material = self
                                     .app
@@ -495,20 +568,21 @@ impl ApplicationHandler for QuasarRunner {
                                 match action {
                                     quasar_editor::InspectorAction::Despawn(entity) => {
                                         self.app.world.despawn(entity);
-                                        state.editor.selected_entity = None;
+                                        state.editor.selected_entities.retain(|e| *e != entity);
                                         inspector_data = None;
                                     }
                                     quasar_editor::InspectorAction::Spawn => {
                                         let entity = self.app.world.spawn();
-                                        state.editor.selected_entity = Some(entity);
+                                        state.editor.selected_entities.clear();
+                                        state.editor.selected_entities.push(entity);
                                     }
                                 }
                             }
 
                             // Write back edited values.
                             if inspector_changed {
-                                if let (Some(entity), Some(data)) =
-                                    (state.editor.selected_entity, &inspector_data)
+                                if let (Some(&entity), Some(data)) =
+                                    (state.editor.selected_entities.first(), &inspector_data)
                                 {
                                     if let Some(t) =
                                         self.app.world.get_mut::<quasar_math::Transform>(entity)

@@ -4,7 +4,57 @@
 //! to be added without rewriting the main loop.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
+
+/// Errors that can occur during render graph compilation/validation.
+#[derive(Debug)]
+pub enum RenderGraphError {
+    /// The graph contains a dependency cycle involving these passes.
+    CycleDetected(Vec<PassId>),
+    /// A pass reads from an attachment that no earlier pass writes.
+    MissingWriter {
+        reader: PassId,
+        attachment: AttachmentId,
+    },
+    /// A pass reads an attachment written by another pass without an explicit
+    /// dependency (direct or transitive).
+    MissingDependency {
+        reader: PassId,
+        writer: PassId,
+        attachment: AttachmentId,
+    },
+}
+
+impl fmt::Display for RenderGraphError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CycleDetected(ids) => {
+                write!(f, "render graph cycle involving passes: {:?}", ids)
+            }
+            Self::MissingWriter { reader, attachment } => {
+                write!(
+                    f,
+                    "pass {:?} reads attachment {:?} but no pass writes it",
+                    reader, attachment
+                )
+            }
+            Self::MissingDependency {
+                reader,
+                writer,
+                attachment,
+            } => {
+                write!(
+                    f,
+                    "pass {:?} reads attachment {:?} written by {:?} but has no dependency on it",
+                    reader, attachment, writer
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for RenderGraphError {}
 
 /// Unique identifier for a render pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,6 +97,8 @@ pub struct PassNode {
     pub pass: Box<dyn RenderPass>,
     /// Passes that must complete before this pass runs.
     pub dependencies: Vec<PassId>,
+    /// Input attachments this pass reads from.
+    pub inputs: Vec<AttachmentId>,
     /// Output attachments this pass writes to.
     pub outputs: Vec<AttachmentId>,
 }
@@ -87,6 +139,7 @@ impl RenderGraph {
             PassNode {
                 pass,
                 dependencies: Vec::new(),
+                inputs: Vec::new(),
                 outputs: Vec::new(),
             },
         );
@@ -110,6 +163,14 @@ impl RenderGraph {
         self
     }
 
+    /// Add an input attachment to a pass (declares a read dependency).
+    pub fn add_input(&mut self, pass: PassId, attachment: AttachmentId) -> &mut Self {
+        if let Some(node) = self.nodes.get_mut(&pass) {
+            node.inputs.push(attachment);
+        }
+        self
+    }
+
     /// Add an attachment to the graph.
     pub fn add_attachment(&mut self, id: AttachmentId, attachment: Attachment) -> &mut Self {
         self.attachments.insert(id, attachment);
@@ -118,8 +179,8 @@ impl RenderGraph {
 
     /// Create GPU resources for all attachments, aliasing textures of
     /// non-overlapping passes that share the same format and size.
-    pub fn create_resources(&mut self, device: &wgpu::Device) {
-        let order = self.topological_sort();
+    pub fn create_resources(&mut self, device: &wgpu::Device) -> Result<(), RenderGraphError> {
+        let order = self.compile()?;
         let lifetimes = self.compute_attachment_lifetimes(&order);
 
         // Group attachments by (format, size) for aliasing candidates.
@@ -161,6 +222,7 @@ impl RenderGraph {
                 pool.push(Pool { texture, last_used: last });
             }
         }
+        Ok(())
     }
 
     fn alloc_texture(device: &wgpu::Device, attachment: &Attachment) -> (wgpu::Texture, wgpu::TextureView) {
@@ -193,7 +255,7 @@ impl RenderGraph {
                 Some(&i) => i,
                 None => continue,
             };
-            for &att in &node.outputs {
+            for &att in node.outputs.iter().chain(node.inputs.iter()) {
                 let entry = lifetimes.entry(att).or_insert((idx, idx));
                 entry.0 = entry.0.min(idx);
                 entry.1 = entry.1.max(idx);
@@ -208,26 +270,118 @@ impl RenderGraph {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         context: &RenderContext,
-    ) -> wgpu::CommandBuffer {
+    ) -> Result<wgpu::CommandBuffer, RenderGraphError> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Graph Encoder"),
         });
 
-        let order = self.topological_sort();
+        let order = self.compile()?;
         for pass_id in &order {
             if let Some(node) = self.nodes.get(pass_id) {
                 node.pass.execute(device, queue, &mut encoder, context);
             }
         }
 
-        encoder.finish()
+        Ok(encoder.finish())
+    }
+
+    /// Compile the graph: topological sort + validation.
+    /// Returns the sorted pass order or the first error found.
+    pub fn compile(&self) -> Result<Vec<PassId>, RenderGraphError> {
+        let sorted = self.topological_sort()?;
+        self.validate_resources(&sorted)?;
+        Ok(sorted)
+    }
+
+    /// Validate that every input attachment has a writer that precedes the reader
+    /// in the topological order, and that an explicit dependency path exists.
+    fn validate_resources(&self, order: &[PassId]) -> Result<(), RenderGraphError> {
+        let pass_index: HashMap<PassId, usize> =
+            order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+
+        // Build writer map: attachment -> list of (PassId, topo_index) that write it.
+        let mut writers: HashMap<AttachmentId, Vec<(PassId, usize)>> = HashMap::new();
+        for (&pid, node) in &self.nodes {
+            if let Some(&idx) = pass_index.get(&pid) {
+                for &att in &node.outputs {
+                    writers.entry(att).or_default().push((pid, idx));
+                }
+            }
+        }
+
+        // Precompute transitive dependencies for each pass (via BFS).
+        let transitive = self.transitive_dependencies();
+
+        for (&reader_id, node) in &self.nodes {
+            let reader_idx = match pass_index.get(&reader_id) {
+                Some(&i) => i,
+                None => continue,
+            };
+            for &att in &node.inputs {
+                let att_writers = match writers.get(&att) {
+                    Some(w) => w,
+                    None => {
+                        return Err(RenderGraphError::MissingWriter {
+                            reader: reader_id,
+                            attachment: att,
+                        });
+                    }
+                };
+                // Find the latest writer that precedes this reader in topo order.
+                let preceding_writer = att_writers
+                    .iter()
+                    .filter(|(_, idx)| *idx < reader_idx)
+                    .max_by_key(|(_, idx)| *idx);
+                match preceding_writer {
+                    None => {
+                        return Err(RenderGraphError::MissingWriter {
+                            reader: reader_id,
+                            attachment: att,
+                        });
+                    }
+                    Some(&(writer_id, _)) => {
+                        // Check transitive dependency.
+                        let deps = transitive.get(&reader_id);
+                        let has_dep = deps.map_or(false, |d| d.contains(&writer_id));
+                        if !has_dep {
+                            return Err(RenderGraphError::MissingDependency {
+                                reader: reader_id,
+                                writer: writer_id,
+                                attachment: att,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Compute the set of all transitive dependencies for each pass.
+    fn transitive_dependencies(&self) -> HashMap<PassId, std::collections::HashSet<PassId>> {
+        let mut result: HashMap<PassId, std::collections::HashSet<PassId>> = HashMap::new();
+        for &id in &self.pass_order {
+            let mut visited = std::collections::HashSet::new();
+            let mut stack: Vec<PassId> = Vec::new();
+            if let Some(node) = self.nodes.get(&id) {
+                stack.extend_from_slice(&node.dependencies);
+            }
+            while let Some(dep) = stack.pop() {
+                if visited.insert(dep) {
+                    if let Some(node) = self.nodes.get(&dep) {
+                        stack.extend_from_slice(&node.dependencies);
+                    }
+                }
+            }
+            result.insert(id, visited);
+        }
+        result
     }
 
     /// Compute a topological ordering of passes respecting dependencies.
     ///
-    /// Falls back to the declared order for passes that have no
-    /// dependency relationships.
-    pub fn topological_sort(&self) -> Vec<PassId> {
+    /// Returns an error if the graph contains a cycle.
+    pub fn topological_sort(&self) -> Result<Vec<PassId>, RenderGraphError> {
         // Kahn's algorithm
         let mut in_degree: HashMap<PassId, usize> = HashMap::new();
         for &id in &self.pass_order {
@@ -264,16 +418,18 @@ impl RenderGraph {
             }
         }
 
-        // If there's a cycle or we missed nodes, append remaining in declared order
+        // If there's a cycle, not all nodes were visited.
         if sorted.len() < self.pass_order.len() {
-            for id in &self.pass_order {
-                if !sorted.contains(id) {
-                    sorted.push(*id);
-                }
-            }
+            let cycle_members: Vec<PassId> = self
+                .pass_order
+                .iter()
+                .copied()
+                .filter(|id| !sorted.contains(id))
+                .collect();
+            return Err(RenderGraphError::CycleDetected(cycle_members));
         }
 
-        sorted
+        Ok(sorted)
     }
 
     /// Reorder the pass execution list. Passes not in `new_order` are
@@ -314,7 +470,8 @@ pub mod pass_ids {
     pub const OPAQUE: PassId = PassId(1);
     pub const TRANSPARENT: PassId = PassId(2);
     pub const POST_PROCESS: PassId = PassId(3);
-    pub const UI: PassId = PassId(4);
+    pub const TONEMAP: PassId = PassId(4);
+    pub const UI: PassId = PassId(5);
 }
 
 /// Common attachment IDs.
@@ -350,5 +507,115 @@ mod tests {
             },
         );
         assert!(graph.get_attachment(attachment_ids::HDR_COLOR).is_some());
+    }
+
+    // Dummy pass for testing.
+    struct DummyPass(&'static str);
+    impl RenderPass for DummyPass {
+        fn name(&self) -> &str { self.0 }
+        fn execute(
+            &self, _: &wgpu::Device, _: &wgpu::Queue,
+            _: &mut wgpu::CommandEncoder, _: &RenderContext,
+        ) {}
+    }
+
+    #[test]
+    fn topological_sort_respects_dependencies() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let b = PassId(1);
+        let c = PassId(2);
+        graph.add_pass(a, Box::new(DummyPass("a")));
+        graph.add_pass(b, Box::new(DummyPass("b")));
+        graph.add_pass(c, Box::new(DummyPass("c")));
+        graph.add_dependency(c, a);
+        graph.add_dependency(c, b);
+
+        let order = graph.topological_sort().unwrap();
+        let pos = |id: PassId| order.iter().position(|&x| x == id).unwrap();
+        assert!(pos(a) < pos(c));
+        assert!(pos(b) < pos(c));
+    }
+
+    #[test]
+    fn cycle_detected() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let b = PassId(1);
+        graph.add_pass(a, Box::new(DummyPass("a")));
+        graph.add_pass(b, Box::new(DummyPass("b")));
+        graph.add_dependency(a, b);
+        graph.add_dependency(b, a);
+
+        let result = graph.topological_sort();
+        assert!(matches!(result, Err(RenderGraphError::CycleDetected(_))));
+    }
+
+    #[test]
+    fn validate_missing_writer() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let att = AttachmentId(99);
+        graph.add_pass(a, Box::new(DummyPass("a")));
+        graph.add_input(a, att);
+
+        let result = graph.compile();
+        assert!(matches!(
+            result,
+            Err(RenderGraphError::MissingWriter { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_missing_dependency() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let b = PassId(1);
+        let att = AttachmentId(10);
+        graph.add_pass(a, Box::new(DummyPass("writer")));
+        graph.add_pass(b, Box::new(DummyPass("reader")));
+        graph.add_output(a, att);
+        graph.add_input(b, att);
+        // b reads att written by a, but no explicit dependency.
+
+        let result = graph.compile();
+        assert!(matches!(
+            result,
+            Err(RenderGraphError::MissingDependency { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_ok_with_dependency() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let b = PassId(1);
+        let att = AttachmentId(10);
+        graph.add_pass(a, Box::new(DummyPass("writer")));
+        graph.add_pass(b, Box::new(DummyPass("reader")));
+        graph.add_output(a, att);
+        graph.add_input(b, att);
+        graph.add_dependency(b, a);
+
+        assert!(graph.compile().is_ok());
+    }
+
+    #[test]
+    fn validate_transitive_dependency_ok() {
+        let mut graph = RenderGraph::new();
+        let a = PassId(0);
+        let b = PassId(1);
+        let c = PassId(2);
+        let att = AttachmentId(10);
+        graph.add_pass(a, Box::new(DummyPass("writer")));
+        graph.add_pass(b, Box::new(DummyPass("middle")));
+        graph.add_pass(c, Box::new(DummyPass("reader")));
+        graph.add_output(a, att);
+        graph.add_input(c, att);
+        // c depends on b, b depends on a → transitive dep on a.
+        graph.add_dependency(b, a);
+        graph.add_dependency(c, b);
+
+        assert!(graph.compile().is_ok());
     }
 }

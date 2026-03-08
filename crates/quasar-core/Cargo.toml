@@ -34,3 +34,10 @@ optional = true
 [dependencies.tracy-client]
 version = "0.17"
 optional = true
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "ecs_bench"
+harness = false

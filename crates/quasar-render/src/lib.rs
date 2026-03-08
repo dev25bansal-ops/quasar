@@ -69,8 +69,13 @@ pub mod lightmap;
 #[cfg(feature = "shader-graph")]
 pub mod shader_graph;
 pub mod gpu_memory;
+pub mod hot_reload;
+pub mod pipeline_cache;
 #[cfg(feature = "ssr")]
 pub mod ssr;
+pub mod streaming;
+pub mod taa;
+pub mod ssgi;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
@@ -83,10 +88,12 @@ pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData
 pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
-pub use render_graph::{RenderGraph, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids};
+pub use render_graph::{RenderGraph, RenderGraphError, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids};
 pub use render_plugin::{RenderPlugin, RenderSyncOutput, MeshDrawItem, MeshDrawList, resource_keys};
 pub use renderer::{RenderConfig, Renderer};
 pub use shadow::{ShadowMap, ShadowCamera};
+pub use taa::TaaPass;
+pub use ssgi::{SsgiPass, SsgiSettings};
 pub use texture::Texture;
 pub use vertex::Vertex;
 pub use asset_loader::{AssetLoader, GpuTexture, GpuMesh, GpuMaterial, RenderAssetManager};
@@ -94,6 +101,9 @@ pub use environment::{EnvironmentMap, EnvironmentMapLoader, IBL_MIP_LEVELS};
 pub use cascade_shadow::{CascadeShadowMap, Cascade, CASCADE_COUNT, SHADOW_MAP_SIZE};
 pub use skinning::{Skeleton, Bone, SkinnedVertex, BoneMatricesBuffer, SkinnedMesh, MAX_BONES, MAX_BONE_INFLUENCES};
 pub use lod::{LodGroup, LodLevel, LodSystem, LodCrossFade, LOD_CROSSFADE_BAND, LOD_CROSSFADE_WGSL, BAYER_4X4, bayer_threshold};
+pub use pipeline_cache::PipelineCache;
+pub use hot_reload::HotReloadSystem;
+pub use streaming::{StreamingPool, StreamingRequest, StreamingPriority};
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
 
 #[cfg(feature = "post-process")]

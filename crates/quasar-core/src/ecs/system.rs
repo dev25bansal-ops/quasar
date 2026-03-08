@@ -130,7 +130,9 @@ impl Schedule {
         for (_stage, systems) in &mut self.stages {
             let order = topo_sort_systems(systems, &self.before);
             for idx in order {
+                world.begin_system(systems[idx].name());
                 systems[idx].run(world);
+                world.end_system(systems[idx].name());
             }
             // Flush Commands between stages
             if let Some(mut cmds) = world.remove_resource::<Commands>() {
@@ -165,7 +167,9 @@ impl Schedule {
                 while remaining >= step {
                     let order = topo_sort_systems(systems, &self.before);
                     for idx in &order {
+                        world.begin_system(systems[*idx].name());
                         systems[*idx].run(world);
+                        world.end_system(systems[*idx].name());
                     }
                     if let Some(mut cmds) = world.remove_resource::<Commands>() {
                         cmds.apply(world);
@@ -181,7 +185,9 @@ impl Schedule {
             } else {
                 let order = topo_sort_systems(systems, &self.before);
                 for idx in order {
+                    world.begin_system(systems[idx].name());
                     systems[idx].run(world);
+                    world.end_system(systems[idx].name());
                 }
                 if let Some(mut cmds) = world.remove_resource::<Commands>() {
                     cmds.apply(world);

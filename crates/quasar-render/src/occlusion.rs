@@ -304,10 +304,11 @@ fn cull_main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     if visible {
         visibility[idx] = 1u;
-        // Atomically append to the indirect draw list.
-        let slot = atomicAdd(&draw_count, 1u);
-        // Placeholder: write object index into indirect buffer.
-        indirect[slot] = idx;
+        // Set instance_count = 1 in the pre-populated DrawIndexedIndirect args.
+        // Layout: [index_count, instance_count, first_index, base_vertex, first_instance]
+        // instance_count is at offset idx * 5 + 1.
+        indirect[idx * 5u + 1u] = 1u;
+        atomicAdd(&draw_count, 1u);
     } else {
         visibility[idx] = 0u;
     }
@@ -596,9 +597,22 @@ impl IndirectDrawManager {
         queue.write_buffer(&cull.draw_count_buffer, 0, &[0u8; 4]);
     }
 
-    /// Record GPU-driven draw calls using `multi_draw_indexed_indirect`.
-    /// Falls back to individual `draw_indexed_indirect` calls.
+    /// Record GPU-driven draw calls.  Each object has a pre-populated
+    /// `DrawIndexedIndirect` in the buffer; the cull shader sets
+    /// `instance_count = 0` for culled objects, so the GPU skips them.
     pub fn execute_indirect<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        cull: &'a GpuCullPass,
+    ) {
+        let count = self.draws.len() as u32;
+        // Use multi_draw_indexed_indirect when supported (avoids per-draw CPU overhead).
+        render_pass.multi_draw_indexed_indirect(&cull.indirect_buffer, 0, count);
+    }
+
+    /// Fallback: issue individual `draw_indexed_indirect` calls when
+    /// `multi_draw_indirect` is unavailable.
+    pub fn execute_indirect_fallback<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         cull: &'a GpuCullPass,

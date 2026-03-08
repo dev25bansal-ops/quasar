@@ -32,13 +32,16 @@ struct LightData {
 };
 
 struct LightsUniform {
-    lights: array<LightData, 16>,
+    lights: array<LightData, 256>,
     count: u32,
     _pad: vec3<u32>,
+    ambient: vec4<f32>,
 };
 
 struct ShadowUniform {
     light_view_proj: mat4x4<f32>,
+    // x = light_size (world-space), y = shadow_map_size (texels), z/w = unused
+    pcss_params: vec4<f32>,
 };
 
 struct IblUniform {
@@ -51,7 +54,7 @@ struct IblUniform {
 
 @group(1) @binding(0) var<uniform> material: MaterialUniform;
 
-@group(2) @binding(0) var<uniform> lights: LightsUniform;
+@group(2) @binding(0) var<storage, read> lights: LightsUniform;
 
 @group(3) @binding(0) var t_albedo: texture_2d<f32>;
 @group(3) @binding(1) var s_albedo: sampler;
@@ -63,6 +66,7 @@ struct IblUniform {
 @group(4) @binding(0) var<uniform> shadow_uniform: ShadowUniform;
 @group(4) @binding(1) var t_shadow: texture_depth_2d;
 @group(4) @binding(2) var s_shadow: sampler_comparison;
+@group(4) @binding(3) var s_shadow_depth: sampler;
 
 @group(5) @binding(0) var<uniform> ibl: IblUniform;
 @group(5) @binding(1) var t_irradiance: texture_cube<f32>;
@@ -154,13 +158,45 @@ fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     }
 
     let shadow_depth = ndc.z;
-    var shadow = 0.0;
-    let offset = 1.0 / 1024.0;
+    let light_size = shadow_uniform.pcss_params.x;
+    let map_size = shadow_uniform.pcss_params.y;
+    let texel = 1.0 / map_size;
 
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>(-offset, -offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>( offset, -offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>(-offset,  offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>( offset,  offset), shadow_depth);
+    let poisson = array<vec2<f32>, 4>(
+        vec2<f32>(-0.94201624, -0.39906216),
+        vec2<f32>( 0.94558609, -0.76890725),
+        vec2<f32>(-0.09418410, -0.92938870),
+        vec2<f32>( 0.34495938,  0.29387760),
+    );
+
+    // --- Step 1: Blocker search ---
+    let search_radius = light_size * texel * 8.0;
+    var blocker_sum = 0.0;
+    var blocker_count = 0.0;
+    for (var i = 0u; i < 4u; i++) {
+        let sample_uv = uv + poisson[i] * search_radius;
+        let d = textureSampleLevel(t_shadow, s_shadow_depth, sample_uv, 0.0);
+        if (d < shadow_depth) {
+            blocker_sum += d;
+            blocker_count += 1.0;
+        }
+    }
+
+    if (blocker_count < 0.5) {
+        return 1.0;
+    }
+
+    // --- Step 2: Penumbra estimation ---
+    let avg_blocker = blocker_sum / blocker_count;
+    let penumbra = light_size * (shadow_depth - avg_blocker) / avg_blocker;
+    let filter_radius = max(penumbra * texel * 4.0, texel);
+
+    // --- Step 3: PCF with variable filter ---
+    var shadow = 0.0;
+    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[0] * filter_radius, shadow_depth);
+    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[1] * filter_radius, shadow_depth);
+    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[2] * filter_radius, shadow_depth);
+    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[3] * filter_radius, shadow_depth);
 
     return shadow / 4.0;
 }

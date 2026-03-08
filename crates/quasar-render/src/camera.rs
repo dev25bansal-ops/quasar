@@ -18,6 +18,8 @@ pub struct Camera {
     pub near: f32,
     /// Far clipping plane distance.
     pub far: f32,
+    /// Sub-pixel jitter in NDC applied to the projection matrix (TAA).
+    pub jitter: (f32, f32),
 }
 
 impl Camera {
@@ -31,6 +33,7 @@ impl Camera {
             aspect: width as f32 / height.max(1) as f32,
             near: 0.1,
             far: 1000.0,
+            jitter: (0.0, 0.0),
         }
     }
 
@@ -39,9 +42,13 @@ impl Camera {
         Mat4::look_at_rh(self.position, self.target, self.up)
     }
 
-    /// Projection matrix (camera → clip space).
+    /// Projection matrix (camera → clip space), including TAA jitter if set.
     pub fn projection_matrix(&self) -> Mat4 {
-        Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far)
+        let mut proj = Mat4::perspective_rh(self.fov_y, self.aspect, self.near, self.far);
+        // Apply sub-pixel jitter to the projection translation (col 2, rows 0 & 1).
+        proj.col_mut(2).x += self.jitter.0;
+        proj.col_mut(2).y += self.jitter.1;
+        proj
     }
 
     /// Combined view-projection matrix.

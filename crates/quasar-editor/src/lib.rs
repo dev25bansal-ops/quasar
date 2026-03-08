@@ -11,11 +11,15 @@ pub mod editor_state;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
+pub mod logic_graph;
+pub mod logic_graph_editor;
 pub mod reflect;
 pub mod renderer;
 pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
+pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
+pub use logic_graph_editor::LogicGraphEditorState;
 pub use shader_graph_editor::ShaderGraphEditor;
 pub use editor_state::{
     EditCommand, EditorMode, EditorState, SetMaterialCommand, SetPositionCommand,
@@ -305,8 +309,8 @@ pub struct Editor {
     pub show_shader_graph: bool,
     /// Shader graph editor state.
     pub shader_graph_editor: ShaderGraphEditor,
-    /// The currently selected entity (if any).
-    pub selected_entity: Option<Entity>,
+    /// The currently selected entities (multi-select with Ctrl+Click).
+    pub selected_entities: Vec<Entity>,
     /// Console log buffer.
     pub console: console::ConsoleLog,
     /// Editor state for Play/Pause/Stop and undo/redo
@@ -329,6 +333,16 @@ pub struct Editor {
     pub show_timeline: bool,
     /// Animation timeline panel state.
     pub timeline_panel: TimelinePanel,
+    /// Show the logic graph editor panel.
+    pub show_logic_graph: bool,
+    /// Logic graph editor state.
+    pub logic_graph_editor_state: LogicGraphEditorState,
+    /// Active logic graph being edited.
+    pub logic_graph: LogicGraph,
+    /// Show the GPU profiler panel.
+    pub show_gpu_profiler: bool,
+    /// GPU pass timing data (name, duration_ms) from the last frame.
+    pub gpu_pass_timings: Vec<(String, f64)>,
 }
 
 impl Editor {
@@ -342,7 +356,7 @@ impl Editor {
             show_asset_browser: false,
             show_shader_graph: false,
             shader_graph_editor: ShaderGraphEditor::new(),
-            selected_entity: None,
+            selected_entities: Vec::new(),
             console: console::ConsoleLog::new(),
             state: EditorState::new(),
             asset_browser: AssetBrowser::new("assets"),
@@ -354,6 +368,11 @@ impl Editor {
             pending_lua_eval: None,
             show_timeline: false,
             timeline_panel: TimelinePanel::new(),
+            show_logic_graph: false,
+            logic_graph_editor_state: LogicGraphEditorState::new(),
+            logic_graph: LogicGraph::new("untitled"),
+            show_gpu_profiler: false,
+            gpu_pass_timings: Vec::new(),
         }
     }
 
@@ -395,6 +414,8 @@ impl Editor {
                 ui.toggle_value(&mut self.show_shader_graph, "🔗 Shader Graph");
                 ui.toggle_value(&mut self.show_lua_repl, "🖥 Lua REPL");
                 ui.toggle_value(&mut self.show_timeline, "🎬 Timeline");
+                ui.toggle_value(&mut self.show_logic_graph, "📜 Logic Graph");
+                ui.toggle_value(&mut self.show_gpu_profiler, "⏱ GPU Profiler");
                 ui.separator();
 
                 // Play/Pause/Stop buttons
@@ -455,7 +476,7 @@ impl Editor {
 
         // Hierarchy panel
         if self.show_hierarchy {
-            hierarchy::hierarchy_panel(ctx, &mut self.selected_entity, entity_names);
+            hierarchy::hierarchy_panel(ctx, &mut self.selected_entities, entity_names);
         }
 
         // Inspector panel
@@ -463,7 +484,7 @@ impl Editor {
         let mut inspector_action = None;
         if self.show_inspector {
             let (changed, action) =
-                inspector::inspector_panel(ctx, self.selected_entity, inspector_data);
+                inspector::inspector_panel(ctx, &self.selected_entities, inspector_data);
             inspector_changed = changed;
             inspector_action = action;
         }
@@ -585,6 +606,66 @@ impl Editor {
         if self.show_timeline {
             self.timeline_panel.ui(ctx);
         }
+
+        // Logic graph editor panel
+        if self.show_logic_graph {
+            self.logic_graph_editor_state.panel(ctx, &mut self.logic_graph);
+        }
+
+        // GPU profiler panel
+        if self.show_gpu_profiler {
+            egui::Window::new("⏱ GPU Profiler")
+                .default_size([350.0, 250.0])
+                .resizable(true)
+                .show(ctx, |ui| {
+                    if self.gpu_pass_timings.is_empty() {
+                        ui.label("No GPU timing data. Wire wgpu timestamp queries to Editor::gpu_pass_timings.");
+                    } else {
+                        let total_ms: f64 = self.gpu_pass_timings.iter().map(|(_, ms)| ms).sum();
+                        ui.label(format!("GPU frame: {:.2} ms", total_ms));
+                        ui.separator();
+                        let max_ms = self.gpu_pass_timings.iter().map(|(_, ms)| *ms).fold(0.0f64, f64::max);
+                        for (name, ms) in &self.gpu_pass_timings {
+                            let frac = if max_ms > 0.0 { *ms / max_ms } else { 0.0 };
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(120.0, 14.0),
+                                    egui::Sense::hover(),
+                                );
+                                let painter = ui.painter_at(rect);
+                                painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(30, 30, 35));
+                                let bar_rect = egui::Rect::from_min_size(
+                                    rect.min,
+                                    egui::vec2(120.0 * frac as f32, 14.0),
+                                );
+                                let color = if *ms > 4.0 {
+                                    egui::Color32::from_rgb(255, 80, 80)
+                                } else if *ms > 2.0 {
+                                    egui::Color32::YELLOW
+                                } else {
+                                    egui::Color32::from_rgb(80, 200, 80)
+                                };
+                                painter.rect_filled(bar_rect, 2.0, color);
+                                ui.label(format!("{}: {:.2} ms", name, ms));
+                            });
+                        }
+                    }
+                });
+        }
+
+        // Keyboard shortcuts
+        ctx.input(|i| {
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::Z) {
+                if i.modifiers.shift {
+                    editor_action = Some(EditorAction::Redo);
+                } else {
+                    editor_action = Some(EditorAction::Undo);
+                }
+            }
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::Y) {
+                editor_action = Some(EditorAction::Redo);
+            }
+        });
 
         (inspector_changed, inspector_action, editor_action)
     }

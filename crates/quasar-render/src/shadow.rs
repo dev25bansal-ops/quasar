@@ -8,10 +8,23 @@ use crate::camera::CameraUniform;
 use crate::mesh::Mesh;
 use crate::vertex::Vertex;
 
+/// GPU-side shadow uniform matching the WGSL `ShadowUniform` struct.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ShadowUniform {
+    pub light_view_proj: [[f32; 4]; 4],
+    /// (light_size, shadow_map_size, 0.0, 0.0)
+    pub pcss_params: [f32; 4],
+}
+
 pub struct ShadowMap {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
+    /// Non-comparison sampler for raw depth reads (used by PCSS blocker search).
+    pub depth_sampler: wgpu::Sampler,
+    /// Shadow uniform buffer (light_view_proj + pcss_params).
+    pub shadow_uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub pipeline: wgpu::RenderPipeline,
@@ -19,6 +32,8 @@ pub struct ShadowMap {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub size: u32,
+    /// Light size in world units — controls PCSS penumbra width.
+    pub light_size: f32,
 }
 
 impl ShadowMap {
@@ -52,11 +67,42 @@ impl ShadowMap {
             ..Default::default()
         });
 
+        // Non-comparison sampler for raw depth reads (PCSS blocker search).
+        let depth_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Shadow Depth Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let shadow_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Shadow Uniform Buffer"),
+            size: std::mem::size_of::<ShadowUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Shadow Bind Group Layout"),
             entries: &[
+                // 0: shadow uniform (light_view_proj + pcss_params)
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 1: shadow depth texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         multisampled: false,
@@ -65,10 +111,18 @@ impl ShadowMap {
                     },
                     count: None,
                 },
+                // 2: comparison sampler (PCF)
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                    count: None,
+                },
+                // 3: non-comparison sampler (PCSS blocker search)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
             ],
@@ -80,11 +134,19 @@ impl ShadowMap {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: shadow_uniform_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&depth_sampler),
                 },
             ],
         });
@@ -207,6 +269,8 @@ impl ShadowMap {
             texture,
             view,
             sampler,
+            depth_sampler,
+            shadow_uniform_buffer,
             bind_group,
             bind_group_layout,
             pipeline,
@@ -214,6 +278,7 @@ impl ShadowMap {
             camera_bind_group,
             camera_bind_group_layout,
             size,
+            light_size: 1.0,
         }
     }
 
@@ -241,6 +306,17 @@ impl ShadowMap {
             }
         }
         queue.write_buffer(&self.camera_buffer, 0, &data);
+
+        // Write PCSS shadow uniform (light_view_proj + pcss_params).
+        let shadow_uniform = ShadowUniform {
+            light_view_proj: light_view_proj.to_cols_array_2d(),
+            pcss_params: [self.light_size, self.size as f32, 0.0, 0.0],
+        };
+        queue.write_buffer(
+            &self.shadow_uniform_buffer,
+            0,
+            bytemuck::bytes_of(&shadow_uniform),
+        );
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

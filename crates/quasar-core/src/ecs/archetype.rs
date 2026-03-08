@@ -6,8 +6,8 @@
 //! - Enabling SIMD/parallel processing within archetypes
 
 use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use super::Entity;
 
@@ -65,7 +65,6 @@ pub struct Archetype {
     pub signature: ArchetypeSignature,
     pub entities: Vec<Entity>,
     pub entity_to_row: HashMap<u32, usize>,
-    pub components: HashMap<TypeId, Box<dyn ArchetypeColumn>>,
     // ── SoA parallel arrays for cache-friendly iteration ──
     /// Column type ids in index order.
     pub column_types: Vec<TypeId>,
@@ -82,7 +81,6 @@ impl Archetype {
             signature,
             entities: Vec::new(),
             entity_to_row: HashMap::new(),
-            components: HashMap::new(),
             column_types: Vec::new(),
             columns: Vec::new(),
             type_to_column: HashMap::new(),
@@ -106,10 +104,6 @@ impl Archetype {
             self.entity_to_row.insert(last_entity.index(), row);
         }
 
-        // Swap-remove from ArchetypeColumn storage
-        for column in self.components.values_mut() {
-            column.swap_remove(row, last_row);
-        }
         // Swap-remove from SoA columns
         for col in &mut self.columns {
             if col.len() > row {
@@ -144,15 +138,12 @@ impl Archetype {
             }
         }
 
-        // 2. Clean up entities list, entity_to_row, and ArchetypeColumn storage
+        // 2. Clean up entities list and entity_to_row
         self.entity_to_row.remove(&entity.index());
         if row != last_row {
             let last_entity = self.entities[last_row];
             self.entities[row] = last_entity;
             self.entity_to_row.insert(last_entity.index(), row);
-            for column in self.components.values_mut() {
-                column.swap_remove(row, last_row);
-            }
         }
         self.entities.pop();
 
@@ -160,32 +151,41 @@ impl Archetype {
     }
 
     pub fn get_column<T: 'static + Send + Sync>(&self) -> Option<&Vec<T>> {
-        let column = self.components.get(&TypeId::of::<T>())?;
-        column
+        let &idx = self.type_to_column.get(&TypeId::of::<T>())?;
+        self.columns[idx]
             .as_any()
-            .downcast_ref::<ArchetypeColumnTyped<T>>()
+            .downcast_ref::<TypedColumn<T>>()
             .map(|c| &c.data)
     }
 
     pub fn get_column_mut<T: 'static + Send + Sync>(&mut self) -> Option<&mut Vec<T>> {
-        let column = self.components.get_mut(&TypeId::of::<T>())?;
-        column
+        let &idx = self.type_to_column.get(&TypeId::of::<T>())?;
+        self.columns[idx]
             .as_any_mut()
-            .downcast_mut::<ArchetypeColumnTyped<T>>()
+            .downcast_mut::<TypedColumn<T>>()
             .map(|c| &mut c.data)
     }
 
     pub fn ensure_column<T: 'static + Send + Sync>(&mut self) {
         let type_id = TypeId::of::<T>();
-        if !self.components.contains_key(&type_id) {
-            self.components
-                .insert(type_id, Box::new(ArchetypeColumnTyped::<T>::new()));
-        }
-        // Also ensure the SoA column exists.
         if !self.type_to_column.contains_key(&type_id) {
             let idx = self.columns.len();
             self.column_types.push(type_id);
             self.columns.push(Box::new(TypedColumn::<T>::new()));
+            self.type_to_column.insert(type_id, idx);
+        }
+    }
+
+    /// Ensure a column exists for the given type, creating it from a factory if needed.
+    pub fn ensure_column_from_factory(
+        &mut self,
+        type_id: TypeId,
+        factory: fn() -> Box<dyn ColumnStorage>,
+    ) {
+        if !self.type_to_column.contains_key(&type_id) {
+            let idx = self.columns.len();
+            self.column_types.push(type_id);
+            self.columns.push(factory());
             self.type_to_column.insert(type_id, idx);
         }
     }
@@ -223,91 +223,6 @@ impl Archetype {
 
     pub fn has_component(&self, type_id: &TypeId) -> bool {
         self.signature.contains(type_id)
-    }
-}
-
-pub trait ArchetypeColumn: Send + Sync {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn swap_remove(&mut self, row: usize, last_row: usize);
-    fn len(&self) -> usize;
-    fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>);
-    /// Swap-remove entry at `row` and return it as a boxed Any.
-    fn swap_remove_and_return(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>>;
-    /// Create an empty column of the same concrete type.
-    fn create_empty_of_same_type(&self) -> Box<dyn ArchetypeColumn>;
-}
-
-pub struct ArchetypeColumnTyped<T: Send + Sync> {
-    pub data: Vec<T>,
-}
-
-impl<T: 'static + Send + Sync> ArchetypeColumnTyped<T> {
-    pub fn new() -> Self {
-        Self { data: Vec::new() }
-    }
-
-    pub fn push(&mut self, value: T) {
-        self.data.push(value);
-    }
-
-    pub fn get(&self, row: usize) -> Option<&T> {
-        self.data.get(row)
-    }
-
-    pub fn get_mut(&mut self, row: usize) -> Option<&mut T> {
-        self.data.get_mut(row)
-    }
-
-    pub fn as_typed<U: 'static + Send + Sync>(&self) -> Option<&Vec<U>> {
-        (self as &dyn Any)
-            .downcast_ref::<ArchetypeColumnTyped<U>>()
-            .map(|c| &c.data)
-    }
-
-    pub fn as_typed_mut<U: 'static + Send + Sync>(&mut self) -> Option<&mut Vec<U>> {
-        (self as &mut dyn Any)
-            .downcast_mut::<ArchetypeColumnTyped<U>>()
-            .map(|c| &mut c.data)
-    }
-}
-
-impl<T: 'static + Send + Sync> ArchetypeColumn for ArchetypeColumnTyped<T> {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn swap_remove(&mut self, row: usize, last_row: usize) {
-        if row < self.data.len() && last_row < self.data.len() {
-            self.data.swap(row, last_row);
-            self.data.pop();
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>) {
-        if let Ok(typed) = value.downcast::<T>() {
-            self.data.push(*typed);
-        }
-    }
-
-    fn swap_remove_and_return(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>> {
-        if row >= self.data.len() {
-            return None;
-        }
-        let val = self.data.swap_remove(row);
-        Some(Box::new(val))
-    }
-
-    fn create_empty_of_same_type(&self) -> Box<dyn ArchetypeColumn> {
-        Box::new(ArchetypeColumnTyped::<T>::new())
     }
 }
 
@@ -442,10 +357,13 @@ impl<T0: 'static, T1: 'static, T2: 'static, T3: 'static> ComponentSet for (T0, T
 }
 
 pub struct ArchetypeGraph {
-    archetypes: HashMap<ArchetypeId, Arc<Archetype>>,
+    archetypes: HashMap<ArchetypeId, Archetype>,
     signature_to_id: HashMap<ArchetypeSignature, ArchetypeId>,
     _edges: HashMap<ArchetypeId, HashMap<TypeId, ArchetypeId>>,
     next_id: ArchetypeId,
+    /// Cached results: sorted query type IDs → matching archetype IDs.
+    /// Invalidated when new archetypes are created.
+    query_cache: RefCell<HashMap<Vec<TypeId>, Vec<ArchetypeId>>>,
 }
 
 impl ArchetypeGraph {
@@ -455,41 +373,73 @@ impl ArchetypeGraph {
             signature_to_id: HashMap::new(),
             _edges: HashMap::new(),
             next_id: 0,
+            query_cache: RefCell::new(HashMap::new()),
         }
     }
 
-    pub fn get_or_create(&mut self, signature: &ArchetypeSignature) -> Arc<Archetype> {
-        if let Some(id) = self.signature_to_id.get(signature) {
-            return self.archetypes.get(id).unwrap().clone();
+    pub fn get_or_create(&mut self, signature: &ArchetypeSignature) -> ArchetypeId {
+        if let Some(&id) = self.signature_to_id.get(signature) {
+            return id;
         }
 
         let id = self.next_id;
         self.next_id += 1;
 
-        let archetype = Arc::new(Archetype::new(id, signature.clone()));
-        self.archetypes.insert(id, archetype.clone());
+        let archetype = Archetype::new(id, signature.clone());
+        self.archetypes.insert(id, archetype);
         self.signature_to_id.insert(signature.clone(), id);
-        archetype
+        // New archetype may match existing cached queries — invalidate all.
+        self.query_cache.borrow_mut().clear();
+        id
     }
 
-    pub fn get(&self, id: ArchetypeId) -> Option<&Arc<Archetype>> {
+    pub fn get(&self, id: ArchetypeId) -> Option<&Archetype> {
         self.archetypes.get(&id)
     }
 
     /// Get a mutable reference to an archetype by ID.
-    /// Returns `None` if the archetype doesn't exist or if Arc has other references.
     pub fn get_mut(&mut self, id: ArchetypeId) -> Option<&mut Archetype> {
-        self.archetypes.get_mut(&id).and_then(|arc| Arc::get_mut(arc))
+        self.archetypes.get_mut(&id)
     }
 
-    pub fn find_with_components(&self, type_ids: &[TypeId]) -> Vec<&Arc<Archetype>> {
-        self.archetypes
+    pub fn find_with_components(&self, type_ids: &[TypeId]) -> Vec<&Archetype> {
+        let mut key = type_ids.to_vec();
+        key.sort();
+        let cache = self.query_cache.borrow();
+        if let Some(ids) = cache.get(&key) {
+            return ids.iter().filter_map(|id| self.archetypes.get(id)).collect();
+        }
+        drop(cache);
+
+        let result: Vec<&Archetype> = self.archetypes
             .values()
             .filter(|a| a.signature.contains_all(type_ids))
-            .collect()
+            .collect();
+        let cached_ids: Vec<ArchetypeId> = result.iter().map(|a| a.id).collect();
+        self.query_cache.borrow_mut().insert(key, cached_ids);
+        result
     }
 
-    pub fn all_archetypes(&self) -> impl Iterator<Item = &Arc<Archetype>> {
+    /// Find archetype IDs that contain all the given component types.
+    pub fn find_with_components_ids(&self, type_ids: &[TypeId]) -> Vec<ArchetypeId> {
+        let mut key = type_ids.to_vec();
+        key.sort();
+        let cache = self.query_cache.borrow();
+        if let Some(ids) = cache.get(&key) {
+            return ids.clone();
+        }
+        drop(cache);
+
+        let result: Vec<ArchetypeId> = self.archetypes
+            .iter()
+            .filter(|(_, a)| a.signature.contains_all(type_ids))
+            .map(|(&id, _)| id)
+            .collect();
+        self.query_cache.borrow_mut().insert(key, result.clone());
+        result
+    }
+
+    pub fn all_archetypes(&self) -> impl Iterator<Item = &Archetype> {
         self.archetypes.values()
     }
 }
@@ -517,8 +467,8 @@ mod tests {
     }
 
     #[test]
-    fn archetype_column_operations() {
-        let mut column = ArchetypeColumnTyped::<i32>::new();
+    fn typed_column_operations() {
+        let mut column = TypedColumn::<i32>::new();
         column.push(1);
         column.push(2);
         column.push(3);
@@ -526,7 +476,7 @@ mod tests {
         assert_eq!(column.data.len(), 3);
         assert_eq!(*column.get(1).unwrap(), 2);
 
-        column.swap_remove(0, 2);
+        column.swap_remove_entry(0);
         assert_eq!(column.data.len(), 2);
     }
 
@@ -536,7 +486,7 @@ mod tests {
         let mut sig = ArchetypeSignature::new();
         sig.add(TypeId::of::<u32>());
 
-        let arch = graph.get_or_create(&sig);
-        assert_eq!(arch.id, 0);
+        let arch_id = graph.get_or_create(&sig);
+        assert_eq!(arch_id, 0);
     }
 }

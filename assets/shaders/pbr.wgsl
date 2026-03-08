@@ -31,13 +31,16 @@ struct LightData {
 };
 
 struct LightsUniform {
-    lights: array<LightData, 16>,
+    lights: array<LightData, 256>,
     count: u32,
     _pad: vec3<u32>,
+    ambient: vec4<f32>,
 };
 
 struct ShadowUniform {
     light_view_proj: mat4x4<f32>,
+    // x = light_size (world-space), y = shadow_map_size (texels), z/w = unused
+    pcss_params: vec4<f32>,
 };
 
 struct IblUniform {
@@ -49,7 +52,7 @@ struct IblUniform {
 
 @group(1) @binding(0) var<uniform> material: MaterialUniform;
 
-@group(2) @binding(0) var<uniform> lights: LightsUniform;
+@group(2) @binding(0) var<storage, read> lights: LightsUniform;
 
 @group(3) @binding(0) var t_albedo: texture_2d<f32>;
 @group(3) @binding(1) var s_albedo: sampler;
@@ -61,6 +64,7 @@ struct IblUniform {
 @group(4) @binding(0) var<uniform> shadow_uniform: ShadowUniform;
 @group(4) @binding(1) var t_shadow: texture_depth_2d;
 @group(4) @binding(2) var s_shadow: sampler_comparison;
+@group(4) @binding(3) var s_shadow_depth: sampler;
 
 @group(5) @binding(0) var<uniform> ibl: IblUniform;
 @group(5) @binding(1) var t_irradiance: texture_cube<f32>;
@@ -137,15 +141,64 @@ fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     }
 
     let shadow_depth = ndc.z;
+    let light_size = shadow_uniform.pcss_params.x;
+    let map_size = shadow_uniform.pcss_params.y;
+    let texel = 1.0 / map_size;
+
+    // 16-sample Poisson disk shared by blocker search and PCF.
+    let poisson = array<vec2<f32>, 16>(
+        vec2<f32>(-0.94201624, -0.39906216),
+        vec2<f32>( 0.94558609, -0.76890725),
+        vec2<f32>(-0.09418410, -0.92938870),
+        vec2<f32>( 0.34495938,  0.29387760),
+        vec2<f32>(-0.91588581,  0.45771432),
+        vec2<f32>(-0.81544232, -0.87912464),
+        vec2<f32>(-0.38277543,  0.27676845),
+        vec2<f32>( 0.97484398,  0.75648379),
+        vec2<f32>( 0.44323325, -0.97511554),
+        vec2<f32>( 0.53742981, -0.47373420),
+        vec2<f32>(-0.26496911, -0.41893023),
+        vec2<f32>( 0.79197514,  0.19090188),
+        vec2<f32>(-0.24188840,  0.99706507),
+        vec2<f32>(-0.81409955,  0.91437590),
+        vec2<f32>( 0.19984126,  0.78641367),
+        vec2<f32>( 0.14383161, -0.14100790),
+    );
+
+    // --- Step 1: Blocker search (read raw depth with non-comparison sampler) ---
+    let search_radius = light_size * texel * 8.0;
+    var blocker_sum = 0.0;
+    var blocker_count = 0.0;
+    for (var i = 0u; i < 16u; i++) {
+        let sample_uv = uv + poisson[i] * search_radius;
+        let d = textureSampleLevel(t_shadow, s_shadow_depth, sample_uv, 0.0);
+        if (d < shadow_depth) {
+            blocker_sum += d;
+            blocker_count += 1.0;
+        }
+    }
+
+    // No blockers → fully lit.
+    if (blocker_count < 0.5) {
+        return 1.0;
+    }
+
+    // --- Step 2: Penumbra estimation ---
+    let avg_blocker = blocker_sum / blocker_count;
+    let penumbra = light_size * (shadow_depth - avg_blocker) / avg_blocker;
+    let filter_radius = max(penumbra * texel * 4.0, texel);
+
+    // --- Step 3: PCF with variable-size filter ---
     var shadow = 0.0;
-    let offset = 1.0 / 1024.0;
+    for (var i = 0u; i < 16u; i++) {
+        shadow += textureSampleCompare(
+            t_shadow, s_shadow,
+            uv + poisson[i] * filter_radius,
+            shadow_depth,
+        );
+    }
 
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>(-offset, -offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>( offset, -offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>(-offset,  offset), shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + vec2<f32>( offset,  offset), shadow_depth);
-
-    return shadow / 4.0;
+    return shadow / 16.0;
 }
 
 fn get_normal_from_map(uv: vec2<f32>, N: vec3<f32>, T: vec3<f32>, B: vec3<f32>) -> vec3<f32> {
@@ -326,9 +379,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = ambient + Lo;
 
     color = color + albedo * material.emissive;
-
-    color = color / (color + vec3<f32>(1.0));
-    color = pow(color, vec3<f32>(1.0 / 2.2));
 
     return vec4<f32>(color, tex_color.a * material.base_color.a * in.color.a);
 }

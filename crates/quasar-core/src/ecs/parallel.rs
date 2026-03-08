@@ -254,7 +254,9 @@ impl SystemGraph {
         for group in groups {
             if group.len() == 1 {
                 let idx = group[0];
+                world.begin_system(self.nodes[idx].system.name());
                 self.nodes[idx].system.run(world);
+                world.end_system(self.nodes[idx].system.name());
             } else {
                 // Systems in the same topological group have been verified to have
                 // no conflicting component/resource access, so they can run in parallel.
@@ -262,6 +264,9 @@ impl SystemGraph {
                 // We encode pointers as usize so closures satisfy Send + Sync.
                 let world_addr = world as *mut World as usize;
                 let nodes_ptr = self.nodes.as_mut_ptr();
+
+                // Save indices for post-scope tick update (group is consumed by into_iter).
+                let group_indices = group.clone();
 
                 let work: Vec<(usize, usize)> = group
                     .into_iter()
@@ -287,13 +292,25 @@ impl SystemGraph {
                         });
                     }
                 });
+
+                // After the parallel group completes, record last-run ticks.
+                // NOTE: active_system_last_run is NOT set during parallel
+                // execution (data-race on a single field), so FilterChanged
+                // inside parallel systems conservatively treats everything as
+                // changed.  The tick bookkeeping here ensures subsequent
+                // sequential runs see correct last-run values.
+                for idx in group_indices {
+                    world.end_system(self.nodes[idx].system.name());
+                }
             }
         }
     }
 
     pub fn run_sequential(&mut self, world: &mut World) {
         for node in &mut self.nodes {
+            world.begin_system(node.system.name());
             node.system.run(world);
+            world.end_system(node.system.name());
         }
     }
 }
@@ -303,16 +320,19 @@ pub struct ParallelSchedule {
     parallel_enabled: bool,
 }
 
+const STAGE_ORDER: [SystemStage; 6] = [
+    SystemStage::PreUpdate,
+    SystemStage::FixedUpdate,
+    SystemStage::Update,
+    SystemStage::PostUpdate,
+    SystemStage::PreRender,
+    SystemStage::Render,
+];
+
 impl ParallelSchedule {
     pub fn new() -> Self {
         let mut stages = HashMap::new();
-        for stage in [
-            SystemStage::PreUpdate,
-            SystemStage::Update,
-            SystemStage::PostUpdate,
-            SystemStage::PreRender,
-            SystemStage::Render,
-        ] {
+        for stage in STAGE_ORDER {
             stages.insert(stage, SystemGraph::new(stage));
         }
 
@@ -332,25 +352,55 @@ impl ParallelSchedule {
         self.parallel_enabled = enabled;
     }
 
-    pub fn run(&mut self, world: &mut World) {
-        for stage in [
-            SystemStage::PreUpdate,
-            SystemStage::Update,
-            SystemStage::PostUpdate,
-            SystemStage::PreRender,
-            SystemStage::Render,
-        ] {
-            if let Some(graph) = self.stages.get_mut(&stage) {
-                if self.parallel_enabled {
-                    graph.run_parallel(world);
-                } else {
-                    graph.run_sequential(world);
-                }
+    fn run_graph(&mut self, stage: SystemStage, world: &mut World) {
+        if let Some(graph) = self.stages.get_mut(&stage) {
+            if self.parallel_enabled {
+                graph.run_parallel(world);
+            } else {
+                graph.run_sequential(world);
             }
-            // Flush deferred commands between stages
-            if let Some(mut cmds) = world.remove_resource::<Commands>() {
-                cmds.apply(world);
-                world.insert_resource(cmds);
+        }
+        if let Some(mut cmds) = world.remove_resource::<Commands>() {
+            cmds.apply(world);
+            world.insert_resource(cmds);
+        }
+    }
+
+    pub fn run(&mut self, world: &mut World) {
+        for stage in STAGE_ORDER {
+            self.run_graph(stage, world);
+        }
+    }
+
+    /// Run with fixed-update substep loop for the `FixedUpdate` stage.
+    pub fn run_with_fixed_update(&mut self, world: &mut World, frame_delta: f32) {
+        use crate::time::FixedUpdateAccumulator;
+
+        for stage in STAGE_ORDER {
+            if stage == SystemStage::FixedUpdate {
+                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                    fua.acc += frame_delta;
+                    (fua.acc, fua.step)
+                } else {
+                    self.run_graph(stage, world);
+                    continue;
+                };
+
+                if step <= 0.0 {
+                    continue;
+                }
+
+                let mut remaining = acc;
+                while remaining >= step {
+                    self.run_graph(stage, world);
+                    remaining -= step;
+                }
+
+                if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                    fua.acc = remaining;
+                }
+            } else {
+                self.run_graph(stage, world);
             }
         }
     }
