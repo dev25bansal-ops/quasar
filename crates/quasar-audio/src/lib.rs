@@ -171,15 +171,25 @@ impl AudioSystem {
 
     /// Load and immediately play a sound file. Returns a [`SoundId`] handle.
     pub fn play<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        self.play_on_bus(path, &AudioBus::Sfx)
+    }
+
+    /// Play a sound routed through the specified audio bus.
+    pub fn play_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let data = if let Some(cached) = self.sound_cache.get(&path_str) {
+        let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
             cached.clone()
         } else {
             let loaded = StaticSoundData::from_file(&path_str).ok()?;
             self.sound_cache.insert(path_str.clone(), loaded.clone());
             loaded
         };
+        if let Some(ref mut bus_mgr) = self.bus_manager {
+            if let Some(track) = bus_mgr.track_for(bus, manager) {
+                data.settings.output_destination = kira::OutputDestination::Track(track.id());
+            }
+        }
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
@@ -189,6 +199,11 @@ impl AudioSystem {
 
     /// Play a sound in a loop.
     pub fn play_looped<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        self.play_looped_on_bus(path, &AudioBus::Sfx)
+    }
+
+    /// Play a looped sound routed through the specified audio bus.
+    pub fn play_looped_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
@@ -199,6 +214,11 @@ impl AudioSystem {
             loaded
         };
         data.settings.loop_region = Some(kira::sound::Region::default());
+        if let Some(ref mut bus_mgr) = self.bus_manager {
+            if let Some(track) = bus_mgr.track_for(bus, manager) {
+                data.settings.output_destination = kira::OutputDestination::Track(track.id());
+            }
+        }
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
@@ -209,9 +229,19 @@ impl AudioSystem {
     /// Play a sound via streaming — reads from disk incrementally instead of
     /// loading the entire file into memory. Ideal for music and long audio.
     pub fn play_streaming<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        self.play_streaming_on_bus(path, &AudioBus::Sfx)
+    }
+
+    /// Stream a sound routed through the specified audio bus.
+    pub fn play_streaming_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let data = StreamingSoundData::from_file(&path_str).ok()?;
+        let mut data = StreamingSoundData::from_file(&path_str).ok()?;
+        if let Some(ref mut bus_mgr) = self.bus_manager {
+            if let Some(track) = bus_mgr.track_for(bus, manager) {
+                data.settings.output_destination = kira::OutputDestination::Track(track.id());
+            }
+        }
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;
@@ -221,10 +251,20 @@ impl AudioSystem {
 
     /// Play a streaming sound in a loop.
     pub fn play_streaming_looped<P: AsRef<Path>>(&mut self, path: P) -> Option<SoundId> {
+        self.play_streaming_looped_on_bus(path, &AudioBus::Sfx)
+    }
+
+    /// Play a looped streaming sound routed through the specified audio bus.
+    pub fn play_streaming_looped_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut data = StreamingSoundData::from_file(&path_str).ok()?;
         data.settings.loop_region = Some(kira::sound::Region::default());
+        if let Some(ref mut bus_mgr) = self.bus_manager {
+            if let Some(track) = bus_mgr.track_for(bus, manager) {
+                data.settings.output_destination = kira::OutputDestination::Track(track.id());
+            }
+        }
         let handle = manager.play(data).ok()?;
         let id = self.next_id;
         self.next_id += 1;

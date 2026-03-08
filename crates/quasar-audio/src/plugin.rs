@@ -34,11 +34,11 @@ impl System for AudioPlaybackSystem {
 
     fn run(&mut self, world: &mut World) {
         // Pass 1: collect audio sources that need to start playing.
-        let sources_to_play: Vec<(u32, String, bool)> = world
+        let sources_to_play: Vec<(u32, String, bool, AudioBus)> = world
             .query::<AudioSource>()
             .into_iter()
             .filter(|(_, src)| src.playing_id.is_none())
-            .map(|(e, src)| (e.index(), src.path.clone(), src.looping))
+            .map(|(e, src)| (e.index(), src.path.clone(), src.looping, src.bus.clone()))
             .collect();
 
         if sources_to_play.is_empty() {
@@ -49,11 +49,11 @@ impl System for AudioPlaybackSystem {
         let mut play_results: Vec<(u32, Option<crate::SoundId>)> = Vec::new();
 
         if let Some(resource) = world.resource_mut::<AudioResource>() {
-            for (entity_idx, path, looping) in &sources_to_play {
+            for (entity_idx, path, looping, bus) in &sources_to_play {
                 let id = if *looping {
-                    resource.audio.play_looped(path)
+                    resource.audio.play_looped_on_bus(path, bus)
                 } else {
-                    resource.audio.play(path)
+                    resource.audio.play_on_bus(path, bus)
                 };
                 play_results.push((*entity_idx, id));
             }

@@ -35,12 +35,30 @@ use quasar_core::ecs::Entity;
 // Animation Timeline Panel
 // ---------------------------------------------------------------------------
 
+/// Interpolation mode for a keyframe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterpolationMode {
+    Step,
+    Linear,
+    CubicSpline,
+}
+
+impl Default for InterpolationMode {
+    fn default() -> Self {
+        Self::Linear
+    }
+}
+
 /// A channel (track lane) in the timeline.
 #[derive(Debug, Clone)]
 pub struct TimelineChannel {
     pub name: String,
     /// Keyframe times in seconds.
     pub keyframe_times: Vec<f32>,
+    /// Keyframe values (parallel to `keyframe_times`).
+    pub keyframe_values: Vec<f32>,
+    /// Interpolation mode per keyframe (parallel to `keyframe_times`).
+    pub interp_modes: Vec<InterpolationMode>,
 }
 
 /// State for the animation timeline editor panel.
@@ -55,6 +73,10 @@ pub struct TimelinePanel {
     pub channels: Vec<TimelineChannel>,
     /// Horizontal scroll offset in seconds.
     pub scroll_offset: f32,
+    /// Keyframe currently being dragged: (channel_idx, keyframe_idx).
+    pub dragging_keyframe: Option<(usize, usize)>,
+    /// Keyframe currently selected for value editing: (channel_idx, keyframe_idx).
+    pub selected_keyframe: Option<(usize, usize)>,
 }
 
 impl TimelinePanel {
@@ -65,6 +87,8 @@ impl TimelinePanel {
             playing: false,
             channels: Vec::new(),
             scroll_offset: 0.0,
+            dragging_keyframe: None,
+            selected_keyframe: None,
         }
     }
 
@@ -127,7 +151,7 @@ impl TimelinePanel {
                                 egui::Stroke::new(0.5, egui::Color32::from_gray(60)),
                             );
                             // Keyframe diamonds
-                            for &t in &ch.keyframe_times {
+                            for (kf_idx, &t) in ch.keyframe_times.iter().enumerate() {
                                 let x = rect.min.x + 80.0 + (t - self.scroll_offset) * self.zoom;
                                 if x >= rect.min.x && x <= rect.max.x {
                                     let center = egui::pos2(x, y + track_height * 0.5);
@@ -138,9 +162,15 @@ impl TimelinePanel {
                                         egui::pos2(center.x, center.y + size),
                                         egui::pos2(center.x - size, center.y),
                                     ];
+                                    let is_selected = self.selected_keyframe == Some((i, kf_idx));
+                                    let color = if is_selected {
+                                        egui::Color32::from_rgb(255, 100, 100)
+                                    } else {
+                                        egui::Color32::from_rgb(255, 200, 50)
+                                    };
                                     painter.add(egui::Shape::convex_polygon(
                                         diamond,
-                                        egui::Color32::from_rgb(255, 200, 50),
+                                        color,
                                         egui::Stroke::NONE,
                                     ));
                                 }
@@ -163,8 +193,81 @@ impl TimelinePanel {
                                 self.scrub_time = new_time.max(0.0);
                             }
                         }
+
+                        // Keyframe drag-to-retime and click-to-select.
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            if response.drag_started() {
+                                // Find the closest keyframe diamond within 6px.
+                                let mut best: Option<(usize, usize, f32)> = None;
+                                for (ch_idx, ch) in self.channels.iter().enumerate() {
+                                    let cy = rect.min.y + ch_idx as f32 * track_height + track_height * 0.5;
+                                    for (kf_idx, &t) in ch.keyframe_times.iter().enumerate() {
+                                        let kx = rect.min.x + 80.0 + (t - self.scroll_offset) * self.zoom;
+                                        let dist = ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
+                                        if dist < 6.0 {
+                                            if best.is_none() || dist < best.unwrap().2 {
+                                                best = Some((ch_idx, kf_idx, dist));
+                                            }
+                                        }
+                                    }
+                                }
+                                if let Some((ch, kf, _)) = best {
+                                    self.dragging_keyframe = Some((ch, kf));
+                                    self.selected_keyframe = Some((ch, kf));
+                                }
+                            }
+                            // While dragging, retime the keyframe.
+                            if response.dragged() {
+                                if let Some((ch_idx, kf_idx)) = self.dragging_keyframe {
+                                    let new_time = self.scroll_offset + (pos.x - rect.min.x - 80.0) / self.zoom;
+                                    if ch_idx < self.channels.len() && kf_idx < self.channels[ch_idx].keyframe_times.len() {
+                                        self.channels[ch_idx].keyframe_times[kf_idx] = new_time.max(0.0);
+                                    }
+                                }
+                            }
+                        }
+                        if response.drag_stopped() {
+                            self.dragging_keyframe = None;
+                        }
                     });
             });
+
+        // Selected keyframe value editor popup.
+        if let Some((ch_idx, kf_idx)) = self.selected_keyframe {
+            if ch_idx < self.channels.len() && kf_idx < self.channels[ch_idx].keyframe_times.len() {
+                let t = self.channels[ch_idx].keyframe_times[kf_idx];
+                let popup_x = 80.0 + (t - self.scroll_offset) * self.zoom;
+                egui::Area::new(egui::Id::new("kf_editor"))
+                    .fixed_pos(egui::pos2(popup_x.max(100.0), ctx.screen_rect().max.y - 220.0))
+                    .show(ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.label(format!("Keyframe [{}/{}]", ch_idx, kf_idx));
+                            ui.horizontal(|ui| {
+                                ui.label("Value:");
+                                ui.add(egui::DragValue::new(&mut self.channels[ch_idx].keyframe_values[kf_idx]).speed(0.01));
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Interp:");
+                                let mode = &mut self.channels[ch_idx].interp_modes[kf_idx];
+                                if ui.selectable_label(*mode == InterpolationMode::Step, "\u{25AA} Step").clicked() {
+                                    *mode = InterpolationMode::Step;
+                                }
+                                if ui.selectable_label(*mode == InterpolationMode::Linear, "\u{2500} Linear").clicked() {
+                                    *mode = InterpolationMode::Linear;
+                                }
+                                if ui.selectable_label(*mode == InterpolationMode::CubicSpline, "\u{25C6} Cubic").clicked() {
+                                    *mode = InterpolationMode::CubicSpline;
+                                }
+                            });
+                            if ui.button("Close").clicked() {
+                                self.selected_keyframe = None;
+                            }
+                        });
+                    });
+            } else {
+                self.selected_keyframe = None;
+            }
+        }
     }
 }
 

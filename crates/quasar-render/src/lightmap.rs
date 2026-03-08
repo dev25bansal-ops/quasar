@@ -492,6 +492,185 @@ pub struct GpuBakeUniform {
     pub light_color_ao_str: [f32; 4],
 }
 
+/// GPU-side BVH node for the path-trace compute shader.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct GpuBvhNode {
+    pub aabb_min: [f32; 4],
+    pub aabb_max: [f32; 4],
+    pub left_or_start: u32,
+    pub right_or_count: u32,
+    pub is_leaf: u32,
+    pub _pad: u32,
+}
+
+/// Build a linear BVH (LBVH) from GPU triangles using Morton codes.
+///
+/// 1. Compute centroid AABB.
+/// 2. Assign 30-bit Morton codes per triangle.
+/// 3. Sort by Morton code.
+/// 4. Recursively split at the highest differing bit.
+/// 5. Return `Vec<GpuBvhNode>` (2N-1 nodes for N triangles).
+pub fn build_lbvh(tris: &[GpuBakerTriangle]) -> Vec<GpuBvhNode> {
+    if tris.is_empty() {
+        return vec![GpuBvhNode {
+            aabb_min: [0.0; 4],
+            aabb_max: [0.0; 4],
+            left_or_start: 0,
+            right_or_count: 0,
+            is_leaf: 1,
+            _pad: 0,
+        }];
+    }
+
+    // Centroid per triangle.
+    let centroids: Vec<[f32; 3]> = tris
+        .iter()
+        .map(|t| {
+            [
+                (t.p0[0] + t.p1[0] + t.p2[0]) / 3.0,
+                (t.p0[1] + t.p1[1] + t.p2[1]) / 3.0,
+                (t.p0[2] + t.p1[2] + t.p2[2]) / 3.0,
+            ]
+        })
+        .collect();
+
+    // Global centroid AABB.
+    let mut cmin = [f32::MAX; 3];
+    let mut cmax = [f32::MIN; 3];
+    for c in &centroids {
+        for i in 0..3 {
+            cmin[i] = cmin[i].min(c[i]);
+            cmax[i] = cmax[i].max(c[i]);
+        }
+    }
+    let extent = [
+        (cmax[0] - cmin[0]).max(1e-6),
+        (cmax[1] - cmin[1]).max(1e-6),
+        (cmax[2] - cmin[2]).max(1e-6),
+    ];
+
+    // Morton code helpers.
+    fn expand_bits(mut v: u32) -> u32 {
+        v = (v | (v << 16)) & 0x030000FF;
+        v = (v | (v << 8)) & 0x0300F00F;
+        v = (v | (v << 4)) & 0x030C30C3;
+        v = (v | (v << 2)) & 0x09249249;
+        v
+    }
+    fn morton3d(x: f32, y: f32, z: f32) -> u32 {
+        let xi = (x.clamp(0.0, 1.0) * 1023.0) as u32;
+        let yi = (y.clamp(0.0, 1.0) * 1023.0) as u32;
+        let zi = (z.clamp(0.0, 1.0) * 1023.0) as u32;
+        expand_bits(xi) | (expand_bits(yi) << 1) | (expand_bits(zi) << 2)
+    }
+
+    // Index + morton code pairs, sorted by morton code.
+    let mut sorted: Vec<(usize, u32)> = centroids
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let nx = (c[0] - cmin[0]) / extent[0];
+            let ny = (c[1] - cmin[1]) / extent[1];
+            let nz = (c[2] - cmin[2]) / extent[2];
+            (i, morton3d(nx, ny, nz))
+        })
+        .collect();
+    sorted.sort_unstable_by_key(|&(_, m)| m);
+
+    // Compute the AABB of a triangle.
+    fn tri_aabb(t: &GpuBakerTriangle) -> ([f32; 3], [f32; 3]) {
+        let mut lo = [t.p0[0], t.p0[1], t.p0[2]];
+        let mut hi = lo;
+        for p in [&t.p1, &t.p2] {
+            for i in 0..3 {
+                lo[i] = lo[i].min(p[i]);
+                hi[i] = hi[i].max(p[i]);
+            }
+        }
+        (lo, hi)
+    }
+
+    fn union_aabb(a: ([f32; 3], [f32; 3]), b: ([f32; 3], [f32; 3])) -> ([f32; 3], [f32; 3]) {
+        (
+            [a.0[0].min(b.0[0]), a.0[1].min(b.0[1]), a.0[2].min(b.0[2])],
+            [a.1[0].max(b.1[0]), a.1[1].max(b.1[1]), a.1[2].max(b.1[2])],
+        )
+    }
+
+    let mut nodes: Vec<GpuBvhNode> = Vec::with_capacity(tris.len() * 2);
+
+    fn build_recursive(
+        sorted: &[(usize, u32)],
+        tris: &[GpuBakerTriangle],
+        nodes: &mut Vec<GpuBvhNode>,
+        tri_aabb: fn(&GpuBakerTriangle) -> ([f32; 3], [f32; 3]),
+        union_aabb: fn(([f32; 3], [f32; 3]), ([f32; 3], [f32; 3])) -> ([f32; 3], [f32; 3]),
+    ) -> usize {
+        let node_idx = nodes.len();
+        // Placeholder — will be filled in.
+        nodes.push(GpuBvhNode {
+            aabb_min: [0.0; 4],
+            aabb_max: [0.0; 4],
+            left_or_start: 0,
+            right_or_count: 0,
+            is_leaf: 0,
+            _pad: 0,
+        });
+
+        // Compute union AABB of all triangles in this range.
+        let mut aabb = tri_aabb(&tris[sorted[0].0]);
+        for &(ti, _) in &sorted[1..] {
+            aabb = union_aabb(aabb, tri_aabb(&tris[ti]));
+        }
+
+        if sorted.len() <= 4 {
+            // Leaf node.
+            nodes[node_idx] = GpuBvhNode {
+                aabb_min: [aabb.0[0], aabb.0[1], aabb.0[2], 0.0],
+                aabb_max: [aabb.1[0], aabb.1[1], aabb.1[2], 0.0],
+                left_or_start: sorted[0].0 as u32,
+                right_or_count: sorted.len() as u32,
+                is_leaf: 1,
+                _pad: 0,
+            };
+            return node_idx;
+        }
+
+        // Find highest differing bit between first and last Morton code.
+        let first_code = sorted.first().unwrap().1;
+        let last_code = sorted.last().unwrap().1;
+        let diff = first_code ^ last_code;
+
+        let split = if diff == 0 {
+            sorted.len() / 2
+        } else {
+            let highest_bit = 31 - diff.leading_zeros();
+            // Find the split point where the highest bit changes.
+            let mask = 1u32 << highest_bit;
+            sorted.partition_point(|&(_, m)| m & mask == 0)
+                .max(1)
+                .min(sorted.len() - 1)
+        };
+
+        let left = build_recursive(&sorted[..split], tris, nodes, tri_aabb, union_aabb);
+        let right = build_recursive(&sorted[split..], tris, nodes, tri_aabb, union_aabb);
+
+        nodes[node_idx] = GpuBvhNode {
+            aabb_min: [aabb.0[0], aabb.0[1], aabb.0[2], 0.0],
+            aabb_max: [aabb.1[0], aabb.1[1], aabb.1[2], 0.0],
+            left_or_start: left as u32,
+            right_or_count: right as u32,
+            is_leaf: 0,
+            _pad: 0,
+        };
+        node_idx
+    }
+
+    build_recursive(&sorted, tris, &mut nodes, tri_aabb, union_aabb);
+    nodes
+}
+
 /// GPU-side triangle for compute shader input.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -562,8 +741,17 @@ impl GpuLightmapBaker {
                             view_dimension: wgpu::TextureViewDimension::D2,
                         },
                         count: None,
-                    },
-                ],
+                    },                    // 3: BVH node buffer (read-only storage)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },                ],
             });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -907,6 +1095,18 @@ impl GpuPathTraceBaker {
         });
         let output_view = output_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+        // Build LBVH from triangles and upload.
+        let bvh_nodes = build_lbvh(&gpu_tris);
+        let bvh_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("PathTrace BVH Nodes"),
+            size: (std::mem::size_of::<GpuBvhNode>() * bvh_nodes.len().max(1)) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        if !bvh_nodes.is_empty() {
+            queue.write_buffer(&bvh_buffer, 0, bytemuck::cast_slice(&bvh_nodes));
+        }
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PathTrace Bake BG"),
             layout: &self.bind_group_layout,
@@ -922,6 +1122,10 @@ impl GpuPathTraceBaker {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&output_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: bvh_buffer.as_entire_binding(),
                 },
             ],
         });

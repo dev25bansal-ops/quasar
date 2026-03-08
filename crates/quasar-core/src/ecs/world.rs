@@ -345,11 +345,48 @@ impl World {
 
     /// Query entities that have **both** components `A` and `B`.
     ///
-    /// Uses archetype metadata to iterate only entities known to carry both
-    /// component types, then performs direct storage lookups.
+    /// Fast path: if archetypes have SoA columns populated for both types,
+    /// iterate via raw `column_ptr<T>()` slices — cache-optimal with no
+    /// indirection. Falls back to legacy HashMap storage otherwise.
     pub fn query2<A: Component, B: Component>(&self) -> Vec<(Entity, &A, &B)> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
+
+        // Try SoA fast path via archetype columns.
+        {
+            let graph = self.archetype_graph.read();
+            let matching = graph.find_with_components(&[type_a, type_b]);
+            if !matching.is_empty() {
+                let mut results = Vec::new();
+                for arch in &matching {
+                    let n = arch.column_len::<A>();
+                    if n == 0 || arch.column_len::<B>() == 0 {
+                        continue;
+                    }
+                    // SAFETY: we hold an immutable borrow on the archetype graph
+                    // via the read lock, and do not mutate archetype storage while
+                    // the returned references are alive.
+                    unsafe {
+                        if let (Some(ptr_a), Some(ptr_b)) =
+                            (arch.column_ptr::<A>(), arch.column_ptr::<B>())
+                        {
+                            let slice_a = std::slice::from_raw_parts(ptr_a, n);
+                            let slice_b = std::slice::from_raw_parts(ptr_b, n);
+                            for (i, (a, b)) in slice_a.iter().zip(slice_b.iter()).enumerate() {
+                                if i < arch.entities.len() {
+                                    results.push((arch.entities[i], a, b));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // Fallback: legacy HashMap storage path.
         let sa = self.storage::<A>();
         let sb = self.storage::<B>();
 
