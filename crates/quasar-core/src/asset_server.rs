@@ -67,6 +67,50 @@ pub struct AssetServer {
     event_sender: Sender<AssetEvent>,
     _watch_thread: Option<JoinHandle<()>>,
     _pending_reloads: RwLock<Vec<(AssetId, PathBuf)>>,
+    /// Unified generational asset manager — all new code should use this
+    /// instead of the raw `asset_storage` map. Legacy storage is kept for
+    /// backward compat with existing loaders.
+    manager: Mutex<crate::asset::AssetManager>,
+}
+
+impl AssetServer {
+    /// Access the embedded [`AssetManager`] for generational handle-based
+    /// storage. Prefer this over using the raw `get()` / `load()` methods
+    /// when you already have a concrete `AssetHandle<T>`.
+    pub fn manager(&self) -> std::sync::MutexGuard<'_, crate::asset::AssetManager> {
+        self.manager.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Convenience: add an already-constructed asset directly into the
+    /// unified manager and receive a typed generational handle.
+    pub fn add_asset<T: crate::asset::Asset>(&self, asset: T) -> crate::asset::AssetHandle<T> {
+        self.manager().add(asset)
+    }
+
+    /// Convenience: add an asset with path dedup via the unified manager.
+    pub fn add_asset_with_path<T: crate::asset::Asset>(
+        &self,
+        asset: T,
+        path: impl Into<PathBuf>,
+    ) -> crate::asset::AssetHandle<T> {
+        self.manager().add_with_path(asset, path)
+    }
+
+    /// Convenience: get an asset by typed handle from the unified manager.
+    pub fn get_asset<T: crate::asset::Asset>(
+        &self,
+        handle: &crate::asset::AssetHandle<T>,
+    ) -> Option<T>
+    where
+        T: Clone,
+    {
+        self.manager().get(handle).cloned()
+    }
+
+    /// Returns the base assets directory.
+    pub fn assets_dir(&self) -> &Path {
+        &self.assets_dir
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +169,7 @@ impl AssetServer {
             event_sender: sender.clone(),
             _watch_thread: None,
             _pending_reloads: RwLock::new(Vec::new()),
+            manager: Mutex::new(crate::asset::AssetManager::new()),
         }
     }
 
@@ -166,7 +211,7 @@ impl AssetServer {
         let asset = loader.load(&full_path, &bytes)?;
 
         {
-            let mut storage = self.asset_storage.write().unwrap();
+            let mut storage = self.asset_storage.write().unwrap_or_else(|e| e.into_inner());
             let type_storage = storage
                 .entry(TypeId::of::<T>())
                 .or_insert_with(HashMap::new);
@@ -176,7 +221,7 @@ impl AssetServer {
         let handle = AssetHandle { id, generation: 0 };
 
         {
-            let mut handles = self.asset_handles.write().unwrap();
+            let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
             handles.insert(
                 id,
                 AssetMeta {
@@ -197,7 +242,7 @@ impl AssetServer {
     }
 
     pub fn get<T: Asset + Clone>(&self, handle: AssetHandle) -> Option<Arc<T>> {
-        let storage = self.asset_storage.read().unwrap();
+        let storage = self.asset_storage.read().unwrap_or_else(|e| e.into_inner());
         let type_storage = storage.get(&TypeId::of::<T>())?;
         let asset = type_storage.get(&handle.id)?;
         let typed = asset.downcast_ref::<T>()?;
@@ -264,7 +309,7 @@ impl AssetServer {
     }
 
     fn reload_asset(&self, path: &Path) {
-        let handles = self.asset_handles.read().unwrap();
+        let handles = self.asset_handles.read().unwrap_or_else(|e| e.into_inner());
 
         for (id, meta) in handles.iter() {
             if &meta.path == path && meta.hot_reload_enabled {
@@ -272,7 +317,7 @@ impl AssetServer {
                     for (type_id, loader) in &self.loaders {
                         if loader.can_load(path) {
                             // Try to reload the asset in-place
-                            let mut storage = self.asset_storage.write().unwrap();
+                            let mut storage = self.asset_storage.write().unwrap_or_else(|e| e.into_inner());
                             if let Some(type_storage) = storage.get_mut(type_id) {
                                 if let Some(existing) = type_storage.get_mut(id) {
                                     match loader.reload_raw(path, &bytes, existing) {
@@ -305,7 +350,7 @@ impl AssetServer {
     }
 
     pub fn set_hot_reload(&self, handle: AssetHandle, enabled: bool) {
-        let mut handles = self.asset_handles.write().unwrap();
+        let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
         if let Some(meta) = handles.get_mut(&handle.id) {
             meta.hot_reload_enabled = enabled;
         }
@@ -325,7 +370,7 @@ impl AssetServer {
         let full_path = self.assets_dir.join(path.as_ref());
 
         let id = {
-            let mut next_id = self.next_id.lock().unwrap();
+            let mut next_id = self.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *next_id;
             *next_id += 1;
             id
@@ -334,7 +379,7 @@ impl AssetServer {
         let handle = AssetHandle { id, generation: 0 };
 
         {
-            let mut handles = self.asset_handles.write().unwrap();
+            let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
             handles.insert(
                 id,
                 AssetMeta {
@@ -371,7 +416,7 @@ impl AssetServer {
 
     /// Check whether an asset handle has been fully loaded.
     pub fn is_loaded(&self, handle: AssetHandle) -> bool {
-        let handles = self.asset_handles.read().unwrap();
+        let handles = self.asset_handles.read().unwrap_or_else(|e| e.into_inner());
         handles.get(&handle.id).map(|m| m.loaded).unwrap_or(false)
     }
 }

@@ -8,8 +8,12 @@ license.workspace = true
 [dependencies]
 quasar-core = { workspace = true }
 quasar-math = { workspace = true }
+quasar-render = { workspace = true }
 quasar-window = { workspace = true }
 winit = { workspace = true }
+wgpu = { workspace = true }
+pollster = { workspace = true }
+bytemuck = { workspace = true }
 log = { workspace = true }
 glam = { workspace = true }
 

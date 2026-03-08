@@ -5,6 +5,37 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["full"]
+full = [
+    "deferred",
+    "ssr",
+    "terrain",
+    "gpu-culling",
+    "particles",
+    "volumetric",
+    "lightmap",
+    "clustered-lighting",
+    "reflection-probes",
+    "decals",
+    "shader-graph",
+    "sprites",
+    "post-process",
+]
+deferred = []
+ssr = ["deferred"]
+terrain = []
+gpu-culling = []
+particles = []
+volumetric = []
+lightmap = []
+clustered-lighting = []
+reflection-probes = []
+decals = []
+shader-graph = []
+sprites = []
+post-process = []
+
 [dependencies]
 quasar-core = { workspace = true }
 quasar-math = { workspace = true }

@@ -19,8 +19,9 @@ members = [
     "examples/physics_sandbox",
     "examples/audio_demo",
     "examples/scripting_demo",
-    "examples/web_demo",
 ]
+# web_demo is wasm32-only; build with: cargo build -p web-demo --target wasm32-unknown-unknown
+exclude = ["examples/web_demo"]
 
 [workspace.package]
 version = "0.1.0"

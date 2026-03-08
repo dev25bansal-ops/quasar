@@ -23,12 +23,13 @@ use winit::{
 };
 
 use quasar_core::asset::AssetManager;
+use quasar_core::profiler::Profiler;
 use quasar_core::scene::SceneGraph;
 use quasar_core::App;
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
     Camera, DirectionalLight, LightData, LightsUniform, MeshCache, MeshShape, OrbitController,
-    PointLight, RenderConfig, Renderer,
+    PointLight, RenderConfig, Renderer, ShadowCamera, ShadowMap,
 };
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -43,6 +44,12 @@ struct RunnerState {
     mesh_cache: MeshCache,
     /// Default directional light for scenes without explicit lights
     default_light: DirectionalLight,
+    /// Shadow map for directional light shadow casting
+    shadow_map: ShadowMap,
+    /// Camera used for the directional light shadow projection
+    shadow_camera: ShadowCamera,
+    /// Frame profiler for CPU timing
+    profiler: Profiler,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -114,6 +121,9 @@ impl ApplicationHandler for QuasarRunner {
         self.app.world.insert_resource(AssetManager::new());
         self.app.world.insert_resource(SceneGraph::new());
 
+        let shadow_map = ShadowMap::new(&renderer.device, 2048);
+        let shadow_camera = ShadowCamera::default();
+
         self.state = Some(RunnerState {
             window,
             renderer,
@@ -123,6 +133,9 @@ impl ApplicationHandler for QuasarRunner {
             editor_renderer,
             mesh_cache: MeshCache::new(),
             default_light: DirectionalLight::default(),
+            shadow_map,
+            shadow_camera,
+            profiler: Profiler::new(),
         });
 
         log::info!(
@@ -234,13 +247,18 @@ impl ApplicationHandler for QuasarRunner {
 
             // ── Redraw (main frame tick) ──────────────────────────
             WindowEvent::RedrawRequested => {
+                // ── Profiler: start of frame ─────────────────────
+                state.profiler.begin_frame();
+
                 // Clear per-frame input state.
                 if let Some(input) = self.app.world.resource_mut::<Input>() {
                     input.begin_frame();
                 }
 
                 // Run one full ECS frame (updates time, runs all systems).
+                state.profiler.begin_scope("ecs_tick");
                 self.app.tick();
+                state.profiler.end_scope("ecs_tick");
 
                 // Upload instance transforms collected by RenderSyncSystem.
                 if let Some(sync) =
@@ -353,7 +371,42 @@ impl ApplicationHandler for QuasarRunner {
                     bytemuck::cast_slice(&[lights_uniform]),
                 );
 
+                // ── Shadow pass (before main frame) ──────────────
+                state.profiler.begin_scope("shadow_pass");
+                {
+                    // Position the shadow camera along the primary directional light
+                    let dir = lights_uniform.lights[0].position_or_direction;
+                    let light_dir =
+                        glam::Vec3::new(dir[0], dir[1], dir[2]).normalize_or_zero();
+                    if light_dir != glam::Vec3::ZERO {
+                        state.shadow_camera.position =
+                            state.shadow_camera.target - light_dir * 30.0;
+                    }
+                    let light_vp = state.shadow_camera.view_projection();
+
+                    let shadow_objects: Vec<(&quasar_render::Mesh, glam::Mat4)> = shape_mats
+                        .iter()
+                        .filter_map(|(shape, model)| {
+                            state
+                                .mesh_cache
+                                .cache
+                                .get(shape)
+                                .map(|m| (m as &quasar_render::Mesh, *model))
+                        })
+                        .collect();
+
+                    let shadow_cmd = state.shadow_map.render_shadow_pass(
+                        &state.renderer.device,
+                        &state.renderer.queue,
+                        light_vp,
+                        &shadow_objects,
+                    );
+                    state.renderer.queue.submit(std::iter::once(shadow_cmd));
+                }
+                state.profiler.end_scope("shadow_pass");
+
                 // ── Split-phase rendering: 3D → egui → present ───
+                state.profiler.begin_scope("render");
                 let frame_result = state.renderer.begin_frame();
                 match frame_result {
                     Ok((output, view, mut encoder)) => {
@@ -509,6 +562,10 @@ impl ApplicationHandler for QuasarRunner {
                     }
                     Err(e) => log::warn!("Render error: {e:?}"),
                 }
+                state.profiler.end_scope("render");
+
+                // ── Profiler: end of frame ───────────────────────
+                state.profiler.end_frame();
 
                 state.window.request_redraw();
             }

@@ -69,10 +69,22 @@ macro_rules! query {
     ($world:expr, ($A:ty, $B:ty, $C:ty $(,)?)) => {
         $world.query3::<$A, $B, $C>()
     };
+    ($world:expr, ($A:ty, $B:ty, $C:ty, $D:ty $(,)?)) => {
+        $world.query4::<$A, $B, $C, $D>()
+    };
+    ($world:expr, ($A:ty, $B:ty, $C:ty, $D:ty, $E:ty $(,)?)) => {
+        $world.query5::<$A, $B, $C, $D, $E>()
+    };
     ($world:expr, $A:ty, $B:ty $(,)?) => {
         $world.query2::<$A, $B>()
     };
     ($world:expr, $A:ty, $B:ty, $C:ty $(,)?) => {
         $world.query3::<$A, $B, $C>()
+    };
+    ($world:expr, $A:ty, $B:ty, $C:ty, $D:ty $(,)?) => {
+        $world.query4::<$A, $B, $C, $D>()
+    };
+    ($world:expr, $A:ty, $B:ty, $C:ty, $D:ty, $E:ty $(,)?) => {
+        $world.query5::<$A, $B, $C, $D, $E>()
     };
 }

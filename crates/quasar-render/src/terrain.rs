@@ -286,8 +286,10 @@ mod tests {
     fn lod_selection() {
         let cfg = flat_config(9);
         let mesh = TerrainMesh::generate(&cfg, &[100.0, 200.0, 400.0]);
-        assert_eq!(mesh.select_lod(50.0), 0);
-        assert_eq!(mesh.select_lod(150.0), 1);
-        assert_eq!(mesh.select_lod(1000.0), 2);
+        // select_lod takes squared distances; thresholds are 100² = 10_000,
+        // 200² = 40_000, 400² = 160_000.
+        assert_eq!(mesh.select_lod(50.0 * 50.0), 0);
+        assert_eq!(mesh.select_lod(150.0 * 150.0), 1);
+        assert_eq!(mesh.select_lod(1000.0 * 1000.0), 2);
     }
 }

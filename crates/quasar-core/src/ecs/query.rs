@@ -109,6 +109,149 @@ impl<A: WorldQuery, B: WorldQuery, C: WorldQuery, D: WorldQuery> WorldQuery for 
     }
 }
 
+impl<A: WorldQuery, B: WorldQuery, C: WorldQuery, D: WorldQuery, E: WorldQuery> WorldQuery
+    for (A, B, C, D, E)
+{
+    type Item<'w> = (A::Item<'w>, B::Item<'w>, C::Item<'w>, D::Item<'w>, E::Item<'w>);
+    fn type_ids() -> Vec<TypeId> {
+        let mut ids = A::type_ids();
+        ids.extend(B::type_ids());
+        ids.extend(C::type_ids());
+        ids.extend(D::type_ids());
+        ids.extend(E::type_ids());
+        ids
+    }
+    fn fetch<'w>(world: &'w World, idx: u32) -> Option<Self::Item<'w>> {
+        Some((
+            A::fetch(world, idx)?,
+            B::fetch(world, idx)?,
+            C::fetch(world, idx)?,
+            D::fetch(world, idx)?,
+            E::fetch(world, idx)?,
+        ))
+    }
+}
+
+impl<A: WorldQuery, B: WorldQuery, C: WorldQuery, D: WorldQuery, E: WorldQuery, F: WorldQuery>
+    WorldQuery for (A, B, C, D, E, F)
+{
+    type Item<'w> = (
+        A::Item<'w>,
+        B::Item<'w>,
+        C::Item<'w>,
+        D::Item<'w>,
+        E::Item<'w>,
+        F::Item<'w>,
+    );
+    fn type_ids() -> Vec<TypeId> {
+        let mut ids = A::type_ids();
+        ids.extend(B::type_ids());
+        ids.extend(C::type_ids());
+        ids.extend(D::type_ids());
+        ids.extend(E::type_ids());
+        ids.extend(F::type_ids());
+        ids
+    }
+    fn fetch<'w>(world: &'w World, idx: u32) -> Option<Self::Item<'w>> {
+        Some((
+            A::fetch(world, idx)?,
+            B::fetch(world, idx)?,
+            C::fetch(world, idx)?,
+            D::fetch(world, idx)?,
+            E::fetch(world, idx)?,
+            F::fetch(world, idx)?,
+        ))
+    }
+}
+
+impl<
+        A: WorldQuery,
+        B: WorldQuery,
+        C: WorldQuery,
+        D: WorldQuery,
+        E: WorldQuery,
+        F: WorldQuery,
+        G: WorldQuery,
+    > WorldQuery for (A, B, C, D, E, F, G)
+{
+    type Item<'w> = (
+        A::Item<'w>,
+        B::Item<'w>,
+        C::Item<'w>,
+        D::Item<'w>,
+        E::Item<'w>,
+        F::Item<'w>,
+        G::Item<'w>,
+    );
+    fn type_ids() -> Vec<TypeId> {
+        let mut ids = A::type_ids();
+        ids.extend(B::type_ids());
+        ids.extend(C::type_ids());
+        ids.extend(D::type_ids());
+        ids.extend(E::type_ids());
+        ids.extend(F::type_ids());
+        ids.extend(G::type_ids());
+        ids
+    }
+    fn fetch<'w>(world: &'w World, idx: u32) -> Option<Self::Item<'w>> {
+        Some((
+            A::fetch(world, idx)?,
+            B::fetch(world, idx)?,
+            C::fetch(world, idx)?,
+            D::fetch(world, idx)?,
+            E::fetch(world, idx)?,
+            F::fetch(world, idx)?,
+            G::fetch(world, idx)?,
+        ))
+    }
+}
+
+impl<
+        A: WorldQuery,
+        B: WorldQuery,
+        C: WorldQuery,
+        D: WorldQuery,
+        E: WorldQuery,
+        F: WorldQuery,
+        G: WorldQuery,
+        H: WorldQuery,
+    > WorldQuery for (A, B, C, D, E, F, G, H)
+{
+    type Item<'w> = (
+        A::Item<'w>,
+        B::Item<'w>,
+        C::Item<'w>,
+        D::Item<'w>,
+        E::Item<'w>,
+        F::Item<'w>,
+        G::Item<'w>,
+        H::Item<'w>,
+    );
+    fn type_ids() -> Vec<TypeId> {
+        let mut ids = A::type_ids();
+        ids.extend(B::type_ids());
+        ids.extend(C::type_ids());
+        ids.extend(D::type_ids());
+        ids.extend(E::type_ids());
+        ids.extend(F::type_ids());
+        ids.extend(G::type_ids());
+        ids.extend(H::type_ids());
+        ids
+    }
+    fn fetch<'w>(world: &'w World, idx: u32) -> Option<Self::Item<'w>> {
+        Some((
+            A::fetch(world, idx)?,
+            B::fetch(world, idx)?,
+            C::fetch(world, idx)?,
+            D::fetch(world, idx)?,
+            E::fetch(world, idx)?,
+            F::fetch(world, idx)?,
+            G::fetch(world, idx)?,
+            H::fetch(world, idx)?,
+        ))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // QueryFilter — additional filters (With, Without, Changed, Added, Removed)
 // ---------------------------------------------------------------------------
@@ -201,6 +344,17 @@ impl<F1: QueryFilter, F2: QueryFilter, F3: QueryFilter> QueryFilter for (F1, F2,
         F1::matches(world, entity_index)
             && F2::matches(world, entity_index)
             && F3::matches(world, entity_index)
+    }
+}
+
+impl<F1: QueryFilter, F2: QueryFilter, F3: QueryFilter, F4: QueryFilter> QueryFilter
+    for (F1, F2, F3, F4)
+{
+    fn matches(world: &World, entity_index: u32) -> bool {
+        F1::matches(world, entity_index)
+            && F2::matches(world, entity_index)
+            && F3::matches(world, entity_index)
+            && F4::matches(world, entity_index)
     }
 }
 

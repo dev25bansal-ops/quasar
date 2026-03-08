@@ -39,18 +39,19 @@ pub use animation::{
     TransitionCondition,
 };
 pub use app::{App, TimeSnapshot};
-pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState};
 pub use asset_server::{
     AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetReloadSystem,
     AssetReloadedEvent, AssetServer, ReloadKind,
 };
+// Unified asset manager is accessible via AssetServer::manager()
+pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState};
 pub use ecs::{Component, Entity, EntityBuilder, World, flush_commands, QueryState, WorldQuery, QueryFilter};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;
 pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent};
 pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
 pub use plugin::Plugin;
-pub use prefab::{ComponentOverride, Prefab, PrefabEntity, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, instantiate_prefab};
+pub use prefab::{ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab, PrefabEntity, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, instantiate_prefab};
 pub use profiler::{FrameStats, Profiler, ProfilerPlugin};
 pub use scene::{Scene, SceneGraph};
 pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};

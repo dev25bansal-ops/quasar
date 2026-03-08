@@ -5,15 +5,23 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["full"]
+full = ["physics", "audio", "scripting", "editor"]
+physics = ["dep:quasar-physics"]
+audio = ["dep:quasar-audio"]
+scripting = ["dep:quasar-scripting"]
+editor = ["dep:quasar-editor"]
+
 [dependencies]
 quasar-core = { workspace = true }
 quasar-math = { workspace = true }
 quasar-render = { workspace = true }
 quasar-window = { workspace = true }
-quasar-physics = { workspace = true }
-quasar-audio = { workspace = true }
-quasar-scripting = { workspace = true }
-quasar-editor = { workspace = true }
+quasar-physics = { workspace = true, optional = true }
+quasar-audio = { workspace = true, optional = true }
+quasar-scripting = { workspace = true, optional = true }
+quasar-editor = { workspace = true, optional = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }

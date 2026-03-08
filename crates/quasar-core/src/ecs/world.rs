@@ -373,10 +373,38 @@ impl World {
     }
 
     /// Iterate over all `(Entity, &T)` pairs.
-    /// Uses archetype metadata to iterate only entities known to carry `T`.
+    /// Uses archetype SoA columns first for cache-optimal iteration,
+    /// falls back to legacy HashMap storage.
     pub fn query<T: Component>(&self) -> Vec<(Entity, &T)> {
         let type_id = TypeId::of::<T>();
 
+        // Try SoA fast path via archetype columns.
+        {
+            let graph = self.archetype_graph.read();
+            let matching = graph.find_with_components(&[type_id]);
+            if !matching.is_empty() {
+                let mut results = Vec::new();
+                for arch in &matching {
+                    let n = arch.column_len::<T>();
+                    if n == 0 { continue; }
+                    unsafe {
+                        if let Some(ptr) = arch.column_ptr::<T>() {
+                            let slice = std::slice::from_raw_parts(ptr, n);
+                            for (i, val) in slice.iter().enumerate() {
+                                if i < arch.entities.len() {
+                                    results.push((arch.entities[i], val));
+                                }
+                            }
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // Fallback: legacy HashMap storage.
         let storage = match self
             .storages
             .get(&type_id)
@@ -388,7 +416,6 @@ impl World {
 
         let mut results = Vec::with_capacity(storage.data.len());
 
-        // Use archetype index: only visit entities whose component set includes T.
         for (&idx, components) in &self.entity_components {
             if components.binary_search(&type_id).is_ok() {
                 if let Some(component) = storage.data.get(&idx) {
@@ -569,6 +596,160 @@ impl World {
             }
         }
 
+        results
+    }
+
+    /// Query entities that have components `A`, `B`, `C`, **and** `D`.
+    ///
+    /// Fast path: archetypes with SoA columns for all four types.
+    /// Falls back to HashMap storage otherwise.
+    pub fn query4<A: Component, B: Component, C: Component, D: Component>(
+        &self,
+    ) -> Vec<(Entity, &A, &B, &C, &D)> {
+        let tids = [
+            TypeId::of::<A>(),
+            TypeId::of::<B>(),
+            TypeId::of::<C>(),
+            TypeId::of::<D>(),
+        ];
+
+        // Try SoA fast path via archetype columns.
+        {
+            let graph = self.archetype_graph.read();
+            let matching = graph.find_with_components(&tids);
+            if !matching.is_empty() {
+                let mut results = Vec::new();
+                for arch in &matching {
+                    let n = arch.column_len::<A>();
+                    if n == 0 { continue; }
+                    unsafe {
+                        if let (Some(pa), Some(pb), Some(pc), Some(pd)) = (
+                            arch.column_ptr::<A>(),
+                            arch.column_ptr::<B>(),
+                            arch.column_ptr::<C>(),
+                            arch.column_ptr::<D>(),
+                        ) {
+                            let sa = std::slice::from_raw_parts(pa, n);
+                            let sb = std::slice::from_raw_parts(pb, n);
+                            let sc = std::slice::from_raw_parts(pc, n);
+                            let sd = std::slice::from_raw_parts(pd, n);
+                            for i in 0..n.min(arch.entities.len()) {
+                                results.push((arch.entities[i], &sa[i], &sb[i], &sc[i], &sd[i]));
+                            }
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // Fallback: legacy HashMap storage.
+        let sa = self.storage::<A>();
+        let sb = self.storage::<B>();
+        let sc = self.storage::<C>();
+        let sd = self.storage::<D>();
+
+        if sa.is_none() || sb.is_none() || sc.is_none() || sd.is_none() {
+            return Vec::new();
+        }
+        let (sa, sb, sc, sd) = (sa.unwrap(), sb.unwrap(), sc.unwrap(), sd.unwrap());
+
+        let mut results = Vec::new();
+        for (&idx, components) in &self.entity_components {
+            if tids.iter().all(|tid| components.binary_search(tid).is_ok()) {
+                if let (Some(a), Some(b), Some(c), Some(d)) = (
+                    sa.data.get(&idx),
+                    sb.data.get(&idx),
+                    sc.data.get(&idx),
+                    sd.data.get(&idx),
+                ) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), a, b, c, d));
+                }
+            }
+        }
+        results
+    }
+
+    /// Query entities that have components `A` through `E`.
+    ///
+    /// Fast path: archetypes with SoA columns for all five types.
+    /// Falls back to HashMap storage otherwise.
+    pub fn query5<A: Component, B: Component, C: Component, D: Component, E: Component>(
+        &self,
+    ) -> Vec<(Entity, &A, &B, &C, &D, &E)> {
+        let tids = [
+            TypeId::of::<A>(),
+            TypeId::of::<B>(),
+            TypeId::of::<C>(),
+            TypeId::of::<D>(),
+            TypeId::of::<E>(),
+        ];
+
+        // Try SoA fast path via archetype columns.
+        {
+            let graph = self.archetype_graph.read();
+            let matching = graph.find_with_components(&tids);
+            if !matching.is_empty() {
+                let mut results = Vec::new();
+                for arch in &matching {
+                    let n = arch.column_len::<A>();
+                    if n == 0 { continue; }
+                    unsafe {
+                        if let (Some(pa), Some(pb), Some(pc), Some(pd), Some(pe)) = (
+                            arch.column_ptr::<A>(),
+                            arch.column_ptr::<B>(),
+                            arch.column_ptr::<C>(),
+                            arch.column_ptr::<D>(),
+                            arch.column_ptr::<E>(),
+                        ) {
+                            let sa = std::slice::from_raw_parts(pa, n);
+                            let sb = std::slice::from_raw_parts(pb, n);
+                            let sc = std::slice::from_raw_parts(pc, n);
+                            let sd = std::slice::from_raw_parts(pd, n);
+                            let se = std::slice::from_raw_parts(pe, n);
+                            for i in 0..n.min(arch.entities.len()) {
+                                results.push((arch.entities[i], &sa[i], &sb[i], &sc[i], &sd[i], &se[i]));
+                            }
+                        }
+                    }
+                }
+                if !results.is_empty() {
+                    return results;
+                }
+            }
+        }
+
+        // Fallback: legacy HashMap storage.
+        let sa = self.storage::<A>();
+        let sb = self.storage::<B>();
+        let sc = self.storage::<C>();
+        let sd = self.storage::<D>();
+        let se = self.storage::<E>();
+
+        if sa.is_none() || sb.is_none() || sc.is_none() || sd.is_none() || se.is_none() {
+            return Vec::new();
+        }
+        let (sa, sb, sc, sd, se) =
+            (sa.unwrap(), sb.unwrap(), sc.unwrap(), sd.unwrap(), se.unwrap());
+
+        let mut results = Vec::new();
+        for (&idx, components) in &self.entity_components {
+            if tids.iter().all(|tid| components.binary_search(tid).is_ok()) {
+                if let (Some(a), Some(b), Some(c), Some(d), Some(e)) = (
+                    sa.data.get(&idx),
+                    sb.data.get(&idx),
+                    sc.data.get(&idx),
+                    sd.data.get(&idx),
+                    se.data.get(&idx),
+                ) {
+                    let generation = self.allocator.generation_of(idx);
+                    results.push((Entity::new(idx, generation), a, b, c, d, e));
+                }
+            }
+        }
         results
     }
 

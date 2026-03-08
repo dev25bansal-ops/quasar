@@ -31,15 +31,26 @@ pub struct EntityData {
 pub struct SceneData {
     /// Scene name.
     pub name: String,
+    /// Format version — bump when the schema changes.
+    #[serde(default = "default_version")]
+    pub version: u32,
     /// All entities in depth-first order.
     pub entities: Vec<EntityData>,
 }
 
+fn default_version() -> u32 {
+    1
+}
+
 impl SceneData {
+    /// Current schema version.
+    pub const CURRENT_VERSION: u32 = 1;
+
     /// Create an empty scene data container.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            version: Self::CURRENT_VERSION,
             entities: Vec::new(),
         }
     }

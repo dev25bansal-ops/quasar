@@ -100,6 +100,112 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
         lua.create_function(|_, (value, min, max): (f32, f32, f32)| Ok(value.clamp(min, max)))?;
     quasar.set("clamp", clamp_fn)?;
 
+    // quasar.distance(x1, y1, z1, x2, y2, z2) -> number
+    let distance_fn = lua.create_function(
+        |_, (x1, y1, z1, x2, y2, z2): (f32, f32, f32, f32, f32, f32)| {
+            let dx = x2 - x1;
+            let dy = y2 - y1;
+            let dz = z2 - z1;
+            Ok((dx * dx + dy * dy + dz * dz).sqrt())
+        },
+    )?;
+    quasar.set("distance", distance_fn)?;
+
+    // quasar.normalize(x, y, z) -> {x, y, z}
+    let normalize_fn = lua.create_function(|lua, (x, y, z): (f32, f32, f32)| {
+        let len = (x * x + y * y + z * z).sqrt();
+        let t = lua.create_table()?;
+        if len > 1e-8 {
+            t.set("x", x / len)?;
+            t.set("y", y / len)?;
+            t.set("z", z / len)?;
+        } else {
+            t.set("x", 0.0f32)?;
+            t.set("y", 0.0f32)?;
+            t.set("z", 0.0f32)?;
+        }
+        Ok(t)
+    })?;
+    quasar.set("normalize", normalize_fn)?;
+
+    // quasar.dot(x1, y1, z1, x2, y2, z2) -> number
+    let dot_fn = lua.create_function(
+        |_, (x1, y1, z1, x2, y2, z2): (f32, f32, f32, f32, f32, f32)| {
+            Ok(x1 * x2 + y1 * y2 + z1 * z2)
+        },
+    )?;
+    quasar.set("dot", dot_fn)?;
+
+    // quasar.cross(x1, y1, z1, x2, y2, z2) -> {x, y, z}
+    let cross_fn = lua.create_function(
+        |lua, (x1, y1, z1, x2, y2, z2): (f32, f32, f32, f32, f32, f32)| {
+            let t = lua.create_table()?;
+            t.set("x", y1 * z2 - z1 * y2)?;
+            t.set("y", z1 * x2 - x1 * z2)?;
+            t.set("z", x1 * y2 - y1 * x2)?;
+            Ok(t)
+        },
+    )?;
+    quasar.set("cross", cross_fn)?;
+
+    // quasar.random() -> number (0..1)
+    let random_fn = lua.create_function(|_, ()| {
+        // Simple xorshift-based PRNG seeded from frame counter.
+        // For scripts this is adequate; not cryptographic.
+        use std::time::SystemTime;
+        let seed = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let mut x = seed.wrapping_add(1);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        Ok((x as f32) / (u32::MAX as f32))
+    })?;
+    quasar.set("random", random_fn)?;
+
+    // quasar.random_range(min, max) -> number
+    let random_range_fn = lua.create_function(|_, (min, max): (f32, f32)| {
+        use std::time::SystemTime;
+        let seed = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .subsec_nanos();
+        let mut x = seed.wrapping_add(1);
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        let t = (x as f32) / (u32::MAX as f32);
+        Ok(min + (max - min) * t)
+    })?;
+    quasar.set("random_range", random_range_fn)?;
+
+    // quasar.set_parent(child_id, parent_id) — queue scene-graph parenting
+    let set_parent_fn = lua.create_function(|lua, (child_id, parent_id): (u32, u32)| {
+        let cmd = lua.create_table()?;
+        cmd.set("type", "set_parent")?;
+        cmd.set("child", child_id)?;
+        cmd.set("parent", parent_id)?;
+        push_command(lua, cmd)?;
+        Ok(())
+    })?;
+    quasar.set("set_parent", set_parent_fn)?;
+
+    // quasar.look_at(entity_id, tx, ty, tz) — queue a look-at rotation
+    let look_at_fn =
+        lua.create_function(|lua, (entity_id, tx, ty, tz): (u32, f32, f32, f32)| {
+            let cmd = lua.create_table()?;
+            cmd.set("type", "look_at")?;
+            cmd.set("entity", entity_id)?;
+            cmd.set("tx", tx)?;
+            cmd.set("ty", ty)?;
+            cmd.set("tz", tz)?;
+            push_command(lua, cmd)?;
+            Ok(())
+        })?;
+    quasar.set("look_at", look_at_fn)?;
+
     // ── Transform getters (read from _transforms) ─────────────────
 
     // quasar.get_position(entity_id) -> {x, y, z} or nil

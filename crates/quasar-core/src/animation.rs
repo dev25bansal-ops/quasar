@@ -89,7 +89,7 @@ impl AnimationClip {
     pub fn add_keyframe(mut self, keyframe: TransformKeyframe) -> Self {
         self.keyframes.push(keyframe);
         self.keyframes
-            .sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+            .sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
         if let Some(last) = self.keyframes.last() {
             self.duration = self.duration.max(last.time);
         }
@@ -222,7 +222,7 @@ impl SkeletalAnimationClip {
             .entry(bone_name.to_string())
             .or_default();
         keyframes.push(keyframe);
-        keyframes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
+        keyframes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
         if let Some(last) = keyframes.last() {
             self.duration = self.duration.max(last.time);
         }

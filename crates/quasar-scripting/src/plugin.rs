@@ -539,6 +539,7 @@ impl System for ScriptingSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("scripting_update"); }
         // Read delta time from the Time resource.
         let dt = world
             .resource::<Time>()
@@ -614,6 +615,7 @@ impl System for ScriptingSystem {
         if !commands.is_empty() {
             Self::apply_commands(lua, world, commands);
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("scripting_update"); }
     }
 }
 

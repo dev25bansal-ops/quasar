@@ -110,11 +110,11 @@ impl GameSave {
 
 /// Capture a snapshot of all entities that have a `Transform` in `world`.
 ///
-/// If a `SceneGraph` resource is available the entity names are read from
-/// there; otherwise names will be `None`.
+/// If a `SceneGraph` resource is available the entity names and parent-child
+/// relationships are captured; otherwise names and children will be empty.
 ///
-/// The returned `GameSave` uses a minimal `SaveMeta`; callers should
-/// populate `meta.slot_name` and `meta.timestamp` as desired.
+/// The returned `GameSave` has `meta.timestamp` auto-populated from the
+/// system clock (UTC, RFC-3339). Callers should set `meta.slot_name`.
 pub fn capture_game_save(world: &World) -> GameSave {
     let transforms: Vec<(Entity, Transform)> = world
         .query::<Transform>()
@@ -124,24 +124,55 @@ pub fn capture_game_save(world: &World) -> GameSave {
 
     let graph = world.resource::<SceneGraph>();
 
+    // Map entity index → position in the output vec so we can build children lists.
+    let index_to_pos: HashMap<u32, usize> = transforms
+        .iter()
+        .enumerate()
+        .map(|(pos, (e, _))| (e.index(), pos))
+        .collect();
+
     let entities: Vec<SavedEntity> = transforms
         .iter()
         .map(|(e, t)| {
             let name = graph.and_then(|g| g.name(*e).map(|s| s.to_string()));
+            let children = graph
+                .map(|g| {
+                    g.children(*e)
+                        .iter()
+                        .filter_map(|c| index_to_pos.get(&c.index()).copied())
+                        .collect()
+                })
+                .unwrap_or_default();
             SavedEntity {
                 index: e.index(),
                 name,
                 transform: *t,
-                children: Vec::new(),
+                children,
                 custom_data: HashMap::new(),
             }
         })
         .collect();
 
+    // Auto-populate the timestamp (fallback to empty on WASM / no std time).
+    let timestamp = {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Simple ISO-8601-ish UTC string using std::time only.
+            let dur = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            format!("{}", dur.as_secs())
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            String::new()
+        }
+    };
+
     GameSave {
         meta: SaveMeta {
             slot_name: String::new(),
-            timestamp: String::new(),
+            timestamp,
             extra: HashMap::new(),
         },
         entities,

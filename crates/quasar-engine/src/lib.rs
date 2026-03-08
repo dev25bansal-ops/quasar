@@ -15,13 +15,17 @@
 
 pub mod runner;
 
+#[cfg(feature = "audio")]
 pub use quasar_audio as audio;
 /// Re-export all engine crates.
 pub use quasar_core as core;
+#[cfg(feature = "editor")]
 pub use quasar_editor as editor;
 pub use quasar_math as math;
+#[cfg(feature = "physics")]
 pub use quasar_physics as physics;
 pub use quasar_render as render;
+#[cfg(feature = "scripting")]
 pub use quasar_scripting as scripting;
 pub use quasar_window as window;
 
@@ -49,20 +53,24 @@ pub mod prelude {
     pub use quasar_window::{ActionMap, Input, InputBinding, KeyState, QuasarWindow, WindowConfig};
 
     // Physics
+    #[cfg(feature = "physics")]
     pub use quasar_physics::{
         BodyType, ColliderComponent, ColliderShape, PhysicsPlugin, PhysicsResource, PhysicsWorld,
         RigidBodyComponent,
     };
 
     // Audio
+    #[cfg(feature = "audio")]
     pub use quasar_audio::{
         AudioListener, AudioPlugin, AudioResource, AudioSource, AudioSystem, SpatialAudioSystem,
     };
 
     // Scripting
+    #[cfg(feature = "scripting")]
     pub use quasar_scripting::{ScriptComponent, ScriptEngine, ScriptingPlugin, ScriptingResource};
 
     // Editor
+    #[cfg(feature = "editor")]
     pub use quasar_editor::Editor;
 
     // Runner

@@ -193,10 +193,8 @@ impl QuicTransportBackend for QuinnBackend {
         let endpoint = if let Some(ep) = self.endpoint.as_ref() {
             ep.clone()
         } else {
-            let ep = self.rt.block_on(async {
-                Endpoint::client("0.0.0.0:0".parse().unwrap())
-                    .map_err(|e| NetworkError(format!("quinn endpoint: {e}")))
-            })?;
+            let ep = Endpoint::client("0.0.0.0:0".parse().unwrap())
+                .map_err(|e| NetworkError(format!("quinn endpoint: {e}")))?;
             self.endpoint = Some(ep.clone());
             ep
         };
@@ -232,15 +230,13 @@ impl QuicTransportBackend for QuinnBackend {
     fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
         let server_cfg = Self::build_server_config()?;
 
-        let endpoint = self.rt.block_on(async {
-            Endpoint::server(server_cfg, addr)
-                .map_err(|e| NetworkError(format!("quinn listen: {e}")))
-        })?;
+        let endpoint = Endpoint::server(server_cfg, addr)
+            .map_err(|e| NetworkError(format!("quinn listen: {e}")))?;
 
         let ep_clone = endpoint.clone();
         let tx = self.event_tx.clone();
         self.rt.spawn(async move {
-            QuinnBackend::spawn_accept_loop(ep_clone, tx).await;
+            QuinnBackend::spawn_accept_loop(ep_clone, tx);
         });
 
         self.endpoint = Some(endpoint);

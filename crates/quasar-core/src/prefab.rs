@@ -221,9 +221,9 @@ impl PrefabInstance {
 }
 
 /// Apply [`ComponentOverride`]s from a [`PrefabInstance`] to a Transform
-/// component. Other component types can be handled similarly by downstream
-/// systems via the reflection registry.
+/// component and any types registered in the [`OverrideRegistry`].
 pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[ComponentOverride]) {
+    // First, apply built-in Transform overrides.
     for ovr in overrides {
         if ovr.component_type == "Transform" {
             if let Some(t) = world.get_mut::<Transform>(entity) {
@@ -234,6 +234,10 @@ pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[Component
                     "scale.x" => if let Some(v) = ovr.value.as_f64() { t.scale.x = v as f32; },
                     "scale.y" => if let Some(v) = ovr.value.as_f64() { t.scale.y = v as f32; },
                     "scale.z" => if let Some(v) = ovr.value.as_f64() { t.scale.z = v as f32; },
+                    "rotation.x" => if let Some(v) = ovr.value.as_f64() { t.rotation.x = v as f32; },
+                    "rotation.y" => if let Some(v) = ovr.value.as_f64() { t.rotation.y = v as f32; },
+                    "rotation.z" => if let Some(v) = ovr.value.as_f64() { t.rotation.z = v as f32; },
+                    "rotation.w" => if let Some(v) = ovr.value.as_f64() { t.rotation.w = v as f32; },
                     _ => {
                         log::warn!(
                             "Unknown override path '{}' for Transform",
@@ -243,6 +247,74 @@ pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[Component
                 }
             }
         }
+    }
+
+    // Then, apply registered override handlers for other component types.
+    // We collect handler function pointers first to avoid borrowing issues.
+    let handlers: Vec<(String, OverrideHandlerFn)> = world
+        .resource::<OverrideRegistry>()
+        .map(|reg| {
+            reg.handlers
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for ovr in overrides {
+        if ovr.component_type == "Transform" {
+            continue; // already handled above
+        }
+        if let Some((_, handler)) = handlers.iter().find(|(k, _)| k == &ovr.component_type) {
+            handler(world, entity, &ovr.field_path, &ovr.value);
+        } else {
+            log::warn!(
+                "No override handler registered for component type '{}'",
+                ovr.component_type
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Override Registry
+// ---------------------------------------------------------------------------
+
+/// Function pointer type for component override handlers.
+///
+/// Arguments: `(world, entity, field_path, json_value)`.
+pub type OverrideHandlerFn = fn(&mut World, Entity, &str, &serde_json::Value);
+
+/// Resource that holds per-component-type override handler functions.
+///
+/// Downstream crates (e.g. quasar-render, quasar-physics) register handlers
+/// in their `Plugin::build()` so that prefab overrides can target their
+/// component types without quasar-core knowing about them at compile time.
+///
+/// ```ignore
+/// registry.register("PointLight", |world, entity, field, value| {
+///     if let Some(light) = world.get_mut::<PointLight>(entity) {
+///         match field {
+///             "intensity" => if let Some(v) = value.as_f64() { light.intensity = v as f32; },
+///             "range"     => if let Some(v) = value.as_f64() { light.range = v as f32; },
+///             _ => {}
+///         }
+///     }
+/// });
+/// ```
+#[derive(Default)]
+pub struct OverrideRegistry {
+    handlers: std::collections::HashMap<String, OverrideHandlerFn>,
+}
+
+impl OverrideRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a handler for a component type name.
+    pub fn register(&mut self, component_type: impl Into<String>, handler: OverrideHandlerFn) {
+        self.handlers.insert(component_type.into(), handler);
     }
 }
 

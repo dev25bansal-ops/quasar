@@ -62,6 +62,7 @@ impl System for TransformWritebackSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("transform_writeback"); }
         let handles: Vec<(rapier3d::prelude::RigidBodyHandle, Transform)> = world
             .query2::<RigidBodyComponent, Transform>()
             .into_iter()
@@ -82,6 +83,7 @@ impl System for TransformWritebackSystem {
                     .set_body_rotation(handle, tf.rotation.into());
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("transform_writeback"); }
     }
 }
 
@@ -103,6 +105,7 @@ impl System for PhysicsStepSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("physics_step"); }
         let delta = world
             .resource::<quasar_core::TimeSnapshot>()
             .map(|t| t.delta_seconds)
@@ -146,6 +149,7 @@ impl System for PhysicsStepSystem {
                 transform.rotation = glam::Quat::from_xyzw(rot[0], rot[1], rot[2], rot[3]);
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("physics_step"); }
     }
 }
 
@@ -177,6 +181,7 @@ impl System for CollisionEventSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("collision_events"); }
         let collider_to_entity: std::collections::HashMap<
             rapier3d::prelude::ColliderHandle,
             Entity,
@@ -223,6 +228,7 @@ impl System for CollisionEventSystem {
                 }
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("collision_events"); }
     }
 }
 
@@ -235,6 +241,7 @@ impl System for JointSyncSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("joint_sync"); }
         use crate::joints::{build_rapier_joint, JointComponent};
 
         // Collect joints that still need a Rapier handle.
@@ -270,6 +277,7 @@ impl System for JointSyncSystem {
                 j.handle = Some(handle);
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("joint_sync"); }
     }
 }
 
@@ -281,6 +289,7 @@ impl System for CharacterControllerSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("character_controller"); }
         let delta = world
             .resource::<quasar_core::TimeSnapshot>()
             .map(|t| t.delta_seconds)
@@ -334,6 +343,7 @@ impl System for CharacterControllerSystem {
                 cc.grounded = result.grounded;
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("character_controller"); }
     }
 }
 
@@ -350,6 +360,7 @@ impl System for ColliderSyncSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("collider_sync"); }
         use crate::collider::PendingCollider;
 
         let pending: Vec<(Entity, PendingCollider)> = world
@@ -383,6 +394,7 @@ impl System for ColliderSyncSystem {
             world.insert(entity, ColliderComponent::new(handle));
             world.remove_raw(entity, std::any::TypeId::of::<PendingCollider>());
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("collider_sync"); }
     }
 }
 
@@ -415,6 +427,7 @@ impl System for TriggerEventSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("trigger_events"); }
         // Build collider_handle → Entity map.
         let collider_to_entity: std::collections::HashMap<
             rapier3d::prelude::ColliderHandle,
@@ -474,6 +487,7 @@ impl System for TriggerEventSystem {
                 events.send(ev);
             }
         }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("trigger_events"); }
     }
 }
 
