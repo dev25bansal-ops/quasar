@@ -124,7 +124,14 @@ impl Prefab {
 /// Spawn entities from a prefab into the world. Returns a list of
 /// `(Entity, &PrefabEntity)` pairs in the same order as `prefab.entities`,
 /// so callers can process mesh_shape and properties.
-pub fn instantiate_prefab<'a>(world: &mut World, prefab: &'a Prefab) -> Vec<(Entity, &'a PrefabEntity)> {
+///
+/// If `instance` is `Some`, each spawned entity gets a [`PrefabInstance`]
+/// component and overrides are applied after creation.
+pub fn instantiate_prefab<'a>(
+    world: &mut World,
+    prefab: &'a Prefab,
+    instance: Option<PrefabInstance>,
+) -> Vec<(Entity, &'a PrefabEntity)> {
     let mut spawned: Vec<(Entity, &PrefabEntity)> = Vec::with_capacity(prefab.entities.len());
 
     for pe in &prefab.entities {
@@ -141,7 +148,19 @@ pub fn instantiate_prefab<'a>(world: &mut World, prefab: &'a Prefab) -> Vec<(Ent
             world.insert(entity, PrefabProperties(pe.properties.clone()));
         }
 
+        // Attach prefab instance tracking.
+        if let Some(ref inst) = instance {
+            world.insert(entity, inst.clone());
+        }
+
         spawned.push((entity, pe));
+    }
+
+    // Apply overrides after all entities are spawned.
+    if let Some(ref inst) = instance {
+        for &(entity, _) in &spawned {
+            apply_overrides(world, entity, &inst.overrides);
+        }
     }
 
     spawned
@@ -154,6 +173,78 @@ pub struct PrefabMeshTag(pub String);
 /// Component holding arbitrary prefab properties for game-specific systems.
 #[derive(Debug, Clone)]
 pub struct PrefabProperties(pub Vec<PrefabProperty>);
+
+// ---------------------------------------------------------------------------
+// Prefab Instance Overrides
+// ---------------------------------------------------------------------------
+
+/// A single field override for a component on a prefab instance.
+///
+/// Overrides are applied after instantiation, allowing instances to diverge
+/// from the template without duplicating the entire prefab data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentOverride {
+    /// The component type name (e.g. "Transform", "PointLight").
+    pub component_type: String,
+    /// Dot-separated field path within the component (e.g. "position.x").
+    pub field_path: String,
+    /// The override value (JSON).
+    pub value: serde_json::Value,
+}
+
+/// Component attached to entities spawned from a prefab, tracking the source
+/// template and any per-instance property overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefabInstance {
+    /// The name of the source prefab in the [`PrefabLibrary`].
+    pub prefab_id: String,
+    /// Per-instance overrides applied on top of the template.
+    pub overrides: Vec<ComponentOverride>,
+}
+
+impl PrefabInstance {
+    pub fn new(prefab_id: impl Into<String>) -> Self {
+        Self {
+            prefab_id: prefab_id.into(),
+            overrides: Vec::new(),
+        }
+    }
+
+    pub fn with_override(mut self, component_type: &str, field_path: &str, value: serde_json::Value) -> Self {
+        self.overrides.push(ComponentOverride {
+            component_type: component_type.to_string(),
+            field_path: field_path.to_string(),
+            value,
+        });
+        self
+    }
+}
+
+/// Apply [`ComponentOverride`]s from a [`PrefabInstance`] to a Transform
+/// component. Other component types can be handled similarly by downstream
+/// systems via the reflection registry.
+pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[ComponentOverride]) {
+    for ovr in overrides {
+        if ovr.component_type == "Transform" {
+            if let Some(t) = world.get_mut::<Transform>(entity) {
+                match ovr.field_path.as_str() {
+                    "position.x" => if let Some(v) = ovr.value.as_f64() { t.position.x = v as f32; },
+                    "position.y" => if let Some(v) = ovr.value.as_f64() { t.position.y = v as f32; },
+                    "position.z" => if let Some(v) = ovr.value.as_f64() { t.position.z = v as f32; },
+                    "scale.x" => if let Some(v) = ovr.value.as_f64() { t.scale.x = v as f32; },
+                    "scale.y" => if let Some(v) = ovr.value.as_f64() { t.scale.y = v as f32; },
+                    "scale.z" => if let Some(v) = ovr.value.as_f64() { t.scale.z = v as f32; },
+                    _ => {
+                        log::warn!(
+                            "Unknown override path '{}' for Transform",
+                            ovr.field_path
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Prefab Asset

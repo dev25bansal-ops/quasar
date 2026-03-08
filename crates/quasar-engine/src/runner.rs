@@ -529,3 +529,67 @@ pub fn run(app: App, config: WindowConfig) {
     let mut runner = QuasarRunner::new(app, config);
     event_loop.run_app(&mut runner).expect("Event loop error");
 }
+
+// ---------------------------------------------------------------------------
+// WASM async runner — requestAnimationFrame loop
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_runner {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+
+    use quasar_core::App;
+
+    /// State shared between animation‐frame callbacks.
+    struct WasmAppState {
+        app: App,
+        /// Whether the loop should keep running.
+        running: bool,
+    }
+
+    /// Kick off the engine's main loop using `requestAnimationFrame`.
+    ///
+    /// This is intended to be called from the WASM entry point instead of
+    /// `run()` which blocks on a native winit event loop.
+    pub fn run_wasm(app: App) {
+        let state = Rc::new(RefCell::new(WasmAppState {
+            app,
+            running: true,
+        }));
+
+        schedule_frame(state);
+    }
+
+    fn schedule_frame(state: Rc<RefCell<WasmAppState>>) {
+        let window = web_sys::window().expect("no global window");
+        let cb = Rc::new(RefCell::new(None::<Closure<dyn FnMut(f64)>>));
+        let cb_clone = cb.clone();
+        let state_clone = state.clone();
+
+        *cb.borrow_mut() = Some(Closure::wrap(Box::new(move |_timestamp: f64| {
+            {
+                let mut st = state_clone.borrow_mut();
+                if !st.running {
+                    // Drop the closure to break the reference cycle.
+                    let _ = cb_clone.borrow_mut().take();
+                    return;
+                }
+                st.app.tick();
+            }
+            // Schedule the next frame.
+            if let Some(ref closure) = *cb_clone.borrow() {
+                let _ = web_sys::window()
+                    .unwrap()
+                    .request_animation_frame(closure.as_ref().unchecked_ref());
+            }
+        }) as Box<dyn FnMut(f64)>));
+
+        if let Some(ref closure) = *cb.borrow() {
+            let _ = window.request_animation_frame(closure.as_ref().unchecked_ref());
+        }
+    }
+}

@@ -692,6 +692,116 @@ impl StencilLightVolumePass {
             sphere_index_count,
         }
     }
+
+    /// Execute per-light stencil volume rendering.
+    ///
+    /// For each light: upload its `LightVolumeUniform`, run the stencil mark
+    /// pass (back-faces, depth-fail increment), then the shade pass (front-faces,
+    /// stencil test, additive blend).  Falls back to the fullscreen deferred
+    /// lighting path when `light_count < threshold`.
+    pub fn execute_per_light(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+        depth_stencil_view: &wgpu::TextureView,
+        gbuffer: &GBuffer,
+        lights: &[LightVolumeUniform],
+    ) {
+        // Upload sphere geometry (could be cached, but kept simple).
+        let (sphere_verts, sphere_idxs) = generate_unit_sphere(12, 8);
+        queue.write_buffer(
+            &self.sphere_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&sphere_verts),
+        );
+        queue.write_buffer(
+            &self.sphere_index_buffer,
+            0,
+            bytemuck::cast_slice(&sphere_idxs),
+        );
+
+        for light in lights {
+            // Per-light uniform buffer
+            let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Light Volume Uniform"),
+                size: std::mem::size_of::<LightVolumeUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(light));
+
+            let volume_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Light Volume BG"),
+                layout: &self.volume_bind_group_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+            });
+
+            // ── Pass 1: Stencil mark (back-faces, depth-fail increment) ──
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Stencil Mark Pass"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_stencil_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.stencil_mark_pipeline);
+                pass.set_bind_group(0, &volume_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.sphere_vertex_buffer.slice(..));
+                pass.set_index_buffer(self.sphere_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.sphere_index_count, 0, 0..1);
+            }
+
+            // ── Pass 2: Shade (front-faces, stencil test, additive blend) ──
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Stencil Shade Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: output_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth_stencil_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        }),
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&self.shade_pipeline);
+                pass.set_bind_group(0, &gbuffer.read_bind_group, &[]);
+                pass.set_bind_group(1, &volume_bind_group, &[]);
+                pass.set_vertex_buffer(0, self.sphere_vertex_buffer.slice(..));
+                pass.set_index_buffer(self.sphere_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.sphere_index_count, 0, 0..1);
+            }
+        }
+    }
 }
 
 /// Generate a UV-sphere with `slices` longitude and `stacks` latitude segments.

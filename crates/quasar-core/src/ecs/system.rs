@@ -46,6 +46,8 @@ impl<F: FnMut(&mut World) + Send + Sync> System for FnSystem<F> {
 pub enum SystemStage {
     /// Runs before the main update (input processing, event dispatch).
     PreUpdate,
+    /// Fixed-rate update for physics and deterministic simulation.
+    FixedUpdate,
     /// Main game logic.
     Update,
     /// Runs after update (physics sync, transform propagation).
@@ -71,6 +73,7 @@ impl Schedule {
         Self {
             stages: vec![
                 (SystemStage::PreUpdate, Vec::new()),
+                (SystemStage::FixedUpdate, Vec::new()),
                 (SystemStage::Update, Vec::new()),
                 (SystemStage::PostUpdate, Vec::new()),
                 (SystemStage::PreRender, Vec::new()),
@@ -133,6 +136,57 @@ impl Schedule {
             if let Some(mut cmds) = world.remove_resource::<Commands>() {
                 cmds.apply(world);
                 world.insert_resource(cmds);
+            }
+        }
+    }
+
+    /// Run all systems with fixed-update substep loop for the `FixedUpdate` stage.
+    ///
+    /// Non-FixedUpdate stages run once. The FixedUpdate stage runs in a loop
+    /// consuming accumulated time from [`crate::time::FixedUpdateAccumulator`].
+    pub fn run_with_fixed_update(&mut self, world: &mut World, frame_delta: f32) {
+        use crate::time::FixedUpdateAccumulator;
+
+        for (stage, systems) in &mut self.stages {
+            if *stage == SystemStage::FixedUpdate {
+                // Accumulate frame delta and run fixed-rate substeps.
+                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                    fua.acc += frame_delta;
+                    (fua.acc, fua.step)
+                } else {
+                    continue;
+                };
+
+                if step <= 0.0 || systems.is_empty() {
+                    continue;
+                }
+
+                let mut remaining = acc;
+                while remaining >= step {
+                    let order = topo_sort_systems(systems, &self.before);
+                    for idx in &order {
+                        systems[*idx].run(world);
+                    }
+                    if let Some(mut cmds) = world.remove_resource::<Commands>() {
+                        cmds.apply(world);
+                        world.insert_resource(cmds);
+                    }
+                    remaining -= step;
+                }
+
+                // Write back remaining accumulator.
+                if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                    fua.acc = remaining;
+                }
+            } else {
+                let order = topo_sort_systems(systems, &self.before);
+                for idx in order {
+                    systems[idx].run(world);
+                }
+                if let Some(mut cmds) = world.remove_resource::<Commands>() {
+                    cmds.apply(world);
+                    world.insert_resource(cmds);
+                }
             }
         }
     }

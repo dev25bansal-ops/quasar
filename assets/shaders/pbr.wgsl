@@ -70,6 +70,24 @@ struct IblUniform {
 @group(5) @binding(5) var t_brdf_lut: texture_2d<f32>;
 @group(5) @binding(6) var s_brdf_lut: sampler;
 
+// LOD cross-fade dithering (blend = 0 → fully visible, blend = 1 → fully discarded).
+@group(6) @binding(0) var<uniform> lod_crossfade_blend: f32;
+
+fn bayer4x4(coord: vec2<u32>) -> f32 {
+    let m = array<f32, 16>(
+         0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
+        12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,
+         3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
+        15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0,
+    );
+    return m[(coord.y % 4u) * 4u + (coord.x % 4u)];
+}
+
+fn discard_crossfade(frag_coord: vec2<f32>, blend: f32) {
+    let threshold = bayer4x4(vec2<u32>(u32(frag_coord.x), u32(frag_coord.y)));
+    if threshold >= blend { discard; }
+}
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -270,6 +288,11 @@ fn calculate_ibl(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // LOD cross-fade dithering: discard fragments based on Bayer pattern.
+    if lod_crossfade_blend > 0.0 {
+        discard_crossfade(in.clip_position.xy, lod_crossfade_blend);
+    }
+
     let tex_color = textureSample(t_albedo, s_albedo, in.uv);
     let albedo = pow(tex_color.rgb * material.base_color.rgb * in.color.rgb, vec3<f32>(2.2));
 

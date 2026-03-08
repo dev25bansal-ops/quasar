@@ -519,15 +519,15 @@ impl quasar_core::Plugin for PhysicsPlugin {
             Box::new(TransformWritebackSystem),
         );
 
-        // PostUpdate: Step physics with fixed timestep
+        // FixedUpdate: Step physics with fixed timestep
         app.schedule.add_system(
-            quasar_core::ecs::SystemStage::PostUpdate,
+            quasar_core::ecs::SystemStage::FixedUpdate,
             Box::new(PhysicsStepSystem),
         );
 
-        // PostUpdate: Character controller movement (after physics step)
+        // FixedUpdate: Character controller movement (after physics step)
         app.schedule.add_system(
-            quasar_core::ecs::SystemStage::PostUpdate,
+            quasar_core::ecs::SystemStage::FixedUpdate,
             Box::new(CharacterControllerSystem),
         );
 

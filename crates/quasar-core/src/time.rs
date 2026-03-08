@@ -84,3 +84,27 @@ impl Default for Time {
         Self::new()
     }
 }
+
+/// Accumulator for fixed-timestep updates (physics, deterministic simulation).
+///
+/// Each frame, `acc` is incremented by the frame delta. The engine then runs
+/// `FixedUpdate` systems in a loop while `acc >= step`, subtracting `step`
+/// each iteration.
+pub struct FixedUpdateAccumulator {
+    /// Accumulated unprocessed time in seconds.
+    pub acc: f32,
+    /// Fixed timestep size in seconds (default 1/60).
+    pub step: f32,
+}
+
+impl FixedUpdateAccumulator {
+    pub fn new(step: f32) -> Self {
+        Self { acc: 0.0, step }
+    }
+}
+
+impl Default for FixedUpdateAccumulator {
+    fn default() -> Self {
+        Self::new(1.0 / 60.0)
+    }
+}

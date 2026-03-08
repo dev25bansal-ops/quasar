@@ -31,6 +31,149 @@ pub use reflect::{
 pub use quasar_derive::Inspect as DeriveInspect;
 use quasar_core::ecs::Entity;
 
+// ---------------------------------------------------------------------------
+// Animation Timeline Panel
+// ---------------------------------------------------------------------------
+
+/// A channel (track lane) in the timeline.
+#[derive(Debug, Clone)]
+pub struct TimelineChannel {
+    pub name: String,
+    /// Keyframe times in seconds.
+    pub keyframe_times: Vec<f32>,
+}
+
+/// State for the animation timeline editor panel.
+pub struct TimelinePanel {
+    /// Current scrub position in seconds.
+    pub scrub_time: f32,
+    /// Horizontal zoom (pixels per second).
+    pub zoom: f32,
+    /// Whether playback is active.
+    pub playing: bool,
+    /// Channels to display.
+    pub channels: Vec<TimelineChannel>,
+    /// Horizontal scroll offset in seconds.
+    pub scroll_offset: f32,
+}
+
+impl TimelinePanel {
+    pub fn new() -> Self {
+        Self {
+            scrub_time: 0.0,
+            zoom: 100.0,
+            playing: false,
+            channels: Vec::new(),
+            scroll_offset: 0.0,
+        }
+    }
+
+    /// Render the timeline panel using egui.
+    pub fn ui(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("timeline_panel")
+            .default_height(180.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("\u{1F3AC} Timeline");
+                    ui.separator();
+                    if ui.button(if self.playing { "\u{23F8} Pause" } else { "\u{25B6} Play" }).clicked() {
+                        self.playing = !self.playing;
+                    }
+                    if ui.button("\u{23F9} Stop").clicked() {
+                        self.playing = false;
+                        self.scrub_time = 0.0;
+                    }
+                    ui.separator();
+                    ui.add(egui::DragValue::new(&mut self.scrub_time)
+                        .speed(0.01)
+                        .prefix("Time: ")
+                        .suffix(" s"));
+                    ui.separator();
+                    ui.add(egui::Slider::new(&mut self.zoom, 20.0..=500.0).text("Zoom"));
+                });
+                ui.separator();
+
+                let track_height = 24.0;
+                let total_height = self.channels.len() as f32 * track_height;
+                let available = ui.available_size();
+
+                egui::ScrollArea::both()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(available.x.max(self.zoom * 10.0), total_height.max(available.y)),
+                            egui::Sense::click_and_drag(),
+                        );
+                        let painter = ui.painter_at(rect);
+
+                        // Background
+                        painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(30, 30, 35));
+
+                        // Draw channels
+                        for (i, ch) in self.channels.iter().enumerate() {
+                            let y = rect.min.y + i as f32 * track_height;
+                            // Channel label
+                            painter.text(
+                                egui::pos2(rect.min.x + 4.0, y + 4.0),
+                                egui::Align2::LEFT_TOP,
+                                &ch.name,
+                                egui::FontId::monospace(11.0),
+                                egui::Color32::LIGHT_GRAY,
+                            );
+                            // Row separator
+                            painter.line_segment(
+                                [egui::pos2(rect.min.x, y + track_height), egui::pos2(rect.max.x, y + track_height)],
+                                egui::Stroke::new(0.5, egui::Color32::from_gray(60)),
+                            );
+                            // Keyframe diamonds
+                            for &t in &ch.keyframe_times {
+                                let x = rect.min.x + 80.0 + (t - self.scroll_offset) * self.zoom;
+                                if x >= rect.min.x && x <= rect.max.x {
+                                    let center = egui::pos2(x, y + track_height * 0.5);
+                                    let size = 5.0;
+                                    let diamond = vec![
+                                        egui::pos2(center.x, center.y - size),
+                                        egui::pos2(center.x + size, center.y),
+                                        egui::pos2(center.x, center.y + size),
+                                        egui::pos2(center.x - size, center.y),
+                                    ];
+                                    painter.add(egui::Shape::convex_polygon(
+                                        diamond,
+                                        egui::Color32::from_rgb(255, 200, 50),
+                                        egui::Stroke::NONE,
+                                    ));
+                                }
+                            }
+                        }
+
+                        // Scrub cursor
+                        let scrub_x = rect.min.x + 80.0 + (self.scrub_time - self.scroll_offset) * self.zoom;
+                        if scrub_x >= rect.min.x && scrub_x <= rect.max.x {
+                            painter.line_segment(
+                                [egui::pos2(scrub_x, rect.min.y), egui::pos2(scrub_x, rect.max.y)],
+                                egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 180, 255)),
+                            );
+                        }
+
+                        // Click to scrub
+                        if response.clicked() {
+                            if let Some(pos) = response.interact_pointer_pos() {
+                                let new_time = self.scroll_offset + (pos.x - rect.min.x - 80.0) / self.zoom;
+                                self.scrub_time = new_time.max(0.0);
+                            }
+                        }
+                    });
+            });
+    }
+}
+
+impl Default for TimelinePanel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Editor actions that require world access
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorAction {
@@ -79,6 +222,10 @@ pub struct Editor {
     pub profiler_max_frames: usize,
     /// Pending Lua expression from the REPL to be evaluated by the runner.
     pub pending_lua_eval: Option<String>,
+    /// Show the animation timeline panel.
+    pub show_timeline: bool,
+    /// Animation timeline panel state.
+    pub timeline_panel: TimelinePanel,
 }
 
 impl Editor {
@@ -102,6 +249,8 @@ impl Editor {
             profiler_frame_times: std::collections::VecDeque::with_capacity(240),
             profiler_max_frames: 240,
             pending_lua_eval: None,
+            show_timeline: false,
+            timeline_panel: TimelinePanel::new(),
         }
     }
 
@@ -142,6 +291,7 @@ impl Editor {
                 ui.toggle_value(&mut self.show_asset_browser, "📁 Assets");
                 ui.toggle_value(&mut self.show_shader_graph, "🔗 Shader Graph");
                 ui.toggle_value(&mut self.show_lua_repl, "🖥 Lua REPL");
+                ui.toggle_value(&mut self.show_timeline, "🎬 Timeline");
                 ui.separator();
 
                 // Play/Pause/Stop buttons
@@ -326,6 +476,11 @@ impl Editor {
         // Asset browser panel
         if self.show_asset_browser {
             let _drag_path = self.asset_browser.panel(ctx);
+        }
+
+        // Animation timeline panel
+        if self.show_timeline {
+            self.timeline_panel.ui(ctx);
         }
 
         (inspector_changed, inspector_action, editor_action)

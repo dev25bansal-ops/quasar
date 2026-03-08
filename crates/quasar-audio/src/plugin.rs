@@ -3,7 +3,7 @@
 use quasar_core::ecs::{Entity, System, World};
 use quasar_math::{Quat, Transform, Vec3};
 
-use crate::{AudioListener, AudioSource, AudioSystem};
+use crate::{AudioBus, AudioListener, AudioSource, AudioSystem};
 
 /// Resource wrapper for the audio system as an ECS global resource.
 pub struct AudioResource {
@@ -161,6 +161,7 @@ impl System for SpatialAudioSystem {
                     ref_distance: *ref_dist,
                     max_distance: *max_dist,
                     rolloff_factor: *rolloff,
+                    bus: AudioBus::Sfx,
                 };
 
                 resource

@@ -5,6 +5,7 @@ use quasar_core::error::{QuasarError, QuasarResult};
 use super::camera::{Camera, CameraUniform};
 use super::material::{LightUniform, Material, MaterialOverride};
 use super::mesh::Mesh;
+use super::occlusion::{DrawIndexedIndirectArgs, GpuCullPass, IndirectDrawManager, MeshDrawCommand};
 use super::pipeline;
 use super::texture::Texture;
 
@@ -17,12 +18,15 @@ const MAX_RENDER_OBJECTS: usize = 4096;
 pub struct RenderConfig {
     /// MSAA sample count (1 = no MSAA, 4 = 4x MSAA).
     pub msaa_sample_count: u32,
+    /// Enable GPU-driven culling via compute shader + indirect draws.
+    pub gpu_driven_culling: bool,
 }
 
 impl Default for RenderConfig {
     fn default() -> Self {
         Self {
             msaa_sample_count: 1,
+            gpu_driven_culling: false,
         }
     }
 }
@@ -66,6 +70,10 @@ pub struct Renderer {
     pub instance_bind_group: wgpu::BindGroup,
     /// Bind group layout for instance data.
     pub instance_bind_group_layout: wgpu::BindGroupLayout,
+    /// GPU compute-based frustum/occlusion culling pass (when enabled).
+    pub gpu_cull_pass: Option<GpuCullPass>,
+    /// Indirect draw command manager for GPU-driven rendering.
+    pub indirect_draw_manager: Option<IndirectDrawManager>,
 }
 
 impl Renderer {
@@ -283,7 +291,7 @@ impl Renderer {
         // Upload light data.
         queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&[light_uniform]));
 
-        Ok(Self {
+        let mut result = Ok(Self {
             device,
             queue,
             surface,
@@ -310,7 +318,16 @@ impl Renderer {
             instance_buffer,
             instance_bind_group,
             instance_bind_group_layout,
-        })
+            gpu_cull_pass: None,
+            indirect_draw_manager: None,
+        });
+        if let Ok(ref mut renderer) = result {
+            if renderer.render_config.gpu_driven_culling {
+                renderer.gpu_cull_pass = Some(GpuCullPass::new(&renderer.device));
+                renderer.indirect_draw_manager = Some(IndirectDrawManager::new());
+            }
+        }
+        result
     }
 
     /// Handle window resize — reconfigure surface and depth buffer.
@@ -507,6 +524,82 @@ impl Renderer {
                 data[offset..offset + uniform_size].copy_from_slice(bytes);
             }
             self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
+        // ── GPU-driven indirect rendering path ──
+        if self.render_config.gpu_driven_culling {
+            if let (Some(cull_pass), Some(mgr)) =
+                (self.gpu_cull_pass.as_ref(), self.indirect_draw_manager.as_mut())
+            {
+                mgr.clear();
+                for (mesh, model, _, _) in objects.iter() {
+                    let (scale, _, translation) = model.to_scale_rotation_translation();
+                    let half = scale.abs();
+                    mgr.push(MeshDrawCommand {
+                        index_count: mesh.index_count,
+                        first_index: 0,
+                        base_vertex: 0,
+                        aabb_min: translation - half,
+                        aabb_max: translation + half,
+                        material_index: 0,
+                    });
+                }
+                let vp = camera.view_projection();
+                mgr.upload_aabbs(&self.queue, cull_pass);
+                mgr.upload_uniforms(
+                    &self.queue,
+                    cull_pass,
+                    &vp,
+                    self.config.width as f32,
+                    self.config.height as f32,
+                );
+                mgr.prepare_indirect_buffer(&self.queue, cull_pass);
+                let bg = cull_pass.create_bind_group(&self.device);
+                cull_pass.dispatch(encoder, &bg, mgr.count());
+
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("3D Render Pass (GPU Culled)"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view,
+                            resolve_target: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(wgpu::Color {
+                                    r: 0.05, g: 0.05, b: 0.08, a: 1.0,
+                                }),
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+
+                    pass.set_pipeline(&self.render_pipeline);
+                    pass.set_bind_group(2, &self.light_bind_group, &[]);
+
+                    let stride = std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
+                    for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
+                        let dyn_offset = (i * aligned_size) as u32;
+                        pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                        let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
+                        pass.set_bind_group(1, material_bg, &[]);
+                        let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                        pass.set_bind_group(3, texture_bg, &[]);
+                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.draw_indexed_indirect(&cull_pass.indirect_buffer, i as u64 * stride);
+                    }
+                }
+            }
+            return;
         }
 
         type BatchKey = (usize, usize, usize);

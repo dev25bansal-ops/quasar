@@ -24,9 +24,22 @@ struct Triangle {
     uv2_pad: vec4<f32>,
 };
 
+// BVH node for accelerated ray traversal.
+// Leaf nodes: left_or_start = first triangle index, right_or_count = triangle count.
+// Internal nodes: left_or_start = left child, right_or_count = right child.
+struct BvhNode {
+    aabb_min: vec4<f32>,
+    aabb_max: vec4<f32>,
+    left_or_start: u32,
+    right_or_count: u32,
+    is_leaf: u32,
+    _pad: u32,
+};
+
 @group(0) @binding(0) var<uniform> cfg: PathTraceUniforms;
 @group(0) @binding(1) var<storage, read> tris: array<Triangle>;
 @group(0) @binding(2) var output: texture_storage_2d<rgba32float, read_write>;
+@group(0) @binding(3) var<storage, read> bvh_nodes: array<BvhNode>;
 
 fn hash(v: u32) -> u32 {
     var x = v;
@@ -77,22 +90,99 @@ fn ray_tri(ro: vec3<f32>, rd: vec3<f32>, p0: vec3<f32>, p1: vec3<f32>, p2: vec3<
     return -1.0;
 }
 
+fn intersect_aabb(ro: vec3<f32>, rd_inv: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>, t_max: f32) -> bool {
+    let t0 = (bmin - ro) * rd_inv;
+    let t1 = (bmax - ro) * rd_inv;
+    let tmin = max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z));
+    let tmax = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+    return tmax >= max(tmin, 0.0) && tmin < t_max;
+}
+
 fn trace_scene(ro: vec3<f32>, rd: vec3<f32>) -> vec4<f32> {
     var closest = 1e30;
     var hit_normal = vec3(0.0);
-    for (var i = 0u; i < cfg.triangle_count; i = i + 1u) {
-        let tri = tris[i];
-        let t = ray_tri(ro, rd, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
-        if t > 0.0 && t < closest {
-            closest = t;
-            let bary_u = 1.0; // simplified — weight from Moller-Trumbore
-            hit_normal = normalize(tri.n0.xyz + tri.n1.xyz + tri.n2.xyz);
+    let rd_inv = 1.0 / rd;
+
+    // Stack-based BVH traversal
+    var stack: array<u32, 32>;
+    var stack_ptr = 0;
+    stack[0] = 0u;
+    stack_ptr = 1;
+
+    while stack_ptr > 0 {
+        stack_ptr -= 1;
+        let node_idx = stack[stack_ptr];
+        let node = bvh_nodes[node_idx];
+
+        if !intersect_aabb(ro, rd_inv, node.aabb_min.xyz, node.aabb_max.xyz, closest) {
+            continue;
+        }
+
+        if node.is_leaf != 0u {
+            let start = node.left_or_start;
+            let count = node.right_or_count;
+            for (var i = start; i < start + count; i = i + 1u) {
+                let tri = tris[i];
+                let t = ray_tri(ro, rd, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
+                if t > 0.0 && t < closest {
+                    closest = t;
+                    hit_normal = normalize(tri.n0.xyz + tri.n1.xyz + tri.n2.xyz);
+                }
+            }
+        } else {
+            // Push children; visit nearer child first
+            if stack_ptr < 30 {
+                stack[stack_ptr] = node.right_or_count;
+                stack_ptr += 1;
+            }
+            if stack_ptr < 30 {
+                stack[stack_ptr] = node.left_or_start;
+                stack_ptr += 1;
+            }
         }
     }
     if closest < 1e29 {
         return vec4(hit_normal, closest);
     }
     return vec4(0.0, 0.0, 0.0, -1.0);
+}
+
+fn trace_shadow_bvh(ro: vec3<f32>, rd: vec3<f32>) -> bool {
+    let rd_inv = 1.0 / rd;
+    var stack: array<u32, 32>;
+    var stack_ptr = 0;
+    stack[0] = 0u;
+    stack_ptr = 1;
+
+    while stack_ptr > 0 {
+        stack_ptr -= 1;
+        let node_idx = stack[stack_ptr];
+        let node = bvh_nodes[node_idx];
+
+        if !intersect_aabb(ro, rd_inv, node.aabb_min.xyz, node.aabb_max.xyz, 1e30) {
+            continue;
+        }
+
+        if node.is_leaf != 0u {
+            let start = node.left_or_start;
+            let count = node.right_or_count;
+            for (var i = start; i < start + count; i = i + 1u) {
+                let tri = tris[i];
+                let st = ray_tri(ro, rd, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
+                if st > 0.0 { return true; }
+            }
+        } else {
+            if stack_ptr < 30 {
+                stack[stack_ptr] = node.right_or_count;
+                stack_ptr += 1;
+            }
+            if stack_ptr < 30 {
+                stack[stack_ptr] = node.left_or_start;
+                stack_ptr += 1;
+            }
+        }
+    }
+    return false;
 }
 
 fn cosine_hemisphere(n: vec3<f32>, seed: ptr<function, u32>) -> vec3<f32> {
@@ -158,12 +248,7 @@ fn pathtrace_main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let light_dir = cfg.light_dir.xyz;
             let n_dot_l = max(dot(cur_normal, -light_dir), 0.0);
             let shadow_origin = ray_pos + cur_normal * 0.001;
-            var in_shadow = false;
-            for (var j = 0u; j < cfg.triangle_count; j = j + 1u) {
-                let tri = tris[j];
-                let st = ray_tri(shadow_origin, -light_dir, tri.p0.xyz, tri.p1.xyz, tri.p2.xyz);
-                if st > 0.0 { in_shadow = true; break; }
-            }
+            let in_shadow = trace_shadow_bvh(shadow_origin, -light_dir);
             if !in_shadow {
                 radiance = radiance + throughput * cfg.light_color_energy.xyz * cfg.light_color_energy.w * n_dot_l;
             }

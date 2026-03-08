@@ -3,7 +3,7 @@
 use crate::ecs::{Schedule, SystemStage, World};
 use crate::event::Events;
 use crate::plugin::Plugin;
-use crate::time::Time;
+use crate::time::{FixedUpdateAccumulator, Time};
 
 /// A lightweight, clonable snapshot of frame timing data.
 ///
@@ -99,7 +99,12 @@ impl App {
             frame_count: self.time.frame_count(),
         });
 
-        self.schedule.run(&mut self.world);
+        // Ensure a FixedUpdateAccumulator exists.
+        if self.world.resource::<FixedUpdateAccumulator>().is_none() {
+            self.world.insert_resource(FixedUpdateAccumulator::default());
+        }
+
+        self.schedule.run_with_fixed_update(&mut self.world, self.time.delta_seconds());
 
         // Sync events back from world (systems may have added events)
         if let Some(events) = self.world.resource_mut::<Events>() {

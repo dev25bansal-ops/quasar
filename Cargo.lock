@@ -2910,6 +2910,9 @@ dependencies = [
  "quasar-render",
  "quasar-scripting",
  "quasar-window",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
  "winit",
 ]

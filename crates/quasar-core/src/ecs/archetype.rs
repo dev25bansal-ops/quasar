@@ -66,6 +66,13 @@ pub struct Archetype {
     pub entities: Vec<Entity>,
     pub entity_to_row: HashMap<u32, usize>,
     pub components: HashMap<TypeId, Box<dyn ArchetypeColumn>>,
+    // ── SoA parallel arrays for cache-friendly iteration ──
+    /// Column type ids in index order.
+    pub column_types: Vec<TypeId>,
+    /// Parallel column storage — indexed same as `column_types`.
+    pub columns: Vec<Box<dyn ColumnStorage>>,
+    /// Fast lookup from TypeId to column index.
+    type_to_column: HashMap<TypeId, usize>,
 }
 
 impl Archetype {
@@ -76,6 +83,9 @@ impl Archetype {
             entities: Vec::new(),
             entity_to_row: HashMap::new(),
             components: HashMap::new(),
+            column_types: Vec::new(),
+            columns: Vec::new(),
+            type_to_column: HashMap::new(),
         }
     }
 
@@ -126,6 +136,40 @@ impl Archetype {
             self.components
                 .insert(type_id, Box::new(ArchetypeColumnTyped::<T>::new()));
         }
+        // Also ensure the SoA column exists.
+        if !self.type_to_column.contains_key(&type_id) {
+            let idx = self.columns.len();
+            self.column_types.push(type_id);
+            self.columns.push(Box::new(TypedColumn::<T>::new()));
+            self.type_to_column.insert(type_id, idx);
+        }
+    }
+
+    /// Get a raw const pointer to the SoA column data for type `T`.
+    ///
+    /// # Safety
+    /// The caller must ensure the pointer is not used after the archetype is mutated.
+    pub unsafe fn column_ptr<T: 'static + Send + Sync>(&self) -> Option<*const T> {
+        let &idx = self.type_to_column.get(&TypeId::of::<T>())?;
+        Some(self.columns[idx].raw_ptr() as *const T)
+    }
+
+    /// Get a raw mutable pointer to the SoA column data for type `T`.
+    ///
+    /// # Safety
+    /// The caller must ensure exclusive access and that the pointer is not used
+    /// after the archetype is mutated.
+    pub unsafe fn column_ptr_mut<T: 'static + Send + Sync>(&mut self) -> Option<*mut T> {
+        let &idx = self.type_to_column.get(&TypeId::of::<T>())?;
+        Some(self.columns[idx].raw_ptr_mut() as *mut T)
+    }
+
+    /// Number of rows in the SoA columns for a given type.
+    pub fn column_len<T: 'static + Send + Sync>(&self) -> usize {
+        self.type_to_column
+            .get(&TypeId::of::<T>())
+            .map(|&idx| self.columns[idx].len())
+            .unwrap_or(0)
     }
 
     pub fn entity_count(&self) -> usize {
@@ -203,6 +247,87 @@ impl<T: 'static + Send + Sync> ArchetypeColumn for ArchetypeColumnTyped<T> {
         if let Ok(typed) = value.downcast::<T>() {
             self.data.push(*typed);
         }
+    }
+}
+
+// ── SoA Column Storage ────────────────────────────────────────────
+
+/// Type-erased column storage for SoA archetype layout.
+///
+/// Provides raw pointer access for zero-overhead iteration when the caller
+/// already knows the concrete type.
+pub trait ColumnStorage: Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+    fn swap_remove_entry(&mut self, row: usize);
+    fn len(&self) -> usize;
+    fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>);
+    /// Raw const pointer to the underlying contiguous data buffer.
+    fn raw_ptr(&self) -> *const u8;
+    /// Raw mutable pointer to the underlying contiguous data buffer.
+    fn raw_ptr_mut(&mut self) -> *mut u8;
+    /// Size of each element in bytes.
+    fn element_size(&self) -> usize;
+}
+
+/// Strongly-typed SoA column backed by a contiguous `Vec<T>`.
+pub struct TypedColumn<T: Send + Sync> {
+    pub data: Vec<T>,
+}
+
+impl<T: 'static + Send + Sync> TypedColumn<T> {
+    pub fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    pub fn push(&mut self, value: T) {
+        self.data.push(value);
+    }
+
+    pub fn get(&self, row: usize) -> Option<&T> {
+        self.data.get(row)
+    }
+
+    pub fn get_mut(&mut self, row: usize) -> Option<&mut T> {
+        self.data.get_mut(row)
+    }
+}
+
+impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn swap_remove_entry(&mut self, row: usize) {
+        if row < self.data.len() {
+            self.data.swap_remove(row);
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>) {
+        if let Ok(typed) = value.downcast::<T>() {
+            self.data.push(*typed);
+        }
+    }
+
+    fn raw_ptr(&self) -> *const u8 {
+        self.data.as_ptr() as *const u8
+    }
+
+    fn raw_ptr_mut(&mut self) -> *mut u8 {
+        self.data.as_mut_ptr() as *mut u8
+    }
+
+    fn element_size(&self) -> usize {
+        std::mem::size_of::<T>()
     }
 }
 

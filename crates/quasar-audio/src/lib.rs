@@ -14,10 +14,74 @@ use std::path::Path;
 use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
+use kira::track::{TrackBuilder, TrackHandle};
 use kira::tween::Tween;
 
 /// Unique identifier for a loaded sound.
 pub type SoundId = u64;
+
+// ---------------------------------------------------------------------------
+// Audio Bus / Mixer
+// ---------------------------------------------------------------------------
+
+/// Named audio bus (sub-mix channel).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AudioBus {
+    Master,
+    Music,
+    Sfx,
+    Voice,
+    Ambient,
+    /// User-defined bus.
+    Custom(String),
+}
+
+impl Default for AudioBus {
+    fn default() -> Self {
+        Self::Sfx
+    }
+}
+
+/// Manages per-bus mixer tracks routed through Kira.
+pub struct BusManager {
+    tracks: HashMap<AudioBus, TrackHandle>,
+}
+
+impl BusManager {
+    /// Create default buses (Master, Music, Sfx, Voice, Ambient).
+    pub fn new(manager: &mut AudioManager) -> Self {
+        let mut tracks = HashMap::new();
+        for bus in [
+            AudioBus::Master,
+            AudioBus::Music,
+            AudioBus::Sfx,
+            AudioBus::Voice,
+            AudioBus::Ambient,
+        ] {
+            if let Ok(handle) = manager.add_sub_track(TrackBuilder::new()) {
+                tracks.insert(bus, handle);
+            }
+        }
+        Self { tracks }
+    }
+
+    /// Get the track handle for a bus, creating it on-demand for Custom buses.
+    pub fn track_for(&mut self, bus: &AudioBus, manager: &mut AudioManager) -> Option<&TrackHandle> {
+        if !self.tracks.contains_key(bus) {
+            if let Ok(handle) = manager.add_sub_track(TrackBuilder::new()) {
+                self.tracks.insert(bus.clone(), handle);
+            }
+        }
+        self.tracks.get(bus)
+    }
+
+    /// Set volume on a bus (0.0 = silent, 1.0 = full).
+    pub fn set_bus_volume(&mut self, bus: &AudioBus, volume: f64) {
+        if let Some(track) = self.tracks.get_mut(bus) {
+            track.set_volume(kira::Volume::Amplitude(volume), Tween::default());
+        }
+    }
+}
 
 /// Handle wrapper that unifies static and streaming playback.
 enum SoundHandle {
@@ -75,20 +139,24 @@ pub struct AudioSystem {
     next_id: SoundId,
     handles: HashMap<SoundId, SoundHandle>,
     sound_cache: HashMap<String, StaticSoundData>,
+    pub bus_manager: Option<BusManager>,
 }
 
 impl AudioSystem {
     /// Initialize the audio backend.
     pub fn new() -> Self {
-        let manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
+        let mut manager =
+            AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
         if manager.is_none() {
-            log::warn!("Failed to initialize audio backend — audio will be silent");
+            log::warn!("Failed to initialize audio backend \u{2014} audio will be silent");
         }
+        let bus_manager = manager.as_mut().map(|m| BusManager::new(m));
         Self {
             manager,
             next_id: 1,
             handles: HashMap::new(),
             sound_cache: HashMap::new(),
+            bus_manager,
         }
     }
 
@@ -260,8 +328,8 @@ pub struct AudioSource {
     /// Volume (0.0 – 1.0).
     pub volume: f32,
     /// If Some, the sound is currently playing with this id.
-    pub playing_id: Option<SoundId>,
-    /// Enable spatial (3D positional) audio for this source.
+    pub playing_id: Option<SoundId>,    /// Audio bus to route this source through.
+    pub bus: AudioBus,    /// Enable spatial (3D positional) audio for this source.
     pub spatial: bool,
     /// Reference distance — distance at which volume is unattenuated (default 1.0).
     pub ref_distance: f32,
@@ -278,6 +346,7 @@ impl AudioSource {
             looping: false,
             volume: 1.0,
             playing_id: None,
+            bus: AudioBus::Sfx,
             spatial: false,
             ref_distance: 1.0,
             max_distance: 50.0,
@@ -292,6 +361,12 @@ impl AudioSource {
 
     pub fn with_volume(mut self, volume: f32) -> Self {
         self.volume = volume;
+        self
+    }
+
+    /// Set the audio bus for this source.
+    pub fn with_bus(mut self, bus: AudioBus) -> Self {
+        self.bus = bus;
         self
     }
 
