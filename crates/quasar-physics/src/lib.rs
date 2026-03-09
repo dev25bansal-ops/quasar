@@ -5,6 +5,8 @@
 //! Provides rigid body dynamics, collision detection, ray-casting, and
 //! a plugin that synchronises Rapier transforms ↔ ECS [`Transform`] components.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod async_step;
 pub mod character_controller;
 pub mod collider;

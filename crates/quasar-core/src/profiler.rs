@@ -318,6 +318,141 @@ macro_rules! function_name {
 
 pub struct ProfilerPlugin;
 
+// ── Frame budget / stall detector ────────────────────────────────
+
+/// Tracks whether frames exceed a budget and counts stalls.
+pub struct FrameBudget {
+    /// Target frame time, e.g. 16.6 ms for 60 FPS.
+    pub target: Duration,
+    /// Number of consecutive frames that exceeded the budget.
+    pub consecutive_stalls: u32,
+    /// Total frames that exceeded the budget since last reset.
+    pub total_stalls: u64,
+    /// Worst frame time observed since last reset.
+    pub worst_frame: Duration,
+    /// Ring buffer of the last N frame times for spike analysis.
+    recent_times: VecDeque<Duration>,
+    max_recent: usize,
+}
+
+impl FrameBudget {
+    pub fn new(target: Duration) -> Self {
+        Self {
+            target,
+            consecutive_stalls: 0,
+            total_stalls: 0,
+            worst_frame: Duration::ZERO,
+            recent_times: VecDeque::with_capacity(128),
+            max_recent: 128,
+        }
+    }
+
+    /// Call once per frame after profiler.end_frame().
+    pub fn record(&mut self, frame_time: Duration) {
+        if self.recent_times.len() >= self.max_recent {
+            self.recent_times.pop_front();
+        }
+        self.recent_times.push_back(frame_time);
+
+        if frame_time > self.worst_frame {
+            self.worst_frame = frame_time;
+        }
+
+        if frame_time > self.target {
+            self.consecutive_stalls += 1;
+            self.total_stalls += 1;
+        } else {
+            self.consecutive_stalls = 0;
+        }
+    }
+
+    /// 99th percentile frame time over the recent window.
+    pub fn p99(&self) -> Duration {
+        if self.recent_times.is_empty() {
+            return Duration::ZERO;
+        }
+        let mut sorted: Vec<Duration> = self.recent_times.iter().copied().collect();
+        sorted.sort();
+        let idx = (sorted.len() as f64 * 0.99).ceil() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    pub fn reset(&mut self) {
+        self.consecutive_stalls = 0;
+        self.total_stalls = 0;
+        self.worst_frame = Duration::ZERO;
+        self.recent_times.clear();
+    }
+}
+
+impl Default for FrameBudget {
+    fn default() -> Self {
+        // 60 FPS target.
+        Self::new(Duration::from_micros(16_667))
+    }
+}
+
+// ── Allocation tracker ───────────────────────────────────────────
+
+/// Lightweight per-frame allocation counter.
+///
+/// Call `alloc()` / `dealloc()` from a global allocator wrapper to
+/// track allocation pressure.  The profiler reads the snapshot each frame.
+pub struct AllocTracker {
+    pub allocs_this_frame: u64,
+    pub deallocs_this_frame: u64,
+    pub bytes_allocated: u64,
+    pub bytes_freed: u64,
+    pub peak_bytes: u64,
+    total_live_bytes: u64,
+}
+
+impl AllocTracker {
+    pub const fn new() -> Self {
+        Self {
+            allocs_this_frame: 0,
+            deallocs_this_frame: 0,
+            bytes_allocated: 0,
+            bytes_freed: 0,
+            peak_bytes: 0,
+            total_live_bytes: 0,
+        }
+    }
+
+    /// Record an allocation.
+    pub fn alloc(&mut self, size: usize) {
+        self.allocs_this_frame += 1;
+        self.bytes_allocated += size as u64;
+        self.total_live_bytes += size as u64;
+        if self.total_live_bytes > self.peak_bytes {
+            self.peak_bytes = self.total_live_bytes;
+        }
+    }
+
+    /// Record a deallocation.
+    pub fn dealloc(&mut self, size: usize) {
+        self.deallocs_this_frame += 1;
+        self.bytes_freed += size as u64;
+        self.total_live_bytes = self.total_live_bytes.saturating_sub(size as u64);
+    }
+
+    /// Reset per-frame counters (call at frame start).
+    pub fn begin_frame(&mut self) {
+        self.allocs_this_frame = 0;
+        self.deallocs_this_frame = 0;
+        self.bytes_allocated = 0;
+        self.bytes_freed = 0;
+    }
+}
+
+impl Default for AllocTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ── Plugin ───────────────────────────────────────────────────────
+
 impl crate::Plugin for ProfilerPlugin {
     fn name(&self) -> &str {
         "ProfilerPlugin"

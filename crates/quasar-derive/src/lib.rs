@@ -1,12 +1,16 @@
 //! Derive macros for the Quasar Engine.
 //!
-//! Currently provides `#[derive(Inspect)]` which auto-generates an
-//! [`Inspect`] trait implementation for structs, rendering an egui widget
-//! per field based on its type.
+//! Provides:
+//! - `#[derive(Inspect)]` — auto-generates egui widget per field
+//! - `#[derive(Reflect)]` — Lua/JSON/network serialization
+//! - `#[derive(SystemParam)]` — auto-generates `SystemAccess` from field types
+//! - `#[derive(Replicate)]` — marks components for automatic network replication
+
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, Type, PathArguments, GenericArgument};
 
 /// Derive the `Inspect` trait for a struct.
 ///
@@ -358,6 +362,369 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 let mut cursor = data;
                 Some(Self {
                     #(#net_deser_fields)*
+                })
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// ---------------------------------------------------------------------------
+// #[derive(SystemParam)] — auto-generate SystemAccess from field types
+// ---------------------------------------------------------------------------
+
+/// Extracts inner type name from a wrapper like `Query<'w, (&A, &mut B)>`, `Res<'w, T>`, `ResMut<'w, T>`.
+fn extract_wrapper_info(ty: &Type) -> Option<(String, Vec<(String, bool)>)> {
+    if let Type::Path(type_path) = ty {
+        let seg = type_path.path.segments.last()?;
+        let wrapper_name = seg.ident.to_string();
+        match wrapper_name.as_str() {
+            "Query" => {
+                // Extract component types from Query<'w, (&A, &mut B)>
+                if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                    let mut components = Vec::new();
+                    for arg in &args.args {
+                        if let GenericArgument::Type(inner_ty) = arg {
+                            extract_query_components(inner_ty, &mut components);
+                        }
+                    }
+                    return Some(("Query".to_string(), components));
+                }
+            }
+            "Res" => {
+                if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for arg in &args.args {
+                        if let GenericArgument::Type(inner_ty) = arg {
+                            let ty_str = quote!(#inner_ty).to_string().replace(' ', "");
+                            return Some(("Res".to_string(), vec![(ty_str, false)]));
+                        }
+                    }
+                }
+            }
+            "ResMut" => {
+                if let PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for arg in &args.args {
+                        if let GenericArgument::Type(inner_ty) = arg {
+                            let ty_str = quote!(#inner_ty).to_string().replace(' ', "");
+                            return Some(("ResMut".to_string(), vec![(ty_str, true)]));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Recursively extracts component types from query tuple types.
+/// `&T` → (T, false), `&mut T` → (T, true)
+fn extract_query_components(ty: &Type, out: &mut Vec<(String, bool)>) {
+    match ty {
+        Type::Reference(r) => {
+            let inner = &*r.elem;
+            let ty_str = quote!(#inner).to_string().replace(' ', "");
+            let is_mut = r.mutability.is_some();
+            out.push((ty_str, is_mut));
+        }
+        Type::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                extract_query_components(elem, out);
+            }
+        }
+        Type::Paren(paren) => {
+            extract_query_components(&paren.elem, out);
+        }
+        _ => {
+            // Try to parse as a path type (non-reference component)
+            let ty_str = quote!(#ty).to_string().replace(' ', "");
+            // Skip lifetime parameters
+            if !ty_str.starts_with('\'') {
+                out.push((ty_str, false));
+            }
+        }
+    }
+}
+
+/// Derive `SystemParam` — auto-generates `DeclareAccess` impl by analyzing field types.
+///
+/// Reads `Query<'w, (&T, &mut U)>`, `Res<'w, T>`, `ResMut<'w, T>` fields and
+/// generates the corresponding `SystemAccess` declarations.
+///
+/// # Example
+/// ```ignore
+/// #[derive(SystemParam)]
+/// struct PhysicsParams<'w> {
+///     bodies: Query<'w, (&RigidBody, &mut Transform)>,
+///     time: Res<'w, TimeSnapshot>,
+/// }
+/// ```
+#[proc_macro_derive(SystemParam)]
+pub fn derive_system_param(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let name_str = name.to_string();
+
+    let fields = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named) => &named.named,
+            _ => {
+                return syn::Error::new_spanned(
+                    &input,
+                    "SystemParam can only be derived for structs with named fields",
+                )
+                .to_compile_error()
+                .into();
+            }
+        },
+        _ => {
+            return syn::Error::new_spanned(&input, "SystemParam can only be derived for structs")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let mut read_components = Vec::new();
+    let mut write_components = Vec::new();
+    let mut read_resources = Vec::new();
+    let mut write_resources = Vec::new();
+
+    for field in fields {
+        let ty = &field.ty;
+        if let Some((wrapper, components)) = extract_wrapper_info(ty) {
+            match wrapper.as_str() {
+                "Query" => {
+                    for (comp_ty, is_mut) in &components {
+                        let ident = syn::Ident::new(comp_ty, proc_macro2::Span::call_site());
+                        if *is_mut {
+                            write_components.push(quote! { std::any::TypeId::of::<#ident>() });
+                        } else {
+                            read_components.push(quote! { std::any::TypeId::of::<#ident>() });
+                        }
+                    }
+                }
+                "Res" => {
+                    for (res_ty, _) in &components {
+                        let ident = syn::Ident::new(res_ty, proc_macro2::Span::call_site());
+                        read_resources.push(quote! { std::any::TypeId::of::<#ident>() });
+                    }
+                }
+                "ResMut" => {
+                    for (res_ty, _) in &components {
+                        let ident = syn::Ident::new(res_ty, proc_macro2::Span::call_site());
+                        write_resources.push(quote! { std::any::TypeId::of::<#ident>() });
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let expanded = quote! {
+        impl quasar_core::ecs::parallel::DeclareAccess for #name {
+            fn access(&self) -> quasar_core::ecs::parallel::SystemAccess {
+                use quasar_core::ecs::parallel::SystemAccess;
+                use smallvec::SmallVec;
+                let mut access = SystemAccess::new();
+                #(access.reads.push(#read_components);)*
+                #(access.writes.push(#write_components);)*
+                #(access.resources_read.push(#read_resources);)*
+                #(access.resources_write.push(#write_resources);)*
+                access
+            }
+        }
+
+        impl quasar_core::ecs::System for #name {
+            fn name(&self) -> &str { #name_str }
+            fn run(&mut self, _world: &mut quasar_core::ecs::World) {
+                // SystemParam structs are constructed from the world by the scheduler.
+                // Override this in your system implementation.
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
+
+// ---------------------------------------------------------------------------
+// #[derive(Replicate)] — mark components for automatic network replication
+// ---------------------------------------------------------------------------
+
+/// Derive `Replicate` — generates metadata for network replication.
+///
+/// Fields can be annotated with:
+/// - `#[replicated]` — replicated to all peers (default)
+/// - `#[replicated(owner_predicted)]` — owner predicts, others receive
+/// - No annotation — server-only, not replicated
+///
+/// # Example
+/// ```ignore
+/// #[derive(Component, Replicate)]
+/// pub struct Health {
+///     #[replicated(owner_predicted)]
+///     pub current: f32,
+///     pub max: f32, // server-only, not replicated
+/// }
+/// ```
+#[proc_macro_derive(Replicate, attributes(replicated))]
+pub fn derive_replicate(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+    let name_str = name.to_string();
+
+    let fields = match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named) => &named.named,
+            _ => {
+                return syn::Error::new_spanned(
+                    &input,
+                    "Replicate can only be derived for structs with named fields",
+                )
+                .to_compile_error()
+                .into();
+            }
+        },
+        _ => {
+            return syn::Error::new_spanned(&input, "Replicate can only be derived for structs")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let mut field_metas = Vec::new();
+    let mut ser_fields = Vec::new();
+    let mut deser_fields = Vec::new();
+
+    for field in fields {
+        let field_name = field.ident.as_ref().unwrap();
+        let field_str = field_name.to_string();
+        let ty = &field.ty;
+        let ty_str = quote!(#ty).to_string().replace(' ', "");
+
+        // Check for #[replicated] or #[replicated(owner_predicted)]
+        let mut replicated = false;
+        let mut owner_predicted = false;
+        for attr in &field.attrs {
+            if attr.path().is_ident("replicated") {
+                replicated = true;
+                let _ = attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("owner_predicted") {
+                        owner_predicted = true;
+                    }
+                    Ok(())
+                });
+            }
+        }
+
+        let mode = if owner_predicted {
+            quote! { quasar_core::network::ReplicationMode::OwnerPredicted }
+        } else if replicated {
+            quote! { quasar_core::network::ReplicationMode::Replicated }
+        } else {
+            quote! { quasar_core::network::ReplicationMode::ServerOnly }
+        };
+
+        field_metas.push(quote! {
+            quasar_core::network::ReplicatedField {
+                name: #field_str,
+                type_name: #ty_str,
+                mode: #mode,
+            }
+        });
+
+        if replicated || owner_predicted {
+            // Serialize replicated fields
+            ser_fields.push(match ty_str.as_str() {
+                "f32" => quote! { buf.extend_from_slice(&self.#field_name.to_le_bytes()); },
+                "f64" => quote! { buf.extend_from_slice(&self.#field_name.to_le_bytes()); },
+                "u32" => quote! { buf.extend_from_slice(&self.#field_name.to_le_bytes()); },
+                "i32" => quote! { buf.extend_from_slice(&self.#field_name.to_le_bytes()); },
+                "u8" => quote! { buf.push(self.#field_name); },
+                "bool" => quote! { buf.push(if self.#field_name { 1 } else { 0 }); },
+                _ => quote! { /* unsupported replicated type */ },
+            });
+
+            deser_fields.push(match ty_str.as_str() {
+                "f32" => quote! {
+                    #field_name: {
+                        let bytes: [u8; 4] = cursor.get(..4)
+                            .and_then(|s| s.try_into().ok())
+                            .unwrap_or([0; 4]);
+                        cursor = cursor.get(4..).unwrap_or(&[]);
+                        f32::from_le_bytes(bytes)
+                    },
+                },
+                "f64" => quote! {
+                    #field_name: {
+                        let bytes: [u8; 8] = cursor.get(..8)
+                            .and_then(|s| s.try_into().ok())
+                            .unwrap_or([0; 8]);
+                        cursor = cursor.get(8..).unwrap_or(&[]);
+                        f64::from_le_bytes(bytes)
+                    },
+                },
+                "u32" => quote! {
+                    #field_name: {
+                        let bytes: [u8; 4] = cursor.get(..4)
+                            .and_then(|s| s.try_into().ok())
+                            .unwrap_or([0; 4]);
+                        cursor = cursor.get(4..).unwrap_or(&[]);
+                        u32::from_le_bytes(bytes)
+                    },
+                },
+                "i32" => quote! {
+                    #field_name: {
+                        let bytes: [u8; 4] = cursor.get(..4)
+                            .and_then(|s| s.try_into().ok())
+                            .unwrap_or([0; 4]);
+                        cursor = cursor.get(4..).unwrap_or(&[]);
+                        i32::from_le_bytes(bytes)
+                    },
+                },
+                "u8" => quote! {
+                    #field_name: {
+                        let v = cursor.first().copied().unwrap_or(0);
+                        cursor = cursor.get(1..).unwrap_or(&[]);
+                        v
+                    },
+                },
+                "bool" => quote! {
+                    #field_name: {
+                        let v = cursor.first().copied().unwrap_or(0) != 0;
+                        cursor = cursor.get(1..).unwrap_or(&[]);
+                        v
+                    },
+                },
+                _ => quote! { #field_name: Default::default(), },
+            });
+        } else {
+            // Server-only field: use default on deser
+            deser_fields.push(quote! { #field_name: Default::default(), });
+        }
+    }
+
+    let expanded = quote! {
+        impl quasar_core::network::ReplicateDescriptor for #name {
+            fn component_name() -> &'static str { #name_str }
+
+            fn replicated_fields() -> &'static [quasar_core::network::ReplicatedField] {
+                static FIELDS: &[quasar_core::network::ReplicatedField] = &[
+                    #(#field_metas),*
+                ];
+                FIELDS
+            }
+
+            fn replicate_serialize(&self) -> Vec<u8> {
+                let mut buf = Vec::new();
+                #(#ser_fields)*
+                buf
+            }
+
+            fn replicate_deserialize(data: &[u8]) -> Option<Self> {
+                let mut cursor = data;
+                Some(Self {
+                    #(#deser_fields)*
                 })
             }
         }

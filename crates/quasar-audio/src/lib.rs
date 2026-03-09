@@ -5,6 +5,8 @@
 //! Supports one-shot sound effects, looping music, volume/playback-rate
 //! control, and a basic spatial audio model.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod ambisonics;
 pub mod audio_graph;
 pub mod dsp;
@@ -458,3 +460,164 @@ pub use audio_graph::{
 };
 #[cfg(feature = "gpu-reverb")]
 pub use gpu_reverb::{GpuConvolutionReverb, PartitionedIr};
+
+// ---------------------------------------------------------------------------
+// Room Acoustics
+// ---------------------------------------------------------------------------
+
+/// Defines the acoustic properties of a room / zone for automatic
+/// reverb parameter estimation based on geometry (box model).
+#[derive(Debug, Clone)]
+pub struct RoomAcoustics {
+    /// Half-extents of the room bounding box (meters).
+    pub half_extents: [f32; 3],
+    /// Average absorption coefficient (0.0 = fully reflective, 1.0 = anechoic).
+    pub absorption: f32,
+    /// Diffusion coefficient (0.0 = specular, 1.0 = fully diffuse).
+    pub diffusion: f32,
+}
+
+impl Default for RoomAcoustics {
+    fn default() -> Self {
+        Self {
+            half_extents: [5.0, 3.0, 5.0],
+            absorption: 0.3,
+            diffusion: 0.5,
+        }
+    }
+}
+
+impl RoomAcoustics {
+    /// Estimate the RT60 reverb time using the Sabine equation.
+    /// RT60 ≈ 0.161 * V / (S * α)
+    pub fn estimated_rt60(&self) -> f32 {
+        let he = &self.half_extents;
+        let w = 2.0 * he[0];
+        let h = 2.0 * he[1];
+        let d = 2.0 * he[2];
+        let volume = w * h * d;
+        let surface = 2.0 * (w * h + h * d + w * d);
+        let alpha = self.absorption.max(0.01);
+        0.161 * volume / (surface * alpha)
+    }
+
+    /// Estimate early-reflection delay (ms) from room size.
+    pub fn early_reflection_delay_ms(&self) -> f32 {
+        // Approximate: shortest wall distance / speed of sound * 1000 * 2 (round trip)
+        let min_dim = self.half_extents.iter().cloned().fold(f32::MAX, f32::min);
+        (2.0 * min_dim / 343.0) * 1000.0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Procedural Music (Stem system)
+// ---------------------------------------------------------------------------
+
+/// A single music stem (one instrument / layer) in the adaptive music system.
+#[derive(Debug, Clone)]
+pub struct MusicStem {
+    /// Human-readable name (e.g. "drums", "melody_calm", "melody_combat").
+    pub name: String,
+    /// File path to the audio asset.
+    pub path: String,
+    /// Current linear gain (0.0–1.0).
+    pub volume: f32,
+    /// Target volume for cross-fading.
+    pub target_volume: f32,
+    /// Fade speed in volume-per-second.
+    pub fade_speed: f32,
+    /// Whether this stem is currently active.
+    pub active: bool,
+}
+
+impl MusicStem {
+    pub fn new(name: impl Into<String>, path: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            path: path.into(),
+            volume: 0.0,
+            target_volume: 0.0,
+            fade_speed: 1.0,
+            active: false,
+        }
+    }
+}
+
+/// Adaptive / procedural music system that cross-fades between stems
+/// based on game state layers (e.g. "exploration" vs "combat").
+#[derive(Debug)]
+pub struct MusicStemSystem {
+    pub stems: Vec<MusicStem>,
+    /// Name of the currently active music state.
+    pub current_state: String,
+    /// Mapping from state name to list of stem names that should be active.
+    pub state_map: HashMap<String, Vec<String>>,
+    /// BPM for quantized transitions (snap to beat boundary).
+    pub bpm: f32,
+    /// Elapsed time in current measure (seconds).
+    pub beat_timer: f32,
+}
+
+impl Default for MusicStemSystem {
+    fn default() -> Self {
+        Self {
+            stems: Vec::new(),
+            current_state: String::new(),
+            state_map: HashMap::new(),
+            bpm: 120.0,
+            beat_timer: 0.0,
+        }
+    }
+}
+
+impl MusicStemSystem {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a music state → active stems mapping.
+    pub fn add_state(&mut self, state: impl Into<String>, stem_names: Vec<String>) {
+        self.state_map.insert(state.into(), stem_names);
+    }
+
+    /// Transition to a new state. Stems not in the new state will fade out.
+    pub fn transition_to(&mut self, state: &str) {
+        self.current_state = state.to_string();
+        let active_names: Vec<String> = self
+            .state_map
+            .get(state)
+            .cloned()
+            .unwrap_or_default();
+
+        for stem in &mut self.stems {
+            if active_names.contains(&stem.name) {
+                stem.target_volume = 1.0;
+                stem.active = true;
+            } else {
+                stem.target_volume = 0.0;
+            }
+        }
+    }
+
+    /// Tick the cross-fades. Call once per frame with delta time.
+    pub fn update(&mut self, dt: f32) {
+        self.beat_timer += dt;
+        let beat_len = 60.0 / self.bpm.max(1.0);
+        if self.beat_timer >= beat_len {
+            self.beat_timer -= beat_len;
+        }
+
+        for stem in &mut self.stems {
+            if (stem.volume - stem.target_volume).abs() > 0.001 {
+                let dir = if stem.target_volume > stem.volume { 1.0 } else { -1.0 };
+                stem.volume += dir * stem.fade_speed * dt;
+                stem.volume = stem.volume.clamp(0.0, 1.0);
+            } else {
+                stem.volume = stem.target_volume;
+            }
+            if stem.volume <= 0.0 && stem.target_volume <= 0.0 {
+                stem.active = false;
+            }
+        }
+    }
+}

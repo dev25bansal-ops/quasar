@@ -51,3 +51,10 @@ serde = { workspace = true }
 gltf = { workspace = true }
 fontdue = { workspace = true }
 rayon = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "render_bench"
+harness = false

@@ -448,6 +448,125 @@ impl AssetManager {
 }
 
 // ---------------------------------------------------------------------------
+// Content-addressed caching
+// ---------------------------------------------------------------------------
+
+/// A blake3-based content hash for asset deduplication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ContentHash(pub [u8; 32]);
+
+impl ContentHash {
+    /// Hash raw bytes.
+    pub fn from_bytes(data: &[u8]) -> Self {
+        let hash = blake3::hash(data);
+        Self(*hash.as_bytes())
+    }
+
+    /// Zero hash (sentinel).
+    pub const ZERO: Self = Self([0u8; 32]);
+}
+
+impl std::fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in &self.0[..8] {
+            write!(f, "{:02x}", byte)?;
+        }
+        write!(f, "…")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dependency graph
+// ---------------------------------------------------------------------------
+
+/// Tracks parent → child dependency edges between assets for hot-reload
+/// propagation. When a "leaf" asset (e.g. a texture file) changes, all
+/// dependents (e.g. materials referencing that texture) are also flagged dirty.
+pub struct AssetDepGraph {
+    /// child → set of parents that depend on it
+    dependents: HashMap<PathBuf, Vec<PathBuf>>,
+    /// parent → set of children it depends on
+    dependencies: HashMap<PathBuf, Vec<PathBuf>>,
+    /// content hash per path for change detection
+    hashes: HashMap<PathBuf, ContentHash>,
+}
+
+impl Default for AssetDepGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AssetDepGraph {
+    pub fn new() -> Self {
+        Self {
+            dependents: HashMap::new(),
+            dependencies: HashMap::new(),
+            hashes: HashMap::new(),
+        }
+    }
+
+    /// Register that `parent` depends on `child`.
+    /// When `child` changes, `parent` should be reloaded too.
+    pub fn add_dependency(&mut self, parent: impl Into<PathBuf>, child: impl Into<PathBuf>) {
+        let parent = parent.into();
+        let child = child.into();
+        self.dependents
+            .entry(child.clone())
+            .or_default()
+            .push(parent.clone());
+        self.dependencies
+            .entry(parent)
+            .or_default()
+            .push(child);
+    }
+
+    /// Remove all dependencies of a parent.
+    pub fn clear_dependencies(&mut self, parent: &Path) {
+        if let Some(children) = self.dependencies.remove(parent) {
+            for child in &children {
+                if let Some(deps) = self.dependents.get_mut(child) {
+                    deps.retain(|p| p != parent);
+                }
+            }
+        }
+    }
+
+    /// Get all transitive dependents of a changed path (BFS).
+    pub fn transitive_dependents(&self, changed: &Path) -> Vec<PathBuf> {
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(changed.to_path_buf());
+        visited.insert(changed.to_path_buf());
+
+        let mut result = Vec::new();
+        while let Some(current) = queue.pop_front() {
+            if let Some(parents) = self.dependents.get(&current) {
+                for parent in parents {
+                    if visited.insert(parent.clone()) {
+                        result.push(parent.clone());
+                        queue.push_back(parent.clone());
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Store/update the content hash for a path. Returns `true` if the hash changed.
+    pub fn update_hash(&mut self, path: impl Into<PathBuf>, hash: ContentHash) -> bool {
+        let path = path.into();
+        let prev = self.hashes.insert(path, hash);
+        prev.map_or(true, |old| old != hash)
+    }
+
+    /// Get the stored content hash.
+    pub fn hash_of(&self, path: &Path) -> Option<ContentHash> {
+        self.hashes.get(path).copied()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -630,6 +630,48 @@ impl Default for IndirectDrawManager {
     }
 }
 
+/// Multi-draw-indirect-count wrapper.
+///
+/// When `MULTI_DRAW_INDIRECT_COUNT` is supported, the GPU itself determines
+/// how many draw calls to issue from a count buffer written by the cull shader.
+/// This avoids CPU readback of the compacted draw count.
+pub struct MultiDrawIndirectCount {
+    /// Whether the device supports multi_draw_indirect_count.
+    pub supported: bool,
+}
+
+impl MultiDrawIndirectCount {
+    pub fn new(device_features: wgpu::Features) -> Self {
+        Self {
+            supported: device_features.contains(wgpu::Features::MULTI_DRAW_INDIRECT_COUNT),
+        }
+    }
+
+    /// Execute indirect draws using the count buffer if supported, otherwise
+    /// fall back to `multi_draw_indexed_indirect` with a fixed count.
+    pub fn execute<'a>(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        indirect_buffer: &'a wgpu::Buffer,
+        count_buffer: &'a wgpu::Buffer,
+        max_draw_count: u32,
+    ) {
+        let stride = std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
+        if self.supported {
+            render_pass.multi_draw_indexed_indirect_count(
+                indirect_buffer,
+                0,
+                count_buffer,
+                0,
+                max_draw_count,
+            );
+        } else {
+            render_pass.multi_draw_indexed_indirect(indirect_buffer, 0, max_draw_count);
+        }
+        let _ = stride; // used when falling back to per-draw calls
+    }
+}
+
 // ── Bindless resource table ───────────────────────────────────────
 
 /// Maximum number of materials in the bindless material buffer.

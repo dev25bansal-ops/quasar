@@ -250,6 +250,12 @@ pub trait ColumnStorage: Send + Sync {
     fn swap_remove_raw(&mut self, row: usize) -> Option<Box<dyn Any + Send + Sync>>;
     /// Create an empty column of the same concrete type.
     fn create_empty_of_same_type(&self) -> Box<dyn ColumnStorage>;
+    /// Push a bitwise copy of the element at `row` into this column.
+    /// Returns false if `row` is out of bounds.
+    fn push_clone_from(&mut self, source: &dyn ColumnStorage, row: usize) -> bool;
+    /// Push a component from raw bytes (bitwise copy). The bytes must
+    /// be exactly `elem_size` and represent a valid instance of `T`.
+    fn push_raw_bytes(&mut self, bytes: &[u8], elem_size: usize);
 }
 
 /// Strongly-typed SoA column backed by a contiguous `Vec<T>`.
@@ -349,6 +355,42 @@ impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
 
     fn create_empty_of_same_type(&self) -> Box<dyn ColumnStorage> {
         Box::new(TypedColumn::<T>::new())
+    }
+
+    fn push_clone_from(&mut self, source: &dyn ColumnStorage, row: usize) -> bool {
+        // Downcast source to the same TypedColumn<T>.
+        let Some(src) = source.as_any().downcast_ref::<TypedColumn<T>>() else {
+            return false;
+        };
+        let Some(src_ptr) = src.data.get(row) else {
+            return false;
+        };
+        // Bitwise copy — safe because T: Send + Sync + 'static and we push a fresh copy.
+        unsafe {
+            let mut val = std::mem::MaybeUninit::<T>::uninit();
+            std::ptr::copy_nonoverlapping(
+                src_ptr as *const T as *const u8,
+                val.as_mut_ptr() as *mut u8,
+                std::mem::size_of::<T>(),
+            );
+            self.data.push(val.assume_init());
+        }
+        self.change_ticks.push(0);
+        true
+    }
+
+    fn push_raw_bytes(&mut self, bytes: &[u8], _elem_size: usize) {
+        debug_assert_eq!(bytes.len(), std::mem::size_of::<T>());
+        unsafe {
+            let mut val = std::mem::MaybeUninit::<T>::uninit();
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                val.as_mut_ptr() as *mut u8,
+                std::mem::size_of::<T>(),
+            );
+            self.data.push(val.assume_init());
+        }
+        self.change_ticks.push(0);
     }
 }
 

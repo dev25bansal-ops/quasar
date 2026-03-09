@@ -14,6 +14,8 @@ pub enum EditorMode {
     Stopped,
     Playing,
     Paused,
+    /// Isolated prefab editing sub-mode.
+    PrefabEdit,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +213,14 @@ pub struct EditorState {
     pub undo_stack: UndoStack,
     /// When `true`, advance exactly one frame then set back to Paused.
     pub step_requested: bool,
+    /// Multi-selection: currently selected entities.
+    pub selected_entities: Vec<quasar_core::ecs::Entity>,
+    /// Clipboard of copied entities for paste.
+    pub clipboard_entities: Vec<quasar_core::ecs::Entity>,
+    /// True while a prefab is being edited in isolation.
+    pub prefab_isolation: bool,
+    /// Optional PIE viewport camera override (position, target).
+    pub pie_camera_override: Option<([f32; 3], [f32; 3])>,
 }
 
 impl EditorState {
@@ -220,6 +230,10 @@ impl EditorState {
             snapshot: None,
             undo_stack: UndoStack::new(),
             step_requested: false,
+            selected_entities: Vec::new(),
+            clipboard_entities: Vec::new(),
+            prefab_isolation: false,
+            pie_camera_override: None,
         }
     }
 
@@ -249,6 +263,7 @@ impl EditorState {
             EditorMode::Stopped => self.play(world),
             EditorMode::Playing => self.pause(),
             EditorMode::Paused => self.mode = EditorMode::Playing,
+            EditorMode::PrefabEdit => {} // no-op while editing a prefab
         }
     }
 
@@ -327,6 +342,66 @@ impl EditorState {
     ) {
         command.execute(world);
         self.undo_stack.push(command);
+    }
+
+    // ── Multi-selection ─────────────────────────────────────────
+
+    /// Select a single entity, replacing any previous selection.
+    pub fn select(&mut self, entity: quasar_core::ecs::Entity) {
+        self.selected_entities.clear();
+        self.selected_entities.push(entity);
+    }
+
+    /// Add an entity to the current selection (Ctrl+Click).
+    pub fn select_add(&mut self, entity: quasar_core::ecs::Entity) {
+        if !self.selected_entities.contains(&entity) {
+            self.selected_entities.push(entity);
+        }
+    }
+
+    /// Toggle an entity in the selection.
+    pub fn select_toggle(&mut self, entity: quasar_core::ecs::Entity) {
+        if let Some(pos) = self.selected_entities.iter().position(|&e| e == entity) {
+            self.selected_entities.remove(pos);
+        } else {
+            self.selected_entities.push(entity);
+        }
+    }
+
+    /// Clear the selection.
+    pub fn deselect_all(&mut self) {
+        self.selected_entities.clear();
+    }
+
+    /// Copy selected entities to internal clipboard.
+    pub fn copy_selection(&mut self) {
+        self.clipboard_entities = self.selected_entities.clone();
+    }
+
+    /// Paste entities from clipboard by cloning them.
+    pub fn paste(&mut self, world: &mut quasar_core::ecs::World) {
+        let sources: Vec<quasar_core::ecs::Entity> = self.clipboard_entities.clone();
+        let mut new_selection = Vec::new();
+        for src in sources {
+            if let Some(cloned) = world.clone_entity(src) {
+                new_selection.push(cloned);
+            }
+        }
+        self.selected_entities = new_selection;
+    }
+
+    // ── Prefab isolation ────────────────────────────────────────
+
+    /// Enter prefab editing mode, isolating the given entities.
+    pub fn enter_prefab_edit(&mut self) {
+        self.prefab_isolation = true;
+        self.mode = EditorMode::PrefabEdit;
+    }
+
+    /// Exit prefab editing mode and return to the main scene.
+    pub fn exit_prefab_edit(&mut self) {
+        self.prefab_isolation = false;
+        self.mode = EditorMode::Stopped;
     }
 }
 

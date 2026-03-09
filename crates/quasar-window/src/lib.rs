@@ -2,6 +2,8 @@
 //!
 //! Window creation and input handling via [`winit`].
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod action_map;
 pub mod action_plugin;
 pub mod input;

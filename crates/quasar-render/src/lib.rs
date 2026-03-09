@@ -18,6 +18,8 @@
 //! - GPU skinning
 //! - Post-processing (FXAA, Bloom, SSAO)
 //! - Particle system
+
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 //! - 2D sprite rendering and UI
 //! - Basic WGSL shader compilation
 
@@ -81,6 +83,7 @@ pub mod staging_belt;
 pub mod svt;
 pub mod taa;
 pub mod ssgi;
+pub mod radiance_cache;
 pub mod virtual_shadow;
 
 pub use camera::Camera;
@@ -94,12 +97,13 @@ pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData
 pub use loader::load_obj;
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
-pub use render_graph::{RenderGraph, RenderGraphError, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids};
+pub use render_graph::{RenderGraph, RenderGraphError, RenderPass, RenderContext, PassId, AttachmentId, Attachment, PassNode, pass_ids, attachment_ids, ResourceState, ResourceTransition, TextureBarrier, PassQueue, PassNodeExt};
 pub use render_plugin::{RenderPlugin, RenderSyncOutput, MeshDrawItem, MeshDrawList, resource_keys};
 pub use renderer::{RenderConfig, Renderer};
 pub use shadow::{ShadowMap, ShadowCamera};
 pub use taa::TaaPass;
 pub use ssgi::{SsgiPass, SsgiSettings};
+pub use radiance_cache::{RadianceCache, RadianceCacheSettings, RadianceProbe, SH_COEFF_COUNT};
 pub use texture::Texture;
 pub use vertex::Vertex;
 pub use asset_loader::{AssetLoader, GpuTexture, GpuMesh, GpuMaterial, RenderAssetManager};
@@ -125,9 +129,9 @@ pub use volumetric::{VolumetricFogSettings, VolumetricFogPass, VolumetricFogUnif
 #[cfg(feature = "lightmap")]
 pub use lightmap::{Lightmap, LightmapBaker, BakeConfig, SHProbe, SHProbeGrid, LightmapMaterial, GpuLightmapBaker, GpuBakeUniform, GpuBakerTriangle, PathTraceBakeConfig, GpuPathTraceUniform, GpuPathTraceBaker};
 #[cfg(feature = "shader-graph")]
-pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection, ShaderGraphCompiler, ShaderGraphCache, ShaderGraphDiagnostic, DiagnosticSeverity, CompileResult};
+pub use shader_graph::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection, ShaderGraphCompiler, ShaderGraphCache, ShaderGraphDiagnostic, DiagnosticSeverity, CompileResult, MaterialDomain, MaterialGraph, BlendMode};
 #[cfg(feature = "gpu-culling")]
-pub use occlusion::{HiZBuffer, HiZMip, GpuCullPass, GpuAabb, GpuCullUniforms, DrawIndexedIndirectArgs, HIZ_MIP_LEVELS, GPU_CULL_MAX_OBJECTS, GPU_CULL_WGSL, MeshDrawCommand, IndirectDrawManager};
+pub use occlusion::{HiZBuffer, HiZMip, GpuCullPass, GpuAabb, GpuCullUniforms, DrawIndexedIndirectArgs, HIZ_MIP_LEVELS, GPU_CULL_MAX_OBJECTS, GPU_CULL_WGSL, MeshDrawCommand, IndirectDrawManager, MultiDrawIndirectCount, BindlessResources, DrawInstanceData, BINDLESS_MAX_MATERIALS, BINDLESS_MAX_TEXTURES};
 #[cfg(feature = "deferred")]
 pub use deferred::{GBuffer, DeferredLightingPass, InverseCameraUniforms, StencilLightVolumePass, LightVolumeUniform, GBUFFER_TARGET_COUNT};
 #[cfg(feature = "reflection-probes")]

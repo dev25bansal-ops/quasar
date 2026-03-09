@@ -76,6 +76,8 @@ pub struct AssetServer {
     /// instead of the raw `asset_storage` map. Legacy storage is kept for
     /// backward compat with existing loaders.
     manager: Mutex<crate::asset::AssetManager>,
+    /// Dependency graph for hot-reload propagation.
+    dep_graph: RwLock<crate::asset::AssetDepGraph>,
 }
 
 impl AssetServer {
@@ -183,6 +185,7 @@ impl AssetServer {
             _watch_thread: None,
             _pending_reloads: RwLock::new(Vec::new()),
             manager: Mutex::new(crate::asset::AssetManager::new()),
+            dep_graph: RwLock::new(crate::asset::AssetDepGraph::new()),
         }
     }
 
@@ -393,6 +396,31 @@ impl AssetServer {
         } else {
             false
         }
+    }
+
+    /// Register that `parent` depends on `child` for hot-reload propagation.
+    pub fn add_dependency(&self, parent: impl Into<PathBuf>, child: impl Into<PathBuf>) {
+        let mut graph = self.dep_graph.write().unwrap_or_else(|e| e.into_inner());
+        graph.add_dependency(parent, child);
+    }
+
+    /// Propagate a file change: mark the changed path AND all its transitive
+    /// dependents as dirty so the next frame picks them up for reload.
+    pub fn propagate_change(&self, changed_path: &Path) {
+        self.mark_dirty(changed_path);
+        let graph = self.dep_graph.read().unwrap_or_else(|e| e.into_inner());
+        let dependents = graph.transitive_dependents(changed_path);
+        drop(graph);
+        for dep in &dependents {
+            self.mark_dirty(dep);
+        }
+    }
+
+    /// Update the content hash for a file and return whether it actually changed.
+    pub fn update_content_hash(&self, path: impl Into<PathBuf>, data: &[u8]) -> bool {
+        let hash = crate::asset::ContentHash::from_bytes(data);
+        let mut graph = self.dep_graph.write().unwrap_or_else(|e| e.into_inner());
+        graph.update_hash(path, hash)
     }
 
     /// Schedule an asset load on a background thread.

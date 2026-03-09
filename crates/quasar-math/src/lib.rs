@@ -3,6 +3,8 @@
 //! Re-exports and extends [`glam`] with engine-specific types like
 //! [`Transform`] and [`Color`].
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod color;
 pub mod transform;
 

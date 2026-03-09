@@ -576,6 +576,164 @@ pub mod attachment_ids {
     pub const SHADOW_MAP: AttachmentId = AttachmentId(2);
 }
 
+// ── Async Compute Queue Support ──────────────────────────────────
+
+/// Which GPU queue a pass should be submitted to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PassQueue {
+    /// Main graphics queue (vertex/fragment/compute).
+    Graphics,
+    /// Async compute queue (compute-only, runs in parallel with graphics).
+    AsyncCompute,
+    /// Transfer/copy queue (DMA operations).
+    Transfer,
+}
+
+/// Extended pass node with queue affinity and barrier info.
+pub struct PassNodeExt {
+    pub pass: Box<dyn RenderPass>,
+    pub dependencies: Vec<PassId>,
+    pub inputs: Vec<AttachmentId>,
+    pub outputs: Vec<AttachmentId>,
+    /// Which queue this pass should run on.
+    pub queue: PassQueue,
+    /// Whether this pass requires a cross-queue sync before execution.
+    pub cross_queue_wait: bool,
+}
+
+/// A barrier inserted between passes to synchronize resource state.
+#[derive(Debug, Clone)]
+pub struct TextureBarrier {
+    pub attachment: AttachmentId,
+    pub src_state: ResourceState,
+    pub dst_state: ResourceState,
+    /// Insert this barrier before this pass.
+    pub before_pass: PassId,
+    /// If true, this barrier also synchronizes across queue families.
+    pub cross_queue: bool,
+}
+
+impl RenderGraph {
+    /// Build a full barrier plan from the compiled pass order.
+    ///
+    /// Returns a list of barriers that must be inserted before each pass.
+    /// Cross-queue barriers are flagged when consecutive passes use different queues.
+    pub fn build_barrier_plan(
+        &self,
+        order: &[PassId],
+        queue_map: &HashMap<PassId, PassQueue>,
+    ) -> Vec<TextureBarrier> {
+        let mut current_state: HashMap<AttachmentId, ResourceState> = HashMap::new();
+        let mut last_queue: HashMap<AttachmentId, PassQueue> = HashMap::new();
+        let mut barriers = Vec::new();
+
+        for &pass_id in order {
+            let node = match self.nodes.get(&pass_id) {
+                Some(n) => n,
+                None => continue,
+            };
+            let pass_queue = queue_map.get(&pass_id).copied().unwrap_or(PassQueue::Graphics);
+
+            // Inputs → ShaderRead
+            for &att in &node.inputs {
+                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev_queue = last_queue.get(&att).copied().unwrap_or(PassQueue::Graphics);
+                let cross = prev_queue != pass_queue;
+
+                if prev != ResourceState::ShaderRead || cross {
+                    barriers.push(TextureBarrier {
+                        attachment: att,
+                        src_state: prev,
+                        dst_state: ResourceState::ShaderRead,
+                        before_pass: pass_id,
+                        cross_queue: cross,
+                    });
+                    current_state.insert(att, ResourceState::ShaderRead);
+                    last_queue.insert(att, pass_queue);
+                }
+            }
+
+            // Outputs → RenderTarget
+            for &att in &node.outputs {
+                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev_queue = last_queue.get(&att).copied().unwrap_or(PassQueue::Graphics);
+                let cross = prev_queue != pass_queue;
+
+                if prev != ResourceState::RenderTarget || cross {
+                    barriers.push(TextureBarrier {
+                        attachment: att,
+                        src_state: prev,
+                        dst_state: ResourceState::RenderTarget,
+                        before_pass: pass_id,
+                        cross_queue: cross,
+                    });
+                    current_state.insert(att, ResourceState::RenderTarget);
+                    last_queue.insert(att, pass_queue);
+                }
+            }
+        }
+
+        barriers
+    }
+
+    /// Split the compiled pass order into per-queue command buffer groups.
+    ///
+    /// Returns a list of (PassQueue, Vec<PassId>) submit groups in order.
+    pub fn split_by_queue(
+        &self,
+        order: &[PassId],
+        queue_map: &HashMap<PassId, PassQueue>,
+    ) -> Vec<(PassQueue, Vec<PassId>)> {
+        let mut groups: Vec<(PassQueue, Vec<PassId>)> = Vec::new();
+
+        for &pass_id in order {
+            let queue = queue_map.get(&pass_id).copied().unwrap_or(PassQueue::Graphics);
+            if let Some(last) = groups.last_mut() {
+                if last.0 == queue {
+                    last.1.push(pass_id);
+                    continue;
+                }
+            }
+            groups.push((queue, vec![pass_id]));
+        }
+
+        groups
+    }
+
+    /// Infer automatic dependencies from attachment read-after-write patterns.
+    ///
+    /// For every pass P that reads attachment A, find the latest pass W that
+    /// writes A and add W as a dependency of P (if not already present).
+    pub fn infer_dependencies(&mut self) {
+        // Build writer map: attachment → list of passes that write it.
+        let mut writers: HashMap<AttachmentId, Vec<PassId>> = HashMap::new();
+        for (&pid, node) in &self.nodes {
+            for &att in &node.outputs {
+                writers.entry(att).or_default().push(pid);
+            }
+        }
+
+        // For each pass that reads, add deps on writers.
+        let pass_ids: Vec<PassId> = self.nodes.keys().copied().collect();
+        for pid in pass_ids {
+            let inputs = self.nodes.get(&pid).map(|n| n.inputs.clone()).unwrap_or_default();
+            for att in inputs {
+                if let Some(att_writers) = writers.get(&att) {
+                    for &writer in att_writers {
+                        if writer != pid {
+                            if let Some(node) = self.nodes.get_mut(&pid) {
+                                if !node.dependencies.contains(&writer) {
+                                    node.dependencies.push(writer);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

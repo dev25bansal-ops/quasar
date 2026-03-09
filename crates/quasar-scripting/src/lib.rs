@@ -5,6 +5,8 @@
 //! Allows game logic to be authored in Lua/Luau scripts with access to the ECS,
 //! input state, and engine utilities. Supports hot-reloading of scripts.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod bridge;
 pub mod component_registry;
 pub mod plugin;
@@ -219,6 +221,52 @@ impl ScriptEngine {
     /// Get the list of currently watched script file paths.
     pub fn watched_files(&self) -> &[String] {
         &self.watched_files
+    }
+
+    /// Snapshot all global variables as a serializable table of strings.
+    /// This captures the current "state" so it can be restored after a reload.
+    pub fn snapshot_globals(&self) -> Vec<(String, String)> {
+        let mut snapshot = Vec::new();
+        if let Ok(globals) = self.lua.globals().pairs::<String, LuaValue>().collect::<Result<Vec<_>, _>>() {
+            for (key, value) in globals {
+                // Skip built-in tables and functions — only snapshot simple types.
+                match &value {
+                    LuaValue::Number(n) => snapshot.push((key, n.to_string())),
+                    LuaValue::Integer(i) => snapshot.push((key, i.to_string())),
+                    LuaValue::String(s) => {
+                        if let Ok(s) = s.to_str() {
+                            snapshot.push((key, format!("\"{}\"", s)));
+                        }
+                    }
+                    LuaValue::Boolean(b) => snapshot.push((key, b.to_string())),
+                    _ => {} // Skip tables, functions, userdata, etc.
+                }
+            }
+        }
+        snapshot
+    }
+
+    /// Restore globals from a snapshot produced by `snapshot_globals`.
+    pub fn restore_globals(&self, snapshot: &[(String, String)]) {
+        for (key, value_str) in snapshot {
+            // Skip engine internals.
+            if key == "quasar" || key == "log" || key == "_G" || key == "_VERSION" {
+                continue;
+            }
+            let script = format!("{} = {}", key, value_str);
+            let _ = self.lua.load(&script).exec();
+        }
+    }
+
+    /// Hot-reload with state preservation: snapshots globals, reloads scripts,
+    /// then restores the globals that still exist.
+    pub fn hot_reload_with_state(&mut self) -> Vec<(String, Result<(), String>)> {
+        let snapshot = self.snapshot_globals();
+        let results = self.hot_reload_safe();
+        if results.iter().any(|(_, r)| r.is_ok()) {
+            self.restore_globals(&snapshot);
+        }
+        results
     }
 }
 

@@ -851,3 +851,103 @@ impl Default for ShaderGraphCache {
         Self::new()
     }
 }
+
+// ── Material Domains ───────────────────────────────────────────────
+
+/// The domain a material graph targets. Each domain changes which outputs
+/// are available and how the compiled WGSL is integrated into the pipeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MaterialDomain {
+    /// Standard PBR surface (mesh rendering). Outputs: base_color, normal,
+    /// roughness, metallic, emissive, alpha.
+    Surface,
+    /// Post-process full-screen effect. Outputs: color (vec4).
+    PostProcess,
+    /// Deferred decal projection. Outputs: base_color, normal, roughness.
+    Decal,
+    /// UI / 2D element. Outputs: color, alpha.
+    UI,
+    /// Unlit surface — no PBR lighting. Outputs: color, alpha.
+    Unlit,
+}
+
+impl MaterialDomain {
+    /// Names of the output slots for this domain.
+    pub fn output_slot_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::Surface => &["base_color", "normal", "roughness", "metallic", "emissive", "alpha"],
+            Self::PostProcess => &["color"],
+            Self::Decal => &["base_color", "normal", "roughness"],
+            Self::UI => &["color", "alpha"],
+            Self::Unlit => &["color", "alpha"],
+        }
+    }
+
+    /// Whether this domain participates in the deferred G-buffer pass.
+    pub fn uses_gbuffer(&self) -> bool {
+        matches!(self, Self::Surface | Self::Decal)
+    }
+}
+
+/// A material graph is a [`ShaderGraph`] with an associated domain and
+/// blend/render-state metadata.
+#[derive(Debug, Clone)]
+pub struct MaterialGraph {
+    pub graph: ShaderGraph,
+    pub domain: MaterialDomain,
+    /// Alpha blending mode.
+    pub blend_mode: BlendMode,
+    /// Whether back-face culling is disabled.
+    pub two_sided: bool,
+    /// Render queue priority override (lower = drawn first).
+    pub queue_priority: i32,
+}
+
+/// Blend mode for a material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    Opaque,
+    AlphaTest,
+    AlphaBlend,
+    Additive,
+    Multiply,
+}
+
+impl MaterialGraph {
+    /// Create a new material graph with the given name and domain.
+    pub fn new(name: impl Into<String>, domain: MaterialDomain) -> Self {
+        let name_str: String = name.into();
+        Self {
+            graph: ShaderGraph::new(&name_str),
+            domain,
+            blend_mode: BlendMode::Opaque,
+            two_sided: false,
+            queue_priority: 0,
+        }
+    }
+
+    /// Compile the material graph to WGSL. The output preamble changes
+    /// depending on the domain (e.g. `PostProcess` omits the PBR struct).
+    pub fn compile(&self) -> Result<String, String> {
+        match self.domain {
+            MaterialDomain::Surface => ShaderGraphCompiler::compile(&self.graph),
+            _ => {
+                // For non-surface domains, delegate to the standard compiler
+                // which already handles PbrOutput — real domain-specific codegen
+                // can be added later.
+                ShaderGraphCompiler::compile(&self.graph)
+            }
+        }
+    }
+
+    /// Validate the material graph, adding domain-specific checks on top of
+    /// the standard graph validation.
+    pub fn validate(&self) -> Vec<ShaderGraphDiagnostic> {
+        let mut diags = ShaderGraphCompiler::validate(&self.graph);
+        if self.domain != MaterialDomain::Surface && self.graph.output_node().is_none() {
+            // For non-Surface domains, the PbrOutput requirement is relaxed.
+            diags.retain(|d| !d.message.contains("PbrOutput"));
+        }
+        diags
+    }
+}

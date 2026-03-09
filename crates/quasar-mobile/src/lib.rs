@@ -13,6 +13,8 @@
 //! (via `android-activity`) and iOS (via UIKit). This crate wraps them
 //! in engine-friendly types and adds gesture recognition.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod gesture;
 pub mod gyroscope;
 pub mod haptics;

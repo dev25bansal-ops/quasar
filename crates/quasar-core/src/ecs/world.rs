@@ -26,6 +26,39 @@ fn create_typed_column<T: 'static + Send + Sync>() -> Box<dyn ColumnStorage> {
     Box::new(TypedColumn::<T>::new())
 }
 
+// ── World Observers ─────────────────────────────────────────────
+
+/// Kinds of component lifecycle events that can be observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObserverKind {
+    /// Fires when a component is added to an entity.
+    OnAdd,
+    /// Fires when a component is removed from an entity (including despawn).
+    OnRemove,
+}
+
+/// Marker type for `world.observe::<OnAdd<T>>(...)`.
+pub struct OnAdd<T: 'static>(std::marker::PhantomData<T>);
+
+/// Marker type for `world.observe::<OnRemove<T>>(...)`.
+pub struct OnRemove<T: 'static>(std::marker::PhantomData<T>);
+
+/// Trait implemented by `OnAdd<T>` and `OnRemove<T>` to extract the event kind and component type.
+pub trait ObserverEvent {
+    fn kind() -> ObserverKind;
+    fn component_type_id() -> TypeId;
+}
+
+impl<T: 'static> ObserverEvent for OnAdd<T> {
+    fn kind() -> ObserverKind { ObserverKind::OnAdd }
+    fn component_type_id() -> TypeId { TypeId::of::<T>() }
+}
+
+impl<T: 'static> ObserverEvent for OnRemove<T> {
+    fn kind() -> ObserverKind { ObserverKind::OnRemove }
+    fn component_type_id() -> TypeId { TypeId::of::<T>() }
+}
+
 /// The central container holding all entities and their component data.
 ///
 /// # Examples
@@ -71,6 +104,8 @@ pub struct World {
     active_system_last_run: u64,
     /// Typed entity-to-entity relationship graph.
     relation_graph: RelationGraph,
+    /// Observer callbacks: maps (ObserverKind, component TypeId) → list of callbacks.
+    observers: HashMap<(ObserverKind, TypeId), Vec<Box<dyn Fn(Entity) + Send + Sync>>>,
 }
 
 impl World {
@@ -91,6 +126,7 @@ impl World {
             system_last_run: HashMap::new(),
             active_system_last_run: 0,
             relation_graph: RelationGraph::new(),
+            observers: HashMap::new(),
         }
     }
 
@@ -1258,6 +1294,113 @@ impl World {
                 queue.push_back(child);
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Observers
+    // ------------------------------------------------------------------
+
+    /// Register an observer callback for a component lifecycle event.
+    ///
+    /// # Example
+    /// ```ignore
+    /// world.observe::<OnAdd<Health>>(|entity| {
+    ///     println!("Entity {:?} gained Health", entity);
+    /// });
+    /// ```
+    pub fn observe<E: ObserverEvent>(&mut self, callback: impl Fn(Entity) + Send + Sync + 'static) {
+        let key = (E::kind(), E::component_type_id());
+        self.observers.entry(key).or_default().push(Box::new(callback));
+    }
+
+    /// Fire observer callbacks for a specific event kind and component type.
+    fn fire_observers(&self, kind: ObserverKind, type_id: TypeId, entity: Entity) {
+        if let Some(callbacks) = self.observers.get(&(kind, type_id)) {
+            for cb in callbacks {
+                cb(entity);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Entity Cloning
+    // ------------------------------------------------------------------
+
+    /// Clone an entity, producing a new entity with copies of all components.
+    ///
+    /// Returns `None` if the source entity is not alive. Uses column-level
+    /// bitwise copy for each component.
+    pub fn clone_entity(&mut self, src: Entity) -> Option<Entity> {
+        if !self.is_alive(src) {
+            return None;
+        }
+
+        let components = self.entity_components.get(&src.index())?.clone();
+        let new_entity = self.spawn();
+
+        let src_arch_id = *self.entity_archetype.get(&src.index())?;
+
+        // Collect raw bytes and factory for each component from the source archetype.
+        // We copy bytes out so we can release the immutable borrow.
+        struct ClonedComponent {
+            type_id: TypeId,
+            bytes: Vec<u8>,
+            factory: fn() -> Box<dyn ColumnStorage>,
+        }
+
+        let mut cloned: Vec<ClonedComponent> = Vec::new();
+        if let Some(src_arch) = self.archetype_graph.get(src_arch_id) {
+            if let Some(&src_row) = src_arch.entity_to_row.get(&src.index()) {
+                for &type_id in &components {
+                    if let Some(&col_idx) = src_arch.type_to_column.get(&type_id) {
+                        let col = &src_arch.columns[col_idx];
+                        let elem_size = col.element_size();
+                        if elem_size > 0 {
+                            let ptr = col.raw_ptr();
+                            let mut bytes = vec![0u8; elem_size];
+                            unsafe {
+                                std::ptr::copy_nonoverlapping(
+                                    ptr.add(src_row * elem_size),
+                                    bytes.as_mut_ptr(),
+                                    elem_size,
+                                );
+                            }
+                            let factory = self
+                                .column_factories
+                                .get(&type_id)
+                                .copied()
+                                .unwrap_or(|| Box::new(TypedColumn::<()>::new()));
+                            cloned.push(ClonedComponent { type_id, bytes, factory });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Build the destination archetype signature.
+        let mut sig = ArchetypeSignature::new();
+        for c in &cloned {
+            sig.add(c.type_id);
+        }
+
+        let dest_arch_id = self.archetype_graph.get_or_create(&sig);
+
+        // Push into destination archetype, creating columns as needed.
+        if let Some(dest) = self.archetype_graph.get_mut(dest_arch_id) {
+            dest.add_entity(new_entity);
+            for c in &cloned {
+                dest.ensure_column_from_factory(c.type_id, c.factory);
+                if let Some(&col_idx) = dest.type_to_column.get(&c.type_id) {
+                    dest.columns[col_idx].push_raw_bytes(&c.bytes, c.bytes.len());
+                }
+            }
+        }
+
+        // Update entity bookkeeping.
+        self.entity_archetype.insert(new_entity.index(), dest_arch_id);
+        self.entity_components.insert(new_entity.index(), components);
+
+        Some(new_entity)
     }
 }
 

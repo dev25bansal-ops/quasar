@@ -2112,4 +2112,322 @@ pub fn rollback_system(world: &mut crate::World) {
     }
 }
 
+// ════════════════════════════════════════════════════════════════════
+//  REPLICATION DESCRIPTOR — derive(Replicate) support types
+// ════════════════════════════════════════════════════════════════════
+
+/// Mode controlling how a field is replicated across the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplicationMode {
+    /// Field is replicated to all peers.
+    Replicated,
+    /// Owner predicts locally, others receive authoritative value.
+    OwnerPredicted,
+    /// Server-only — never sent to clients.
+    ServerOnly,
+}
+
+/// Metadata for a single replicated field.
+#[derive(Debug, Clone)]
+pub struct ReplicatedField {
+    pub name: &'static str,
+    pub type_name: &'static str,
+    pub mode: ReplicationMode,
+}
+
+/// Trait auto-implemented by `#[derive(Replicate)]`.
+///
+/// Provides component-level metadata and serialization for network replication.
+pub trait ReplicateDescriptor: Sized {
+    /// Stable name for this component type.
+    fn component_name() -> &'static str;
+
+    /// Static list of replicated field descriptors.
+    fn replicated_fields() -> &'static [ReplicatedField];
+
+    /// Serialize only the replicated fields to bytes.
+    fn replicate_serialize(&self) -> Vec<u8>;
+
+    /// Deserialize replicated fields from bytes, filling non-replicated with defaults.
+    fn replicate_deserialize(data: &[u8]) -> Option<Self>;
+}
+
+// ── Lag compensation ────────────────────────────────────────────
+
+/// Ring buffer storing a rolling history of values for lag compensation.
+///
+/// Used to look up an entity's state at a past server tick. Typical use:
+/// `HistoryBuffer<[f32; 3]>` for position or `HistoryBuffer<Transform>`.
+#[derive(Debug, Clone)]
+pub struct HistoryBuffer<T: Clone> {
+    entries: Vec<(u64, T)>,
+    capacity: usize,
+}
+
+impl<T: Clone> HistoryBuffer<T> {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            entries: Vec::with_capacity(capacity),
+            capacity,
+        }
+    }
+
+    /// Record a value at the given tick.
+    pub fn push(&mut self, tick: u64, value: T) {
+        if self.entries.len() >= self.capacity {
+            self.entries.remove(0);
+        }
+        self.entries.push((tick, value));
+    }
+
+    /// Get the value at a specific tick, or the closest earlier tick.
+    pub fn at_tick(&self, tick: u64) -> Option<&T> {
+        // Exact match first.
+        if let Some(entry) = self.entries.iter().rev().find(|(t, _)| *t == tick) {
+            return Some(&entry.1);
+        }
+        // Closest earlier tick.
+        self.entries
+            .iter()
+            .rev()
+            .find(|(t, _)| *t <= tick)
+            .map(|(_, v)| v)
+    }
+
+    /// Interpolate between two surrounding ticks.
+    /// Returns `None` if the buffer doesn't bracket the requested tick.
+    pub fn interpolate_at(&self, tick: u64) -> Option<(&T, &T, f32)>
+    where
+        T: Clone,
+    {
+        let before = self
+            .entries
+            .iter()
+            .rev()
+            .find(|(t, _)| *t <= tick)?;
+        let after = self.entries.iter().find(|(t, _)| *t >= tick)?;
+        if before.0 == after.0 {
+            return Some((&before.1, &after.1, 0.0));
+        }
+        let alpha = (tick - before.0) as f32 / (after.0 - before.0) as f32;
+        Some((&before.1, &after.1, alpha))
+    }
+
+    /// Number of stored entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether the buffer is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Clear all stored history.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  SERVER-SIDE LAG COMPENSATION (rewind & hit verification)
+// ════════════════════════════════════════════════════════════════════
+
+/// Stores position history for all networked entities on the server.
+/// Used for server-side lag compensation: when a client claims a hit,
+/// the server rewinds to the client's perceived tick and checks the
+/// hitbox at that historical position.
+pub struct LagCompensationManager {
+    /// Per-entity position history, keyed by `NetworkEntityId`.
+    histories: HashMap<NetworkEntityId, HistoryBuffer<[f32; 3]>>,
+    /// Maximum rewind window in ticks.
+    pub max_rewind_ticks: u64,
+    /// How many ticks of history each entity stores.
+    pub history_capacity: usize,
+}
+
+impl Default for LagCompensationManager {
+    fn default() -> Self {
+        Self {
+            histories: HashMap::new(),
+            max_rewind_ticks: 30,   // ~500 ms at 60 Hz
+            history_capacity: 64,
+        }
+    }
+}
+
+impl LagCompensationManager {
+    pub fn new(max_rewind_ticks: u64) -> Self {
+        Self {
+            max_rewind_ticks,
+            ..Default::default()
+        }
+    }
+
+    /// Record the current position of an entity at the given server tick.
+    pub fn record(&mut self, entity: NetworkEntityId, tick: u64, position: [f32; 3]) {
+        let buf = self
+            .histories
+            .entry(entity)
+            .or_insert_with(|| HistoryBuffer::new(self.history_capacity));
+        buf.push(tick, position);
+    }
+
+    /// Get the rewound position of an entity at a past tick. Returns the
+    /// exact stored position, or the closest earlier snapshot.
+    pub fn position_at(&self, entity: NetworkEntityId, tick: u64) -> Option<[f32; 3]> {
+        self.histories
+            .get(&entity)
+            .and_then(|buf| buf.at_tick(tick).copied())
+    }
+
+    /// Verify a hit against a rewound hitbox.
+    ///
+    /// `claimed_tick` — the server tick the client claims the shot happened.
+    /// `target`       — the entity the client claims to have hit.
+    /// `shot_origin`  — world-space origin of the shot.
+    /// `shot_dir`     — normalised direction of the shot.
+    /// `hitbox_radius`— radius around the entity position to check.
+    ///
+    /// Returns `true` if the shot intersects the sphere at the rewound position.
+    pub fn verify_hit(
+        &self,
+        claimed_tick: u64,
+        target: NetworkEntityId,
+        shot_origin: [f32; 3],
+        shot_dir: [f32; 3],
+        hitbox_radius: f32,
+    ) -> bool {
+        let current_tick = self
+            .histories
+            .values()
+            .flat_map(|b| b.entries.last().map(|(t, _)| *t))
+            .max()
+            .unwrap_or(0);
+
+        // Reject if rewind too far.
+        if current_tick.saturating_sub(claimed_tick) > self.max_rewind_ticks {
+            return false;
+        }
+
+        let Some(pos) = self.position_at(target, claimed_tick) else {
+            return false;
+        };
+
+        // Ray-sphere intersection test.
+        let oc = [
+            shot_origin[0] - pos[0],
+            shot_origin[1] - pos[1],
+            shot_origin[2] - pos[2],
+        ];
+        let b = oc[0] * shot_dir[0] + oc[1] * shot_dir[1] + oc[2] * shot_dir[2];
+        let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] - hitbox_radius * hitbox_radius;
+        let discriminant = b * b - c;
+
+        discriminant >= 0.0
+    }
+
+    /// Remove an entity's history (e.g. on despawn).
+    pub fn remove(&mut self, entity: NetworkEntityId) {
+        self.histories.remove(&entity);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  RELAY SERVER SCAFFOLD
+// ════════════════════════════════════════════════════════════════════
+
+/// Configuration for a lightweight relay server that forwards packets
+/// between clients without running game simulation (for NAT traversal).
+#[derive(Debug, Clone)]
+pub struct RelayServerConfig {
+    /// Address to bind the relay socket.
+    pub bind_addr: std::net::SocketAddr,
+    /// Maximum number of concurrent sessions.
+    pub max_sessions: usize,
+    /// Idle timeout per session (seconds).
+    pub session_timeout_secs: u64,
+}
+
+impl Default for RelayServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: "0.0.0.0:7878".parse().expect("valid default relay addr"),
+            max_sessions: 256,
+            session_timeout_secs: 300,
+        }
+    }
+}
+
+/// A session on the relay server — tracks two endpoints forwarding to each other.
+#[derive(Debug, Clone)]
+pub struct RelaySession {
+    pub id: u64,
+    pub peers: Vec<std::net::SocketAddr>,
+    pub last_activity: std::time::Instant,
+}
+
+/// The relay server state. TCP/UDP I/O is handled externally; this struct
+/// only manages session bookkeeping and packet routing decisions.
+pub struct RelayServer {
+    pub config: RelayServerConfig,
+    pub sessions: Vec<RelaySession>,
+    next_session_id: u64,
+}
+
+impl RelayServer {
+    pub fn new(config: RelayServerConfig) -> Self {
+        Self {
+            config,
+            sessions: Vec::new(),
+            next_session_id: 1,
+        }
+    }
+
+    /// Create a new session and return its id.
+    pub fn create_session(&mut self, initial_peer: std::net::SocketAddr) -> u64 {
+        let id = self.next_session_id;
+        self.next_session_id += 1;
+        self.sessions.push(RelaySession {
+            id,
+            peers: vec![initial_peer],
+            last_activity: std::time::Instant::now(),
+        });
+        id
+    }
+
+    /// Add a peer to an existing session.
+    pub fn join_session(&mut self, session_id: u64, peer: std::net::SocketAddr) -> bool {
+        if let Some(session) = self.sessions.iter_mut().find(|s| s.id == session_id) {
+            if session.peers.len() < self.config.max_sessions {
+                session.peers.push(peer);
+                session.last_activity = std::time::Instant::now();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get the list of peers a packet from `sender` should be forwarded to.
+    pub fn forward_targets(&self, sender: std::net::SocketAddr) -> Vec<std::net::SocketAddr> {
+        for session in &self.sessions {
+            if session.peers.contains(&sender) {
+                return session
+                    .peers
+                    .iter()
+                    .filter(|&&p| p != sender)
+                    .copied()
+                    .collect();
+            }
+        }
+        Vec::new()
+    }
+
+    /// Prune idle sessions.
+    pub fn prune_idle(&mut self) {
+        let timeout = std::time::Duration::from_secs(self.config.session_timeout_secs);
+        self.sessions.retain(|s| s.last_activity.elapsed() < timeout);
+    }
+}
+
 

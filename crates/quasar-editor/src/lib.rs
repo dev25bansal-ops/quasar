@@ -5,6 +5,8 @@
 //! Provides a runtime GUI overlay for inspecting entities, viewing logs,
 //! and tweaking component values — press F12 to toggle.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod asset_browser;
 pub mod console;
 pub mod editor_state;
@@ -423,6 +425,7 @@ impl Editor {
                     EditorMode::Stopped => "▶ Play",
                     EditorMode::Playing => "⏸ Pause",
                     EditorMode::Paused => "▶ Resume",
+                    EditorMode::PrefabEdit => "📦 Prefab",
                 };
                 if ui.button(play_label).clicked() {
                     match self.state.mode {
@@ -435,6 +438,7 @@ impl Editor {
                         EditorMode::Paused => {
                             self.state.mode = EditorMode::Playing;
                         }
+                        EditorMode::PrefabEdit => {} // button disabled in prefab mode
                     }
                 }
                 if ui.button("⏹ Stop").clicked() && self.state.mode != EditorMode::Stopped {

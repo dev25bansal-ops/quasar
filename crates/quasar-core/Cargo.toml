@@ -17,6 +17,7 @@ rustc-hash = { workspace = true }
 smallvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 notify = { workspace = true }
+blake3 = { workspace = true }
 quinn = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
@@ -39,6 +40,7 @@ optional = true
 
 [dev-dependencies]
 criterion = { workspace = true }
+proptest = { workspace = true }
 
 [[bench]]
 name = "ecs_bench"

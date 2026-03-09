@@ -13,6 +13,8 @@
 //! run(app, WindowConfig::default());
 //! ```
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod runner;
 
 #[cfg(feature = "audio")]

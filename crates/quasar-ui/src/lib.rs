@@ -5,6 +5,8 @@
 //! Provides a widget tree, flexbox-inspired layout engine, text rendering
 //! via fontdue, and an ECS plugin that updates/renders the UI each frame.
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod layout;
 pub mod plugin;
 pub mod renderer;

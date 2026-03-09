@@ -13,6 +13,8 @@
 //! - **Networking**: QUIC/UDP game networking with rollback support
 //! - **Profiling**: puffin/tracy instrumentation
 
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
 pub mod animation;
 pub mod app;
 pub mod asset;
@@ -48,15 +50,15 @@ pub use asset_server::{
     AssetReloadedEvent, AssetServer, HotReloadHandlerSystem, ReloadKind,
 };
 // Unified asset manager is accessible via AssetServer::manager()
-pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState};
+pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState, ContentHash, AssetDepGraph};
 pub use ecs::{Component, Entity, EntityBuilder, World, flush_commands, QueryState, WorldQuery, QueryFilter};
 pub use error::{QuasarError, QuasarResult};
 pub use event::Events;
-pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent, ReplicationResource, Replicated, replication_system, PendingServerSnapshot, rollback_system};
+pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent, ReplicationResource, Replicated, replication_system, PendingServerSnapshot, rollback_system, ReplicationMode, ReplicatedField, ReplicateDescriptor, HistoryBuffer, LagCompensationManager, RelayServerConfig, RelayServer, RelaySession};
 pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
 pub use plugin::Plugin;
 pub use prefab::{ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab, PrefabEntity, PrefabFieldDiff, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, diff_instance_transform, instantiate_prefab, is_field_overridden, propagate_prefab_changes};
-pub use profiler::{FrameStats, Profiler, ProfilerPlugin};
+pub use profiler::{AllocTracker, FrameBudget, FrameStats, Profiler, ProfilerPlugin};
 pub use scene::{Scene, SceneGraph};
 pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};
 pub use scene_serde::{EntityData, SceneData};
