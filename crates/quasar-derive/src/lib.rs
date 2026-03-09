@@ -732,3 +732,55 @@ pub fn derive_replicate(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+/// Derive macro for `Bundle` — generates `insert_into` that inserts each field
+/// individually as a component.
+///
+/// ```ignore
+/// #[derive(Bundle)]
+/// struct PlayerBundle {
+///     position: Position,
+///     velocity: Velocity,
+///     health: Health,
+/// }
+/// ```
+#[proc_macro_derive(Bundle)]
+pub fn derive_bundle(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let name = &input.ident;
+
+    let fields = match &input.data {
+        syn::Data::Struct(data) => match &data.fields {
+            syn::Fields::Named(named) => &named.named,
+            _ => {
+                return syn::Error::new_spanned(name, "Bundle can only be derived for structs with named fields")
+                    .to_compile_error()
+                    .into();
+            }
+        },
+        _ => {
+            return syn::Error::new_spanned(name, "Bundle can only be derived for structs")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let insert_calls: Vec<_> = fields.iter().map(|f| {
+        let field_name = &f.ident;
+        quote! {
+            world.insert(entity, self.#field_name);
+        }
+    }).collect();
+
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    let expanded = quote! {
+        impl #impl_generics quasar_core::ecs::Bundle for #name #ty_generics #where_clause {
+            fn insert_into(self, world: &mut quasar_core::ecs::World, entity: quasar_core::ecs::Entity) {
+                #(#insert_calls)*
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}

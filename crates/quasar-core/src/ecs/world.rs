@@ -59,6 +59,113 @@ impl<T: 'static> ObserverEvent for OnRemove<T> {
     fn component_type_id() -> TypeId { TypeId::of::<T>() }
 }
 
+// ── Bundle trait ─────────────────────────────────────────────────
+
+/// A collection of components that can be inserted together.
+///
+/// Implement this for structs whose fields are all `Component` types.
+/// Use `#[derive(Bundle)]` from `quasar_derive` for automatic generation.
+///
+/// ```ignore
+/// #[derive(Bundle)]
+/// struct PlayerBundle {
+///     position: Position,
+///     velocity: Velocity,
+///     health: Health,
+/// }
+///
+/// let e = world.spawn_bundle(PlayerBundle {
+///     position: Position(0.0, 0.0, 0.0),
+///     velocity: Velocity(1.0, 0.0, 0.0),
+///     health: Health(100),
+/// });
+/// ```
+pub trait Bundle: Send + Sync + 'static {
+    /// Insert each field into `world` on `entity`.
+    fn insert_into(self, world: &mut World, entity: Entity);
+}
+
+// Implement Bundle for single components.
+impl<T: Component + Clone> Bundle for (T,) {
+    fn insert_into(self, world: &mut World, entity: Entity) {
+        world.insert(entity, self.0);
+    }
+}
+
+macro_rules! impl_bundle_tuple {
+    ($($T:ident),+) => {
+        #[allow(non_snake_case)]
+        impl<$($T: Component + Clone),+> Bundle for ($($T,)+) {
+            fn insert_into(self, world: &mut World, entity: Entity) {
+                let ($($T,)+) = self;
+                $(world.insert(entity, $T);)+
+            }
+        }
+    };
+}
+
+impl_bundle_tuple!(A, B);
+impl_bundle_tuple!(A, B, C);
+impl_bundle_tuple!(A, B, C, D);
+impl_bundle_tuple!(A, B, C, D, E);
+impl_bundle_tuple!(A, B, C, D, E, F);
+impl_bundle_tuple!(A, B, C, D, E, F, G);
+impl_bundle_tuple!(A, B, C, D, E, F, G, H);
+
+// ── Prototype ───────────────────────────────────────────────────
+
+/// A reusable entity template. Store a scene-level "prefab without an entity"
+/// that can stamp identical copies into the world cheaply.
+///
+/// ```ignore
+/// let proto = Prototype::new().with(Position(0.0, 0.0, 0.0)).with(Health(100));
+/// let e1 = proto.spawn(&mut world);
+/// let e2 = proto.spawn(&mut world);
+/// ```
+pub struct Prototype {
+    /// Each entry is (TypeId, factory_fn, component_bytes).
+    components: Vec<(
+        TypeId,
+        fn() -> Box<dyn ColumnStorage>,
+        Box<dyn Fn(&mut World, Entity) + Send + Sync>,
+    )>,
+}
+
+impl Prototype {
+    pub fn new() -> Self {
+        Self {
+            components: Vec::new(),
+        }
+    }
+
+    /// Add a component to the prototype.
+    pub fn with<T: Component + Clone>(mut self, value: T) -> Self {
+        self.components.push((
+            TypeId::of::<T>(),
+            create_typed_column::<T>,
+            Box::new(move |world: &mut World, entity: Entity| {
+                world.insert(entity, value.clone());
+            }),
+        ));
+        self
+    }
+
+    /// Spawn a new entity populated with cloned components.
+    pub fn spawn(&self, world: &mut World) -> Entity {
+        let entity = world.spawn();
+        for (_tid, _factory, inserter) in &self.components {
+            inserter(world, entity);
+        }
+        entity
+    }
+}
+
+impl Default for Prototype {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// The central container holding all entities and their component data.
 ///
 /// # Examples
@@ -137,6 +244,17 @@ impl World {
     /// Spawn a new entity (with no components).
     pub fn spawn(&mut self) -> Entity {
         self.allocator.allocate()
+    }
+
+    /// Spawn a new entity and immediately insert a bundle of components.
+    ///
+    /// ```ignore
+    /// let e = world.spawn_bundle((Position(0.0, 0.0, 0.0), Velocity(1.0, 0.0, 0.0)));
+    /// ```
+    pub fn spawn_bundle<B: Bundle>(&mut self, bundle: B) -> Entity {
+        let entity = self.spawn();
+        bundle.insert_into(self, entity);
+        entity
     }
 
     /// Despawn an entity, removing all of its components.
@@ -433,7 +551,8 @@ impl World {
     }
 
     /// Get a mutable reference to a component on an entity.
-    /// Reads directly from archetype SoA storage and updates change tick.
+    /// Reads directly from archetype SoA storage and updates change tick
+    /// both in the World-level map and the per-row column tick.
     pub fn get_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         let type_id = TypeId::of::<T>();
         // Quick check: does this entity have the component?
@@ -444,11 +563,12 @@ impl World {
         } else {
             return None;
         }
-        // Update change tick
+        let tick = self.current_tick;
+        // Update World-level change tick
         self.change_ticks
             .entry(type_id)
             .or_default()
-            .insert(entity.index(), self.current_tick);
+            .insert(entity.index(), tick);
 
         let &arch_id = self.entity_archetype.get(&entity.index())?;
         let arch = self.archetype_graph.get_mut(arch_id)?;
@@ -457,6 +577,8 @@ impl World {
         let col = arch.columns[col_idx]
             .as_any_mut()
             .downcast_mut::<TypedColumn<T>>()?;
+        // Stamp per-row column tick for change detection
+        col.set_changed(row, tick);
         col.data.get_mut(row)
     }
 
@@ -717,12 +839,14 @@ impl World {
     }
 
     /// Iterate over all `(Entity, &mut T)` pairs using a callback.
+    /// Stamps per-row change ticks for each entity visited.
     pub fn for_each_mut<T, F>(&mut self, mut f: F)
     where
         T: Component,
         F: FnMut(Entity, &mut T),
     {
         let type_id = TypeId::of::<T>();
+        let tick = self.current_tick;
         let arch_ids = self.archetype_graph.find_with_components_ids(&[type_id]);
         for arch_id in arch_ids {
             if let Some(arch) = self.archetype_graph.get_mut(arch_id) {
@@ -738,6 +862,7 @@ impl World {
                 {
                     let count = entities.len().min(col.data.len());
                     for i in 0..count {
+                        col.set_changed(i, tick);
                         f(entities[i], &mut col.data[i]);
                     }
                 }
@@ -1021,6 +1146,24 @@ impl World {
             }
         }
         results
+    }
+
+    /// Ergonomic typed query with composable filters.
+    ///
+    /// Returns a `QueryIter` that lazily yields `(Entity, Q::Item)` tuples,
+    /// skipping entities that don't pass the filter `F`.
+    ///
+    /// ```ignore
+    /// for (entity, (pos, vel)) in world.query_filtered::<(&Position, &Velocity), FilterChanged<Velocity>>() {
+    ///     // only entities whose Velocity changed since this system last ran
+    /// }
+    /// ```
+    pub fn query_filtered<Q, F>(&self) -> crate::ecs::query::QueryIter<'_, Q, F>
+    where
+        Q: crate::ecs::query::WorldQuery,
+        F: crate::ecs::query::QueryFilter,
+    {
+        crate::ecs::query::QueryState::<Q, F>::new().iter(self)
     }
 
     // ------------------------------------------------------------------

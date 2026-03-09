@@ -51,6 +51,11 @@ struct IblUniform {
 
 @group(0) @binding(0) var<uniform> camera: CameraUniform;
 @group(0) @binding(1) var<storage, read> bone_matrices: array<mat4x4<f32>>;
+// Morph target buffers — deltas packed as [pos.xyz, normal.xyz] per vertex per target.
+@group(0) @binding(2) var<storage, read> morph_deltas: array<f32>;
+@group(0) @binding(3) var<storage, read> morph_weights: array<f32>;
+// Number of morph targets and vertex count (packed in a uniform vec).
+@group(0) @binding(4) var<uniform> morph_info: vec4<u32>; // x = target_count, y = vertex_count
 
 @group(1) @binding(0) var<uniform> material: MaterialUniform;
 
@@ -96,6 +101,27 @@ struct VertexOutput {
     @location(5) world_tangent: vec3<f32>,
 };
 
+// Apply morph target deltas (blend shapes) to position and normal.
+fn apply_morph_targets(vertex_index: u32, base_pos: vec3<f32>, base_normal: vec3<f32>) -> array<vec3<f32>, 2> {
+    var pos = base_pos;
+    var nrm = base_normal;
+    let target_count = morph_info.x;
+    let vert_count = morph_info.y;
+
+    for (var t = 0u; t < target_count; t++) {
+        let w = morph_weights[t];
+        if (abs(w) < 0.0001) {
+            continue;
+        }
+        // 6 floats per vertex per target: pos(3) + normal(3)
+        let base_idx = (t * vert_count + vertex_index) * 6u;
+        pos += vec3<f32>(morph_deltas[base_idx], morph_deltas[base_idx + 1u], morph_deltas[base_idx + 2u]) * w;
+        nrm += vec3<f32>(morph_deltas[base_idx + 3u], morph_deltas[base_idx + 4u], morph_deltas[base_idx + 5u]) * w;
+    }
+
+    return array<vec3<f32>, 2>(pos, normalize(nrm));
+}
+
 fn skin_position(position: vec3<f32>, joint_indices: vec4<u32>, joint_weights: vec4<f32>) -> vec3<f32> {
     var skinned_pos = vec3<f32>(0.0, 0.0, 0.0);
     
@@ -127,11 +153,17 @@ fn skin_normal(normal: vec3<f32>, joint_indices: vec4<u32>, joint_weights: vec4<
 }
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(@builtin(vertex_index) vertex_index: u32, in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let skinned_position = skin_position(in.position, in.joint_indices, in.joint_weights);
-    let skinned_normal = skin_normal(in.normal, in.joint_indices, in.joint_weights);
+    // 1. Apply morph target deltas to base position/normal.
+    let morphed = apply_morph_targets(vertex_index, in.position, in.normal);
+    let morphed_position = morphed[0];
+    let morphed_normal = morphed[1];
+
+    // 2. Skin the morphed base attributes.
+    let skinned_position = skin_position(morphed_position, in.joint_indices, in.joint_weights);
+    let skinned_normal = skin_normal(morphed_normal, in.joint_indices, in.joint_weights);
     let skinned_tangent = skin_normal(in.tangent, in.joint_indices, in.joint_weights);
 
     let world_pos = camera.model * vec4<f32>(skinned_position, 1.0);

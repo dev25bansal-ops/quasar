@@ -22,6 +22,7 @@ full = [
     "shader-graph",
     "sprites",
     "post-process",
+    "raytracing",
 ]
 deferred = []
 ssr = ["deferred"]
@@ -37,6 +38,7 @@ decals = []
 shader-graph = []
 sprites = []
 post-process = []
+raytracing = []
 
 [dependencies]
 quasar-core = { workspace = true }

@@ -212,6 +212,29 @@ impl SystemGraph {
         self.add_system(node)
     }
 
+    /// Add a plain function-system with explicit read/write type sets.
+    ///
+    /// This is the easiest way to register a closure-based system with
+    /// auto-generated dependency edges:
+    ///
+    /// ```ignore
+    /// graph.add_fn_system::<(Velocity,), (Position,)>("move", |w| { /* ... */ });
+    /// ```
+    pub fn add_fn_system<R, W>(
+        &mut self,
+        name: &str,
+        system: impl FnMut(&mut World) + Send + Sync + 'static,
+    ) -> usize
+    where
+        R: ReadWriteSet,
+        W: ReadWriteSet,
+    {
+        let node = system_node_with_access::<_, R, W>(
+            crate::ecs::system::FnSystem::new(name, system),
+        );
+        self.add_system(node)
+    }
+
     pub fn build_dependencies(&mut self) {
         // Build name → index map for explicit ordering lookups.
         let name_map: HashMap<String, usize> = self

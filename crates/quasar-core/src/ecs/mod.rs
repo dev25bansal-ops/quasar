@@ -21,7 +21,7 @@ mod system;
 mod world;
 
 pub use archetype::{
-    Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature,
+    Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature, ComponentTicks,
 };
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
@@ -37,7 +37,7 @@ pub use query::{
 pub use system::{Schedule, System, SystemStage};
 pub use sparse_set::{SparseSet, SparseSetStorage};
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
-pub use world::{Children, EntityBuilder, Parent, World, ObserverKind, OnAdd, OnRemove, ObserverEvent};
+pub use world::{Bundle, Children, EntityBuilder, Parent, Prototype, World, ObserverKind, OnAdd, OnRemove, ObserverEvent};
 
 /// Marker type for change-detection queries.
 /// Use with `World::query_changed::<T>(since_tick)` to find entities whose

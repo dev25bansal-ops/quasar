@@ -8,6 +8,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use wgpu;
+use bytemuck::{Pod, Zeroable};
+
 /// Tile size in texels (each axis).
 pub const SVT_TILE_SIZE: u32 = 128;
 
@@ -265,6 +268,168 @@ impl SvtSystem {
     /// Advance the frame counter (call once per frame).
     pub fn advance_frame(&mut self) {
         self.frame += 1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GPU Feedback Pass – renders tile IDs to a small render target for readback
+// ---------------------------------------------------------------------------
+
+/// Size of the feedback render target (much smaller than the full frame).
+pub const FEEDBACK_RT_SIZE: u32 = 128;
+
+/// GPU-side feedback buffer entry (matches the R32G32B32A32Uint format).
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+#[repr(C)]
+pub struct GpuFeedbackTexel {
+    pub tile_x: u32,
+    pub tile_y: u32,
+    pub mip: u32,
+    pub _pad: u32,
+}
+
+/// A GPU feedback pass that renders virtual-tile coordinates to a small
+/// render target, then reads it back to the CPU for tile request processing.
+pub struct GpuFeedbackPass {
+    /// Low-res render target storing tile IDs per pixel.
+    pub feedback_texture: wgpu::Texture,
+    pub feedback_view: wgpu::TextureView,
+    /// Staging buffer for CPU read-back of the feedback texture.
+    pub readback_buffer: wgpu::Buffer,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl GpuFeedbackPass {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let width = FEEDBACK_RT_SIZE;
+        let height = FEEDBACK_RT_SIZE;
+        let feedback_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("svt_feedback_texture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba32Uint,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+
+        let feedback_view = feedback_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bytes_per_row = width * 16; // 4 × u32 per texel
+        let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("svt_feedback_readback"),
+            size: (bytes_per_row * height) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            feedback_texture,
+            feedback_view,
+            readback_buffer,
+            width,
+            height,
+        }
+    }
+
+    /// Encode a copy from the feedback render target to the readback buffer.
+    pub fn encode_readback(&self, encoder: &mut wgpu::CommandEncoder) {
+        let bytes_per_row = self.width * 16;
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.feedback_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.readback_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d {
+                width: self.width,
+                height: self.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// Parse the readback buffer (after mapping) into unique feedback entries.
+    /// The caller must map the buffer before calling this.
+    pub fn parse_feedback(&self, mapped_data: &[u8]) -> Vec<FeedbackEntry> {
+        let texels: &[GpuFeedbackTexel] = bytemuck::cast_slice(mapped_data);
+
+        let mut seen = HashSet::new();
+        let mut entries = Vec::new();
+
+        for texel in texels {
+            // Skip zero / empty entries.
+            if texel.tile_x == 0 && texel.tile_y == 0 && texel.mip == 0 {
+                continue;
+            }
+            let tile = VirtualTileId {
+                mip: texel.mip,
+                x: texel.tile_x,
+                y: texel.tile_y,
+            };
+            if seen.insert(tile) {
+                entries.push(FeedbackEntry { tile });
+            }
+        }
+        entries
+    }
+}
+
+// ---------------------------------------------------------------------------
+// VirtualTexture2D – user-facing asset type
+// ---------------------------------------------------------------------------
+
+/// A virtual texture asset that can be loaded through the asset server.
+///
+/// Wraps the virtual-tile metadata and delegates actual tile data to the
+/// [`SvtSystem`] which manages the physical tile pool.
+pub struct VirtualTexture2D {
+    /// Unique asset id.
+    pub id: u64,
+    /// Full dimensions of the texture (mip 0) in texels.
+    pub width: u32,
+    pub height: u32,
+    /// Number of mip levels covered.
+    pub mip_levels: u32,
+    /// Base directory containing the pre-split tile files.
+    pub tile_base_path: PathBuf,
+}
+
+impl VirtualTexture2D {
+    pub fn new(id: u64, width: u32, height: u32, tile_base_path: PathBuf) -> Self {
+        let mip_levels = (width.max(height) as f32).log2().floor() as u32 + 1;
+        Self {
+            id,
+            width,
+            height,
+            mip_levels,
+            tile_base_path,
+        }
+    }
+
+    /// Virtual tile grid dimensions at a given mip level.
+    pub fn tiles_at_mip(&self, mip: u32) -> (u32, u32) {
+        let w = (self.width >> mip).max(1);
+        let h = (self.height >> mip).max(1);
+        (
+            (w + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
+            (h + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
+        )
     }
 }
 

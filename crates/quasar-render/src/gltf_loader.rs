@@ -1,4 +1,5 @@
 use crate::mesh::MeshData;
+use crate::skinning::MorphTarget;
 use crate::vertex::Vertex;
 use std::path::Path;
 
@@ -25,6 +26,7 @@ pub enum GltfChannelProperty {
     Translation,
     Rotation,
     Scale,
+    MorphTargetWeights,
 }
 
 /// Interpolation mode for an animation channel.
@@ -43,6 +45,9 @@ pub enum GltfChannelValues {
     Vec3(Vec<[f32; 3]>),
     /// Quaternion values (rotation).
     Quat(Vec<[f32; 4]>),
+    /// Morph target weight values — flat array where each keyframe has
+    /// `num_morph_targets` consecutive floats.
+    Weights(Vec<f32>),
 }
 
 /// A complete animation clip imported from GLTF.
@@ -117,6 +122,48 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<Vec<MeshData>, String> {
     Ok(meshes)
 }
 
+/// Load morph targets (blend shapes) from a GLTF/GLB file.
+///
+/// Returns one `Vec<MorphTarget>` per mesh primitive (matching order of `load_gltf`).
+/// If a primitive has no morph targets the vec is empty.
+pub fn load_gltf_morph_targets(path: impl AsRef<Path>) -> Result<Vec<Vec<MorphTarget>>, String> {
+    let path = path.as_ref();
+    let (document, buffers, _images) =
+        gltf::import(path).map_err(|e| format!("Failed to import glTF: {e}"))?;
+
+    let mut all_targets = Vec::new();
+
+    for mesh in document.meshes() {
+        for primitive in mesh.primitives() {
+            let mut targets = Vec::new();
+            let reader = primitive.reader(|buf| Some(&buffers[buf.index()]));
+
+            let morph_iter = reader.read_morph_targets();
+                for (ti, (positions, normals, tangents)) in morph_iter.enumerate() {
+                    let position_deltas: Vec<[f32; 3]> = positions
+                        .map(|iter| iter.collect())
+                        .unwrap_or_default();
+                    let normal_deltas: Vec<[f32; 3]> = normals
+                        .map(|iter| iter.collect())
+                        .unwrap_or_default();
+                    let tangent_deltas: Vec<[f32; 3]> = tangents
+                        .map(|iter| iter.collect())
+                        .unwrap_or_default();
+
+                    targets.push(MorphTarget {
+                        name: format!("morph_{ti}"),
+                        position_deltas,
+                        normal_deltas,
+                        tangent_deltas,
+                    });
+                }
+            all_targets.push(targets);
+        }
+    }
+
+    Ok(all_targets)
+}
+
 /// Load animation clips from a GLTF/GLB file.
 ///
 /// Returns one [`GltfAnimationClip`] per animation defined in the file.
@@ -187,8 +234,9 @@ pub fn load_gltf_animations(path: impl AsRef<Path>) -> Result<Vec<GltfAnimationC
                     values = GltfChannelValues::Vec3(v3);
                 }
                 gltf::animation::Property::MorphTargetWeights => {
-                    // Morph target weights not yet supported.
-                    continue;
+                    property = GltfChannelProperty::MorphTargetWeights;
+                    let raw = read_accessor_f32(&buffers, &output_accessor);
+                    values = GltfChannelValues::Weights(raw);
                 }
             }
 

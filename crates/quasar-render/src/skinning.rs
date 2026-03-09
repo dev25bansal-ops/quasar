@@ -8,6 +8,84 @@ use serde::{Deserialize, Serialize};
 
 pub const MAX_BONES: usize = 256;
 pub const MAX_BONE_INFLUENCES: usize = 4;
+pub const MAX_MORPH_TARGETS: usize = 64;
+
+// ── Morph Targets / Blend Shapes ────────────────────────────────
+
+/// Per-vertex deltas for a single morph target (blend shape).
+///
+/// Position, normal and tangent deltas are stored in a flat buffer that
+/// parallels the mesh's main vertex buffer.
+#[derive(Debug, Clone)]
+pub struct MorphTarget {
+    pub name: String,
+    /// Per-vertex position offsets (same length as base vertex count).
+    pub position_deltas: Vec<[f32; 3]>,
+    /// Per-vertex normal offsets.
+    pub normal_deltas: Vec<[f32; 3]>,
+    /// Per-vertex tangent offsets (optional, may be empty).
+    pub tangent_deltas: Vec<[f32; 3]>,
+}
+
+/// A collection of morph targets for a single mesh, plus a GPU storage
+/// buffer that packs all deltas so a compute shader can evaluate them.
+pub struct MorphTargetSet {
+    pub targets: Vec<MorphTarget>,
+    /// Packed deltas uploaded to the GPU.
+    ///
+    /// Layout: `[target_0_vertex_0, target_0_vertex_1, ..., target_N_vertex_M]`
+    /// Each entry is `(pos_delta: vec3, normal_delta: vec3)` = 6 f32.
+    pub delta_buffer: Option<wgpu::Buffer>,
+    pub vertex_count: u32,
+}
+
+impl MorphTargetSet {
+    pub fn new(targets: Vec<MorphTarget>, vertex_count: u32) -> Self {
+        Self {
+            targets,
+            delta_buffer: None,
+            vertex_count,
+        }
+    }
+
+    /// Upload the packed delta buffer to the GPU.
+    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        if self.targets.is_empty() || self.vertex_count == 0 {
+            return;
+        }
+        let vcount = self.vertex_count as usize;
+        let tcount = self.targets.len();
+        // 6 floats per vertex per target: pos(3) + normal(3)
+        let total_floats = tcount * vcount * 6;
+        let mut data = vec![0.0f32; total_floats];
+
+        for (ti, target) in self.targets.iter().enumerate() {
+            let base = ti * vcount * 6;
+            for vi in 0..vcount {
+                let offset = base + vi * 6;
+                if vi < target.position_deltas.len() {
+                    data[offset] = target.position_deltas[vi][0];
+                    data[offset + 1] = target.position_deltas[vi][1];
+                    data[offset + 2] = target.position_deltas[vi][2];
+                }
+                if vi < target.normal_deltas.len() {
+                    data[offset + 3] = target.normal_deltas[vi][0];
+                    data[offset + 4] = target.normal_deltas[vi][1];
+                    data[offset + 5] = target.normal_deltas[vi][2];
+                }
+            }
+        }
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("morph_target_deltas"),
+            size: (data.len() * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, bytemuck::cast_slice(&data));
+        self.delta_buffer = Some(buffer);
+    }
+}
 
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 #[repr(C)]
@@ -212,6 +290,12 @@ pub struct SkinnedMesh {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
+    /// Morph-target blend shapes (may be empty).
+    pub morph_targets: Option<MorphTargetSet>,
+    /// Active morph weights — one per target.  Updated per-frame.
+    pub morph_weights: Vec<f32>,
+    /// GPU buffer holding current morph weights (for compute/vertex shader).
+    pub morph_weights_buffer: Option<wgpu::Buffer>,
 }
 
 impl SkinnedMesh {
@@ -234,6 +318,39 @@ impl SkinnedMesh {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            morph_targets: None,
+            morph_weights: Vec::new(),
+            morph_weights_buffer: None,
+        }
+    }
+
+    /// Attach morph targets. Uploads delta buffer and creates weight buffer.
+    pub fn set_morph_targets(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mut targets: MorphTargetSet,
+    ) {
+        let count = targets.targets.len();
+        targets.upload(device, queue);
+        self.morph_weights = vec![0.0f32; count];
+
+        let weights_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("morph_weights"),
+            size: (count.max(1) * 4) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.morph_weights_buffer = Some(weights_buf);
+        self.morph_targets = Some(targets);
+    }
+
+    /// Upload current morph weights to the GPU.
+    pub fn upload_morph_weights(&self, queue: &wgpu::Queue) {
+        if let Some(buf) = &self.morph_weights_buffer {
+            if !self.morph_weights.is_empty() {
+                queue.write_buffer(buf, 0, bytemuck::cast_slice(&self.morph_weights));
+            }
         }
     }
 

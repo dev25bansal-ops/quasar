@@ -228,6 +228,44 @@ impl Archetype {
     }
 }
 
+// ── Change-detection tick pair ────────────────────────────────────
+
+/// Per-component tick pair stored alongside each row in an archetype column.
+///
+/// - `added_tick` records the world tick at which the component was first
+///   inserted on the entity.
+/// - `changed_tick` records the world tick at which the component was last
+///   mutably accessed (via `World::get_mut` or `for_each_mut`).
+///
+/// Both values are set to `current_tick` when the component is first inserted.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ComponentTicks {
+    /// Tick when this component was added.
+    pub added_tick: u64,
+    /// Tick when this component was last mutably accessed.
+    pub changed_tick: u64,
+}
+
+impl ComponentTicks {
+    /// Create ticks where both added and changed are set to the same tick.
+    pub fn new(tick: u64) -> Self {
+        Self {
+            added_tick: tick,
+            changed_tick: tick,
+        }
+    }
+
+    /// Returns true if the component was added after `since_tick`.
+    pub fn is_added(&self, since_tick: u64) -> bool {
+        self.added_tick > since_tick
+    }
+
+    /// Returns true if the component was changed after `since_tick`.
+    pub fn is_changed(&self, since_tick: u64) -> bool {
+        self.changed_tick > since_tick
+    }
+}
+
 // ── SoA Column Storage ────────────────────────────────────────────
 
 /// Type-erased column storage for SoA archetype layout.

@@ -85,12 +85,15 @@ pub mod taa;
 pub mod ssgi;
 pub mod radiance_cache;
 pub mod virtual_shadow;
+#[cfg(feature = "raytracing")]
+pub mod rt;
+pub mod bindless;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
 pub use components::TextureHandle;
 pub use culling::{Aabb, Frustum};
-pub use gltf_loader::{load_gltf, load_gltf_animations, sample_vec3, sample_quat, GltfAnimationClip, GltfAnimationChannel, GltfChannelProperty, GltfChannelValues, GltfInterpolation};
+pub use gltf_loader::{load_gltf, load_gltf_animations, load_gltf_morph_targets, sample_vec3, sample_quat, GltfAnimationClip, GltfAnimationChannel, GltfChannelProperty, GltfChannelValues, GltfInterpolation};
 pub use hdr::{HdrRenderTarget, TonemappingPass, Tonemapping, ColorGrading};
 pub use instanced::{InstancedMesh, InstanceData, InstanceBatch, InstanceCollector, MAX_INSTANCES};
 pub use light::{DirectionalLight, PointLight, SpotLight, AmbientLight, LightData, LightsUniform, MAX_LIGHTS};
@@ -109,14 +112,17 @@ pub use vertex::Vertex;
 pub use asset_loader::{AssetLoader, GpuTexture, GpuMesh, GpuMaterial, RenderAssetManager};
 pub use environment::{EnvironmentMap, EnvironmentMapLoader, IBL_MIP_LEVELS};
 pub use cascade_shadow::{CascadeShadowMap, Cascade, CASCADE_COUNT, SHADOW_MAP_SIZE};
-pub use skinning::{Skeleton, Bone, SkinnedVertex, BoneMatricesBuffer, SkinnedMesh, MAX_BONES, MAX_BONE_INFLUENCES};
+pub use skinning::{Skeleton, Bone, SkinnedVertex, BoneMatricesBuffer, SkinnedMesh, MorphTarget, MorphTargetSet, MAX_BONES, MAX_BONE_INFLUENCES, MAX_MORPH_TARGETS};
 pub use lod::{LodGroup, LodLevel, LodSystem, LodCrossFade, LOD_CROSSFADE_BAND, LOD_CROSSFADE_WGSL, BAYER_4X4, bayer_threshold};
 pub use pipeline_cache::PipelineCache;
 pub use hot_reload::HotReloadSystem;
 pub use streaming::{StreamingPool, StreamingRequest, StreamingPriority};
 pub use staging_belt::StagingBelt;
-pub use svt::{SvtSystem, TilePool, TileStreamer, VirtualTileId, PhysicalSlot, PageTableEntry, FeedbackEntry, SVT_TILE_SIZE};
+pub use svt::{SvtSystem, TilePool, TileStreamer, VirtualTileId, PhysicalSlot, PageTableEntry, FeedbackEntry, GpuFeedbackPass, GpuFeedbackTexel, VirtualTexture2D, FEEDBACK_RT_SIZE, SVT_TILE_SIZE};
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
+pub use bindless::{TextureAtlas, MaterialDataBuffer, GpuMaterialData, MAX_BINDLESS_TEXTURES, MAX_MATERIALS};
+#[cfg(feature = "raytracing")]
+pub use rt::{Blas, Tlas, TlasInstance, RtGiPass, RtGiSettings};
 
 #[cfg(feature = "post-process")]
 pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, SSAO_NOISE_SIZE};
