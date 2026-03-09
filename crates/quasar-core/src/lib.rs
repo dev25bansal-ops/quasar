@@ -17,16 +17,20 @@ pub mod animation;
 pub mod app;
 pub mod asset;
 pub mod asset_server;
+pub mod delta_compression;
 pub mod ecs;
 pub mod error;
 pub mod event;
+pub mod interest;
 pub mod navigation;
 pub mod network;
 #[cfg(feature = "quinn-transport")]
 pub mod net_quinn;
 pub mod plugin;
+pub mod prediction;
 pub mod prefab;
 pub mod profiler;
+pub mod reflect;
 pub mod save_load;
 pub mod scene;
 pub mod scene_serde;
@@ -38,10 +42,10 @@ pub use animation::{
     AnimationTransition, BlendTreeNode, SkeletalAnimationClip, TransformKeyframe,
     TransitionCondition,
 };
-pub use app::{App, TimeSnapshot};
+pub use app::{App, SimulationState, TimeSnapshot, simulation_active};
 pub use asset_server::{
     AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetReloadSystem,
-    AssetReloadedEvent, AssetServer, ReloadKind,
+    AssetReloadedEvent, AssetServer, HotReloadHandlerSystem, ReloadKind,
 };
 // Unified asset manager is accessible via AssetServer::manager()
 pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState};
@@ -51,7 +55,7 @@ pub use event::Events;
 pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent, ReplicationResource, Replicated, replication_system, PendingServerSnapshot, rollback_system};
 pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
 pub use plugin::Plugin;
-pub use prefab::{ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab, PrefabEntity, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, instantiate_prefab};
+pub use prefab::{ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab, PrefabEntity, PrefabFieldDiff, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, diff_instance_transform, instantiate_prefab, is_field_overridden, propagate_prefab_changes};
 pub use profiler::{FrameStats, Profiler, ProfilerPlugin};
 pub use scene::{Scene, SceneGraph};
 pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};

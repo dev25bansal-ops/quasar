@@ -43,6 +43,16 @@ struct ShadowUniform {
     pcss_params: vec4<f32>,
 };
 
+struct CascadeUniform {
+    view_proj: mat4x4<f32>,
+    split_depth: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
+const CASCADE_COUNT: u32 = 4u;
+
 struct IblUniform {
     mip_count: f32,
     _pad: vec3<f32>,
@@ -65,6 +75,46 @@ struct IblUniform {
 @group(4) @binding(1) var t_shadow: texture_depth_2d;
 @group(4) @binding(2) var s_shadow: sampler_comparison;
 @group(4) @binding(3) var s_shadow_depth: sampler;
+
+// CSM cascade bindings
+@group(4) @binding(4) var<storage, read> cascades: array<CascadeUniform, 4>;
+@group(4) @binding(5) var t_cascade_shadow: texture_depth_2d_array;
+
+fn select_cascade(view_depth: f32) -> u32 {
+    for (var i = 0u; i < CASCADE_COUNT - 1u; i++) {
+        if (view_depth < cascades[i].split_depth) {
+            return i;
+        }
+    }
+    return CASCADE_COUNT - 1u;
+}
+
+fn calculate_cascade_shadow(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+    let idx = select_cascade(view_depth);
+    let light_space = cascades[idx].view_proj * vec4<f32>(world_pos, 1.0);
+    let ndc = light_space.xyz / light_space.w;
+    let uv = ndc.xy * 0.5 + 0.5;
+
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 1.0;
+    }
+
+    let shadow_depth = ndc.z;
+    var shadow = 0.0;
+    let texel = 1.0 / shadow_uniform.pcss_params.y;
+    let offsets = array<vec2<f32>, 4>(
+        vec2<f32>(-texel, -texel),
+        vec2<f32>( texel, -texel),
+        vec2<f32>(-texel,  texel),
+        vec2<f32>( texel,  texel),
+    );
+    for (var s = 0u; s < 4u; s++) {
+        shadow += textureSampleCompareLevel(
+            t_cascade_shadow, s_shadow,
+            uv + offsets[s], i32(idx), shadow_depth);
+    }
+    return shadow / 4.0;
+}
 
 @group(5) @binding(0) var<uniform> ibl: IblUniform;
 @group(5) @binding(1) var t_irradiance: texture_cube<f32>;
@@ -110,6 +160,7 @@ struct VertexOutput {
     @location(4) shadow_position: vec4<f32>,
     @location(5) world_tangent: vec3<f32>,
     @location(6) world_bitangent: vec3<f32>,
+    @location(7) view_depth: f32,
 };
 
 @vertex
@@ -128,6 +179,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.color = in.color;
 
     out.shadow_position = shadow_uniform.light_view_proj * world_pos;
+    out.view_depth = (camera.view_proj * world_pos).z;
 
     return out;
 }
@@ -366,7 +418,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let F0 = mix(vec3<f32>(0.04), albedo, metallic);
 
-    let shadow = calculate_shadow(in.shadow_position);
+    let pcss_shadow = calculate_shadow(in.shadow_position);
+    let csm_shadow = calculate_cascade_shadow(in.world_position, in.view_depth);
+    let shadow = min(pcss_shadow, csm_shadow);
 
     var Lo = vec3<f32>(0.0);
 

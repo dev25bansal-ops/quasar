@@ -12,6 +12,7 @@ full = [
     "ssr",
     "terrain",
     "gpu-culling",
+    "meshlet",
     "particles",
     "volumetric",
     "lightmap",
@@ -26,6 +27,7 @@ deferred = []
 ssr = ["deferred"]
 terrain = []
 gpu-culling = []
+meshlet = ["gpu-culling"]
 particles = []
 volumetric = []
 lightmap = []

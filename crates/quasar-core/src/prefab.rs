@@ -349,3 +349,126 @@ impl PrefabLibrary {
         self.prefabs.keys().map(|s| s.as_str())
     }
 }
+
+// ---------------------------------------------------------------------------
+// Prefab Override Diffing & Propagation
+// ---------------------------------------------------------------------------
+
+/// Describes a single field difference between a prefab template and an instance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrefabFieldDiff {
+    /// Component type (e.g. "Transform").
+    pub component_type: String,
+    /// Dot-separated field path (e.g. "position.x").
+    pub field_path: String,
+    /// Value in the base template.
+    pub base_value: serde_json::Value,
+    /// Current value on the instance.
+    pub instance_value: serde_json::Value,
+}
+
+/// Compute the diff between a prefab instance's current Transform and its
+/// base template transform at `entity_index` within the prefab.
+///
+/// Returns a list of fields that differ, regardless of whether they are
+/// covered by an explicit override.
+pub fn diff_instance_transform(
+    world: &World,
+    entity: Entity,
+    base_entity: &PrefabEntity,
+) -> Vec<PrefabFieldDiff> {
+    let mut diffs = Vec::new();
+    let Some(t) = world.get::<Transform>(entity) else {
+        return diffs;
+    };
+    let b = &base_entity.transform;
+
+    macro_rules! check {
+        ($comp:literal, $path:literal, $inst:expr, $base:expr) => {
+            if ($inst - $base).abs() > f32::EPSILON {
+                diffs.push(PrefabFieldDiff {
+                    component_type: $comp.into(),
+                    field_path: $path.into(),
+                    base_value: serde_json::json!($base),
+                    instance_value: serde_json::json!($inst),
+                });
+            }
+        };
+    }
+    check!("Transform", "position.x", t.position.x, b.position.x);
+    check!("Transform", "position.y", t.position.y, b.position.y);
+    check!("Transform", "position.z", t.position.z, b.position.z);
+    check!("Transform", "scale.x", t.scale.x, b.scale.x);
+    check!("Transform", "scale.y", t.scale.y, b.scale.y);
+    check!("Transform", "scale.z", t.scale.z, b.scale.z);
+    check!("Transform", "rotation.x", t.rotation.x, b.rotation.x);
+    check!("Transform", "rotation.y", t.rotation.y, b.rotation.y);
+    check!("Transform", "rotation.z", t.rotation.z, b.rotation.z);
+    check!("Transform", "rotation.w", t.rotation.w, b.rotation.w);
+
+    diffs
+}
+
+/// Returns `true` if the given `(component_type, field_path)` pair is
+/// covered by an explicit override in the [`PrefabInstance`].
+pub fn is_field_overridden(instance: &PrefabInstance, component_type: &str, field_path: &str) -> bool {
+    instance.overrides.iter().any(|o| {
+        o.component_type == component_type && o.field_path == field_path
+    })
+}
+
+/// Propagate base prefab changes to all instances in the world.
+///
+/// For every entity carrying a [`PrefabInstance`], look up the base prefab
+/// in the [`PrefabLibrary`], and re-apply base field values for any field
+/// that is **not** explicitly overridden. Overridden fields are left
+/// untouched.
+///
+/// This should be called after a prefab asset is reloaded.
+pub fn propagate_prefab_changes(world: &mut World) {
+    // Collect instance info first to avoid borrow conflicts.
+    let instances: Vec<(Entity, PrefabInstance)> = world
+        .query::<PrefabInstance>()
+        .into_iter()
+        .map(|(e, inst)| (e, inst.clone()))
+        .collect();
+
+    // Need the base prefab data — collect once.
+    let prefab_lookup: std::collections::HashMap<String, Vec<PrefabEntity>> = world
+        .resource::<PrefabLibrary>()
+        .map(|lib| {
+            lib.prefabs
+                .iter()
+                .map(|(k, v)| (k.clone(), v.entities.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for (entity, inst) in &instances {
+        let Some(base_entities) = prefab_lookup.get(&inst.prefab_id) else {
+            continue;
+        };
+        // For simplicity, apply the first template entity's transform to
+        // each instance entity. Multi-entity prefabs would need an index.
+        let Some(base) = base_entities.first() else {
+            continue;
+        };
+
+        // Re-apply non-overridden Transform fields from the base.
+        if let Some(t) = world.get_mut::<Transform>(*entity) {
+            if !is_field_overridden(inst, "Transform", "position.x") { t.position.x = base.transform.position.x; }
+            if !is_field_overridden(inst, "Transform", "position.y") { t.position.y = base.transform.position.y; }
+            if !is_field_overridden(inst, "Transform", "position.z") { t.position.z = base.transform.position.z; }
+            if !is_field_overridden(inst, "Transform", "scale.x") { t.scale.x = base.transform.scale.x; }
+            if !is_field_overridden(inst, "Transform", "scale.y") { t.scale.y = base.transform.scale.y; }
+            if !is_field_overridden(inst, "Transform", "scale.z") { t.scale.z = base.transform.scale.z; }
+            if !is_field_overridden(inst, "Transform", "rotation.x") { t.rotation.x = base.transform.rotation.x; }
+            if !is_field_overridden(inst, "Transform", "rotation.y") { t.rotation.y = base.transform.rotation.y; }
+            if !is_field_overridden(inst, "Transform", "rotation.z") { t.rotation.z = base.transform.rotation.z; }
+            if !is_field_overridden(inst, "Transform", "rotation.w") { t.rotation.w = base.transform.rotation.w; }
+        }
+
+        // Re-apply explicit overrides (they win over the base).
+        apply_overrides(world, *entity, &inst.overrides);
+    }
+}

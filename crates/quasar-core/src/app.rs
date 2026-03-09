@@ -18,6 +18,32 @@ pub struct TimeSnapshot {
     pub frame_count: u64,
 }
 
+/// Resource inserted into the [`World`] each frame by the editor runner
+/// indicating whether simulation systems (physics, audio, scripting)
+/// should execute this frame.
+///
+/// When the editor is in `Stopped` mode, `should_tick` is `false` and
+/// runtime systems should early-return. When in `Playing` (or a single
+/// `StepFrame` in `Paused`), `should_tick` is `true`.
+///
+/// Non-editor (standalone game) builds simply never insert this resource,
+/// and the helper [`simulation_active`] returns `true` when absent.
+#[derive(Debug, Clone, Copy)]
+pub struct SimulationState {
+    pub should_tick: bool,
+}
+
+/// Returns `true` when simulation systems should run this frame.
+///
+/// If no [`SimulationState`] resource exists (standalone/non-editor build),
+/// always returns `true`.
+pub fn simulation_active(world: &World) -> bool {
+    world
+        .resource::<SimulationState>()
+        .map(|s| s.should_tick)
+        .unwrap_or(true)
+}
+
 /// The top-level application that ties the ECS, systems, and plugins together.
 ///
 /// # Examples

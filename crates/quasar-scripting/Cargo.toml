@@ -16,3 +16,8 @@ glam = { workspace = true }
 winit = { workspace = true }
 log = { workspace = true }
 notify = { workspace = true }
+wasmtime = { version = "20", optional = true }
+
+[features]
+default = []
+wasm = ["wasmtime"]

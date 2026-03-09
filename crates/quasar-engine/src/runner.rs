@@ -30,7 +30,7 @@ use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
     AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData, LightsUniform, MeshCache,
     MeshShape, OrbitController, PointLight, RenderConfig, Renderer, ShadowCamera, ShadowMap,
-    SpotLight, TonemappingPass,
+    SpotLight, TonemappingPass, gpu_profiler::GpuProfiler,
 };
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -55,6 +55,8 @@ struct RunnerState {
     hdr_target: HdrRenderTarget,
     /// Tonemapping pass (HDR → LDR)
     tonemap_pass: TonemappingPass,
+    /// GPU timestamp profiler for render passes
+    gpu_profiler: GpuProfiler,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -131,6 +133,7 @@ impl ApplicationHandler for QuasarRunner {
 
         let hdr_target = HdrRenderTarget::new(&renderer.device, size.width, size.height);
         let tonemap_pass = TonemappingPass::new(&renderer.device, renderer.config.format);
+        let gpu_profiler = GpuProfiler::new(&renderer.device, renderer.queue.get_timestamp_period());
 
         self.state = Some(RunnerState {
             window,
@@ -146,6 +149,7 @@ impl ApplicationHandler for QuasarRunner {
             profiler: Profiler::new(),
             hdr_target,
             tonemap_pass,
+            gpu_profiler,
         });
 
         log::info!(
@@ -265,6 +269,12 @@ impl ApplicationHandler for QuasarRunner {
                 if let Some(input) = self.app.world.resource_mut::<Input>() {
                     input.begin_frame();
                 }
+
+                // Insert simulation state so physics/audio/scripting systems
+                // know whether to run this frame.
+                self.app.world.insert_resource(quasar_core::SimulationState {
+                    should_tick: state.editor.state.should_tick(),
+                });
 
                 // Run one full ECS frame (updates time, runs all systems).
                 state.profiler.begin_scope("ecs_tick");
@@ -404,6 +414,7 @@ impl ApplicationHandler for QuasarRunner {
 
                 // ── Shadow pass (before main frame) ──────────────
                 state.profiler.begin_scope("shadow_pass");
+                state.gpu_profiler.begin_frame();
                 {
                     // Position the shadow camera along the primary directional light
                     let dir = lights_uniform.lights[0].direction;
@@ -465,18 +476,21 @@ impl ApplicationHandler for QuasarRunner {
                         }
 
                         // 3D pass — render to HDR target (linear space, no tonemapping).
+                        let gpu_3d = state.gpu_profiler.begin_pass(&mut encoder, "3d_pass");
                         state.renderer.render_3d_pass_batched(
                             &state.camera,
                             &objects,
                             &state.hdr_target.view,
                             &mut encoder,
                         );
+                        if let Some(idx) = gpu_3d { state.gpu_profiler.end_pass(&mut encoder, idx); }
 
                         // Clear jitter so non-rendering code sees unjittered projection.
                         state.camera.jitter = (0.0, 0.0);
 
                         // SSGI compute — trace indirect diffuse from colour + depth.
                         if let Some(ssgi) = state.renderer.ssgi_pass.as_mut() {
+                            let gpu_ssgi = state.gpu_profiler.begin_pass(&mut encoder, "ssgi");
                             let inv_proj = state.camera.projection_matrix().inverse();
                             ssgi.dispatch(
                                 &state.renderer.device,
@@ -485,13 +499,16 @@ impl ApplicationHandler for QuasarRunner {
                                 &state.hdr_target.view,
                                 &state.renderer.depth_view,
                                 &inv_proj,
+                                state.renderer.motion_vector_view.as_ref(),
                             );
+                            if let Some(idx) = gpu_ssgi { state.gpu_profiler.end_pass(&mut encoder, idx); }
                         }
 
                         // TAA resolve → tonemapping.  Without TAA the HDR target
                         // feeds directly into the tonemapping pass.
                         let tonemap_source: &wgpu::TextureView;
                         if let Some(taa) = state.renderer.taa_pass.as_mut() {
+                            let gpu_taa = state.gpu_profiler.begin_pass(&mut encoder, "taa");
                             let mv_view = state.renderer.motion_vector_view.as_ref().unwrap();
                             taa.resolve(
                                 &state.renderer.device,
@@ -500,14 +517,17 @@ impl ApplicationHandler for QuasarRunner {
                                 &state.hdr_target.view,
                                 mv_view,
                             );
+                            if let Some(idx) = gpu_taa { state.gpu_profiler.end_pass(&mut encoder, idx); }
                             tonemap_source = taa.output_view();
                         } else {
                             tonemap_source = &state.hdr_target.view;
                         }
 
                         // Tonemapping pass — HDR → LDR on the surface view.
+                        let gpu_tonemap = state.gpu_profiler.begin_pass(&mut encoder, "tonemap");
                         state.tonemap_pass.update_texture(&state.renderer.device, tonemap_source);
                         state.tonemap_pass.execute(&mut encoder, &view);
+                        if let Some(idx) = gpu_tonemap { state.gpu_profiler.end_pass(&mut encoder, idx); }
 
                         // egui pass (editor overlay).
                         let egui_commands = if state.editor.enabled {
@@ -618,12 +638,22 @@ impl ApplicationHandler for QuasarRunner {
                             None
                         };
 
+                        // Resolve GPU profiler timestamps before submit.
+                        state.gpu_profiler.resolve(&mut encoder);
+
                         // Submit 3D + egui command buffers, then present.
                         let mut buffers = vec![encoder.finish()];
                         if let Some(egui_buf) = egui_commands {
                             buffers.push(egui_buf);
                         }
                         state.renderer.queue.submit(buffers);
+
+                        // Collect GPU profiler results and feed to editor.
+                        state.gpu_profiler.request_results();
+                        if let Some(timings) = state.gpu_profiler.try_collect(&state.renderer.device) {
+                            state.editor.gpu_pass_timings = timings.to_vec();
+                        }
+
                         output.present();
                     }
                     Err(wgpu::SurfaceError::Lost) => {

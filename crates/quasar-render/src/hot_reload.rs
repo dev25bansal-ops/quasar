@@ -4,7 +4,7 @@
 //! and recompiles the affected shader pipelines / re-uploads textures.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use quasar_core::asset_server::{AssetReloadedEvent, ReloadKind};
 
@@ -47,7 +47,7 @@ impl HotReloadSystem {
         match event.kind {
             ReloadKind::Shader => self.reload_shader(event, device, pipeline_cache),
             ReloadKind::Texture => self.reload_texture(event, device, queue, textures, texture_paths),
-            ReloadKind::Hdr | ReloadKind::Other => false,
+            ReloadKind::Hdr | ReloadKind::Other | ReloadKind::Lua | ReloadKind::Scene | ReloadKind::Prefab | ReloadKind::Audio => false,
         }
     }
 
@@ -55,7 +55,7 @@ impl HotReloadSystem {
     fn reload_shader(
         &mut self,
         event: &AssetReloadedEvent,
-        device: &wgpu::Device,
+        _device: &wgpu::Device,
         pipeline_cache: &mut PipelineCache,
     ) -> bool {
         let path = &event.path;

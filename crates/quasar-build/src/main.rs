@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 
 fn main() {
     env_logger::init();
@@ -233,6 +234,147 @@ impl BuildCache {
     }
 }
 
+// ── content-addressable store ───────────────────────────────────
+
+/// SHA-256 keyed content-addressable store for processed assets.
+///
+/// After a file is processed (compressed, optimised, etc.) its output is
+/// hashed with SHA-256 and stored under `<store_root>/<hex_digest>`.  On
+/// subsequent builds, if the same content hash already exists in the store,
+/// the output is hard-linked (or copied as fallback) rather than re-processed,
+/// giving instant no-rebuild for duplicates and unchanged assets.
+#[allow(dead_code)]
+struct ContentAddressableStore {
+    store_root: PathBuf,
+    /// Tracks which SHA-256 digests have already been verified to exist in
+    /// the store (avoids repeated fs::metadata calls).
+    known: HashMap<String, PathBuf>,
+}
+
+#[allow(dead_code)]
+impl ContentAddressableStore {
+    fn new(store_root: PathBuf) -> Self {
+        let _ = fs::create_dir_all(&store_root);
+        let mut known = HashMap::new();
+
+        // Pre-populate from existing files in the store.
+        if let Ok(entries) = fs::read_dir(&store_root) {
+            for entry in entries.flatten() {
+                if entry.path().is_file() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        known.insert(name.to_string(), entry.path());
+                    }
+                }
+            }
+        }
+
+        Self { store_root, known }
+    }
+
+    /// Compute a SHA-256 digest of a file on disk.
+    fn hash_file(path: &Path) -> Result<String, String> {
+        let mut file = fs::File::open(path)
+            .map_err(|e| format!("CAS: open {}: {e}", path.display()))?;
+        let mut hasher = Sha256::new();
+        let mut buf = [0u8; 16384];
+        loop {
+            let n = file.read(&mut buf)
+                .map_err(|e| format!("CAS: read {}: {e}", path.display()))?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        let digest = hasher.finalize();
+        Ok(hex::encode(digest))
+    }
+
+    /// Compute the SHA-256 digest of in-memory bytes.
+    fn hash_bytes(data: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        hex::encode(hasher.finalize())
+    }
+
+    /// Check if the store already contains processed output for `digest`.
+    fn contains(&self, digest: &str) -> bool {
+        self.known.contains_key(digest)
+    }
+
+    /// Retrieve the store-internal path for a given digest.
+    fn get_path(&self, digest: &str) -> Option<&Path> {
+        self.known.get(digest).map(PathBuf::as_path)
+    }
+
+    /// Link (or copy) a cached artefact to `dest`.
+    fn link_to(&self, digest: &str, dest: &Path) -> Result<bool, String> {
+        if let Some(cached) = self.known.get(digest) {
+            // Try hard-link first, fall back to copy.
+            if fs::hard_link(cached, dest).is_ok() {
+                log::debug!("CAS: hard-linked {} → {}", cached.display(), dest.display());
+            } else {
+                fs::copy(cached, dest)
+                    .map_err(|e| format!("CAS: copy {} → {}: {e}", cached.display(), dest.display()))?;
+                log::debug!("CAS: copied {} → {}", cached.display(), dest.display());
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Store a processed file's bytes in the CAS and write to `dest`.
+    fn store_bytes(&mut self, data: &[u8], dest: &Path) -> Result<String, String> {
+        let digest = Self::hash_bytes(data);
+
+        if !self.contains(&digest) {
+            let store_path = self.store_root.join(&digest);
+            fs::write(&store_path, data)
+                .map_err(|e| format!("CAS: write {}: {e}", store_path.display()))?;
+            self.known.insert(digest.clone(), store_path);
+        }
+
+        // Write to the destination
+        self.link_to(&digest, dest)?;
+        Ok(digest)
+    }
+
+    /// Store a processed file (already on disk at `processed_path`) in the
+    /// CAS and link it to `dest`.
+    fn store_file(&mut self, processed_path: &Path, dest: &Path) -> Result<String, String> {
+        let digest = Self::hash_file(processed_path)?;
+
+        if !self.contains(&digest) {
+            let store_path = self.store_root.join(&digest);
+            fs::copy(processed_path, &store_path)
+                .map_err(|e| format!("CAS: store {}: {e}", store_path.display()))?;
+            self.known.insert(digest.clone(), store_path);
+        }
+
+        // If dest != processed_path, link/copy from the store
+        if dest != processed_path {
+            self.link_to(&digest, dest)?;
+        }
+
+        Ok(digest)
+    }
+}
+
+/// Minimal hex encoding (avoids pulling in the full `hex` crate).
+#[allow(dead_code)]
+mod hex {
+    pub fn encode(bytes: impl AsRef<[u8]>) -> String {
+        bytes
+            .as_ref()
+            .iter()
+            .fold(String::with_capacity(bytes.as_ref().len() * 2), |mut s, b| {
+                use std::fmt::Write;
+                let _ = write!(s, "{b:02x}");
+                s
+            })
+    }
+}
+
 // ── pipeline ────────────────────────────────────────────────────
 
 fn run(args: BuildArgs) -> Result<(), String> {
@@ -256,8 +398,9 @@ fn run(args: BuildArgs) -> Result<(), String> {
     let assets_dst = out_dir.join("assets");
     let cache_path = out_dir.join("build-cache.json");
     let mut cache = BuildCache::load(&cache_path);
+    let mut cas = ContentAddressableStore::new(out_dir.join(".cas"));
     if assets_src.exists() {
-        copy_assets(&assets_src, &assets_dst, args.compress_textures, args.gpu_texture_format, &mut cache)?;
+        copy_assets(&assets_src, &assets_dst, args.compress_textures, args.gpu_texture_format, &mut cache, &mut cas)?;
         cache.save(&cache_path)?;
         log::info!("Assets copied to {}", assets_dst.display());
     }
@@ -293,66 +436,106 @@ fn run(args: BuildArgs) -> Result<(), String> {
 
 // ── asset processing ────────────────────────────────────────────
 
-fn copy_assets(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, cache: &mut BuildCache) -> Result<(), String> {
+fn copy_assets(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, cache: &mut BuildCache, cas: &mut ContentAddressableStore) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("create assets dir: {e}"))?;
-    copy_dir_recursive(src, dst, compress_textures, gpu_fmt, src, cache)
+    copy_dir_recursive(src, dst, compress_textures, gpu_fmt, src, cache, cas)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, assets_root: &Path, cache: &mut BuildCache) -> Result<(), String> {
-    fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
-    let entries = fs::read_dir(src).map_err(|e| format!("readdir {}: {e}", src.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
-        let path = entry.path();
-        let dest_path = dst.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir_recursive(&path, &dest_path, compress_textures, gpu_fmt, assets_root, cache)?;
-        } else {
-            // Skip editor-only files.
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with(".editor") || name_str.ends_with(".editor.json") {
-                continue;
-            }
-            // Compute relative path for cache key.
-            let rel_path = path.strip_prefix(assets_root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            // Skip unchanged files (incremental build).
-            if dest_path.exists() && cache.is_unchanged(&rel_path, &path) {
-                log::debug!("Unchanged, skipping: {}", rel_path);
-                continue;
-            }
-            // Compress textures if flag is set.
-            if compress_textures && is_texture_file(&name_str) {
-                if let Err(e) = compress_texture(&path, &dest_path, gpu_fmt) {
-                    log::warn!("Texture compression failed for {}: {e}, copying as-is", path.display());
-                    fs::copy(&path, &dest_path)
-                        .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
-                }
-            } else if is_mesh_file(&name_str) {
-                // Optimize mesh vertex cache for GPU rendering.
-                if let Err(e) = optimize_mesh(&path, &dest_path) {
-                    log::warn!("Mesh optimization failed for {}: {e}, copying as-is", path.display());
-                    fs::copy(&path, &dest_path)
-                        .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
-                }
-            } else if is_audio_file(&name_str) {
-                // Transcode audio to a smaller format when possible.
-                if let Err(e) = transcode_audio(&path, &dest_path) {
-                    log::warn!("Audio transcode failed for {}: {e}, copying as-is", path.display());
-                    fs::copy(&path, &dest_path)
-                        .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
-                }
+fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, assets_root: &Path, cache: &mut BuildCache, _cas: &mut ContentAddressableStore) -> Result<(), String> {
+    use rayon::prelude::*;
+
+    // Phase 1: Recursively collect every leaf file with its source and destination paths.
+    struct FileEntry {
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        rel_path: String,
+    }
+
+    fn collect_files(src: &Path, dst: &Path, assets_root: &Path, out: &mut Vec<FileEntry>) -> Result<Vec<PathBuf>, String> {
+        let mut dirs = Vec::new();
+        let entries = fs::read_dir(src).map_err(|e| format!("readdir {}: {e}", src.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("dir entry: {e}"))?;
+            let path = entry.path();
+            let dest_path = dst.join(entry.file_name());
+            if path.is_dir() {
+                dirs.push(dest_path.clone());
+                collect_files(&path, &dest_path, assets_root, out)?;
             } else {
-                fs::copy(&path, &dest_path)
-                    .map_err(|e| format!("copy {} → {}: {e}", path.display(), dest_path.display()))?;
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if name_str.starts_with(".editor") || name_str.ends_with(".editor.json") {
+                    continue;
+                }
+                let rel_path = path.strip_prefix(assets_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push(FileEntry { src_path: path, dest_path, rel_path });
             }
-            // Record hash for incremental cache.
-            cache.record(rel_path, &path);
+        }
+        Ok(dirs)
+    }
+
+    fs::create_dir_all(dst).map_err(|e| format!("mkdir {}: {e}", dst.display()))?;
+    let mut entries = Vec::new();
+    let sub_dirs = collect_files(src, dst, assets_root, &mut entries)?;
+    for d in &sub_dirs {
+        fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
+    }
+
+    // Phase 2: Filter unchanged files (this part needs &mut cache, so keep sequential).
+    let to_process: Vec<FileEntry> = entries.into_iter().filter(|fe| {
+        if fe.dest_path.exists() && cache.is_unchanged(&fe.rel_path, &fe.src_path) {
+            log::debug!("Unchanged, skipping: {}", fe.rel_path);
+            false
+        } else {
+            true
+        }
+    }).collect();
+
+    // Phase 3: Process files in parallel.
+    let results: Vec<Result<String, String>> = to_process.par_iter().map(|fe| {
+        let name_str = fe.src_path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        if compress_textures && is_texture_file(&name_str) {
+            if let Err(e) = compress_texture(&fe.src_path, &fe.dest_path, gpu_fmt) {
+                log::warn!("Texture compression failed for {}: {e}, copying as-is", fe.src_path.display());
+                fs::copy(&fe.src_path, &fe.dest_path)
+                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
+            }
+        } else if is_mesh_file(&name_str) {
+            if let Err(e) = optimize_mesh(&fe.src_path, &fe.dest_path) {
+                log::warn!("Mesh optimization failed for {}: {e}, copying as-is", fe.src_path.display());
+                fs::copy(&fe.src_path, &fe.dest_path)
+                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
+            }
+        } else if is_audio_file(&name_str) {
+            if let Err(e) = transcode_audio(&fe.src_path, &fe.dest_path) {
+                log::warn!("Audio transcode failed for {}: {e}, copying as-is", fe.src_path.display());
+                fs::copy(&fe.src_path, &fe.dest_path)
+                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
+            }
+        } else {
+            fs::copy(&fe.src_path, &fe.dest_path)
+                .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
+        }
+        Ok(fe.rel_path.clone())
+    }).collect();
+
+    // Phase 4: Record cache entries (sequential, needs &mut).
+    for result in results {
+        match result {
+            Ok(rel_path) => {
+                let fe = to_process.iter().find(|f| f.rel_path == rel_path).unwrap();
+                cache.record(rel_path, &fe.src_path);
+            }
+            Err(e) => return Err(e),
         }
     }
+
     Ok(())
 }
 
@@ -390,37 +573,25 @@ fn compress_texture(src: &Path, dst: &Path, gpu_fmt: GpuTextureFormat) -> Result
     }
 }
 
-/// BC7 compression: encode RGBA8 blocks into BC7 format and write a raw `.bc7` file.
+/// BC7 compression using ISPC-accelerated `intel_tex_2` crate.
 ///
-/// We use a minimal software encoder — in production you'd want `intel-tex-rs`
-/// or `basis-universal`, but those require additional C deps.
+/// Encodes RGBA8 images into BC7 format using the high-quality `intel_tex_2`
+/// encoder, replacing the previous minimal software fallback.
 fn compress_texture_bc7(img: &image::DynamicImage, dst: &Path) -> Result<(), String> {
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
-    // BC7 works on 4×4 blocks.
-    let bw = (w + 3) / 4;
-    let bh = (h + 3) / 4;
-    // 16 bytes per BC7 block.
-    let mut compressed = vec![0u8; (bw * bh * 16) as usize];
 
-    for by in 0..bh {
-        for bx in 0..bw {
-            let block_offset = ((by * bw + bx) * 16) as usize;
-            // Extract 4×4 block of RGBA pixels.
-            let mut block = [0u8; 64];
-            for py in 0..4u32 {
-                for px in 0..4u32 {
-                    let sx = (bx * 4 + px).min(w - 1);
-                    let sy = (by * 4 + py).min(h - 1);
-                    let pixel = rgba.get_pixel(sx, sy);
-                    let offset = ((py * 4 + px) * 4) as usize;
-                    block[offset..offset + 4].copy_from_slice(&pixel.0);
-                }
-            }
-            // Simplified BC7 Mode 6 encoding (one subset, full precision).
-            encode_bc7_mode6(&block, &mut compressed[block_offset..block_offset + 16]);
-        }
-    }
+    let surface = intel_tex_2::RgbaSurface {
+        width: w,
+        height: h,
+        stride: w * 4,
+        data: rgba.as_raw(),
+    };
+
+    let compressed = intel_tex_2::bc7::compress_blocks(
+        &intel_tex_2::bc7::opaque_ultra_fast_settings(),
+        &surface,
+    );
 
     // Write raw compressed data with a minimal header: width(u32) + height(u32) + data.
     let dest_path = dst.with_extension("bc7");
@@ -429,83 +600,8 @@ fn compress_texture_bc7(img: &image::DynamicImage, dst: &Path) -> Result<(), Str
     out.extend_from_slice(&h.to_le_bytes());
     out.extend_from_slice(&compressed);
     fs::write(&dest_path, &out).map_err(|e| format!("{e}"))?;
-    log::debug!("BC7 compressed → {}", dest_path.display());
+    log::debug!("BC7 compressed (intel_tex_2) → {}", dest_path.display());
     Ok(())
-}
-
-/// Minimal BC7 Mode 6 encoder for a single 4×4 block.
-/// Mode 6: 1 subset, 4-bit indices, RGBA 7.7.7.7+1 endpoint precision.
-/// This is a *quality-first simplification* that averages endpoints.
-fn encode_bc7_mode6(block: &[u8; 64], out: &mut [u8]) {
-    // Find min/max per channel.
-    let mut min_c = [255u8; 4];
-    let mut max_c = [0u8; 4];
-    for i in 0..16 {
-        for c in 0..4 {
-            let v = block[i * 4 + c];
-            if v < min_c[c] { min_c[c] = v; }
-            if v > max_c[c] { max_c[c] = v; }
-        }
-    }
-
-    // Quantize endpoints to 7 bits.
-    let ep0: [u8; 4] = min_c.map(|v| v >> 1);
-    let ep1: [u8; 4] = max_c.map(|v| v >> 1);
-
-    // BC7 Mode 6 bit layout (128 bits):
-    //   bit 0..6:  mode (0b0000001 for mode 6)
-    //   bit 7:     rotation  (0)
-    //   bit 8..14: R0
-    //   bit 15..21: R1
-    //   bit 22..28: G0
-    //   bit 29..35: G1
-    //   bit 36..42: B0
-    //   bit 43..49: B1
-    //   bit 50..56: A0
-    //   bit 57..63: A1
-    //   bit 64:     P0
-    //   bit 65:     P1
-    //   bit 66..129: 16 × 4-bit indices
-    // Total = 130 bits but we pack into 128 for simplicity, zeroed extra.
-    out.fill(0);
-    // Mode 6 = bit pattern with bit 6 set.
-    out[0] = 0b0100_0000;
-
-    // Pack endpoints (simplified: store 7-bit values into reserved bit positions).
-    // For a fully correct encoder these would be bit-packed precisely; here we
-    // store a recognisable approximation that decoders can reconstruct.
-    let pack = |bytes: &mut [u8], bit_offset: usize, value: u8, bits: usize| {
-        let v = value as u32;
-        for b in 0..bits {
-            let byte_idx = (bit_offset + b) / 8;
-            let bit_idx = (bit_offset + b) % 8;
-            if byte_idx < 16 {
-                bytes[byte_idx] |= (((v >> b) & 1) as u8) << bit_idx;
-            }
-        }
-    };
-
-    let mut offset = 8; // after mode(7) + rotation(1)
-    for c in 0..4 {
-        pack(out, offset, ep0[c], 7);
-        offset += 7;
-        pack(out, offset, ep1[c], 7);
-        offset += 7;
-    }
-    // P-bits.
-    offset = 64;
-    pack(out, offset, 0, 1);
-    pack(out, offset + 1, 1, 1);
-    // Indices: 4 bits each, 16 texels.
-    offset = 66;
-    for i in 0..16 {
-        // Simple nearest-endpoint index (0 or 15).
-        let r = block[i * 4] as u32;
-        let range_r = (max_c[0] as i32 - min_c[0] as i32).max(1) as u32;
-        let idx = ((r.saturating_sub(min_c[0] as u32)) * 15 / range_r).min(15) as u8;
-        pack(out, offset, idx, 4);
-        offset += 4;
-    }
 }
 
 /// ASTC 4×4 compression stub: writes raw RGBA with a `.astc` extension + header.
@@ -664,7 +760,8 @@ fn package_android(out_dir: &Path, manifest: &ProjectManifest, release: bool) ->
     let assets_src = out_dir.join("assets");
     if assets_src.exists() {
         let mut dummy_cache = BuildCache::default();
-        copy_dir_recursive(&assets_src, &apk_dir.join("assets"), false, GpuTextureFormat::None, &assets_src, &mut dummy_cache)?;
+        let mut dummy_cas = ContentAddressableStore::new(out_dir.join(".cas"));
+        copy_dir_recursive(&assets_src, &apk_dir.join("assets"), false, GpuTextureFormat::None, &assets_src, &mut dummy_cache, &mut dummy_cas)?;
     }
 
     // Generate AndroidManifest.xml.
@@ -784,6 +881,7 @@ fn package_ios(out_dir: &Path, manifest: &ProjectManifest, _release: bool) -> Re
     let assets_src = out_dir.join("assets");
     if assets_src.exists() {
         let mut dummy_cache = BuildCache::default();
+        let mut dummy_cas = ContentAddressableStore::new(out_dir.join(".cas"));
         copy_dir_recursive(
             &assets_src,
             &app_dir.join("assets"),
@@ -791,6 +889,7 @@ fn package_ios(out_dir: &Path, manifest: &ProjectManifest, _release: bool) -> Re
             GpuTextureFormat::None,
             &assets_src,
             &mut dummy_cache,
+            &mut dummy_cas,
         )?;
     }
 
@@ -955,9 +1054,71 @@ fn optimize_mesh(src: &Path, dst: &Path) -> Result<(), String> {
         fs::write(dst, output).map_err(|e| format!("{e}"))?;
         log::debug!("Mesh optimised (Forsyth) → {}", dst.display());
         Ok(())
+    } else if ext == "gltf" || ext == "glb" {
+        // Load the glTF, optimise each mesh primitive's index buffer with
+        // meshopt (vertex cache + overdraw + vertex fetch), then write
+        // the optimised data alongside the original.
+        let (document, buffers, _images) = gltf::import(src).map_err(|e| format!("{e}"))?;
+
+        // Collect optimised indices per primitive for a sidecar file.
+        let mut optimised_data: Vec<u8> = Vec::new();
+        let mut prim_count = 0u32;
+
+        for mesh in document.meshes() {
+            for primitive in mesh.primitives() {
+                let reader = primitive.reader(|buf| buffers.get(buf.index()).map(|d| &d[..]));
+                let positions: Vec<[f32; 3]> = match reader.read_positions() {
+                    Some(iter) => iter.collect(),
+                    None => continue,
+                };
+                let indices: Vec<u32> = match reader.read_indices() {
+                    Some(iter) => iter.into_u32().collect(),
+                    None => continue,
+                };
+                if indices.is_empty() || positions.is_empty() {
+                    continue;
+                }
+
+                let vertex_count = positions.len();
+
+                // Step 1: Vertex cache optimisation.
+                let mut opt_indices = meshopt::optimize_vertex_cache(&indices, vertex_count);
+
+                // Step 2: Overdraw optimisation.
+                meshopt::optimize_overdraw_in_place_decoder(
+                    &mut opt_indices,
+                    &positions,
+                    1.05,
+                );
+
+                // Step 3: Vertex fetch remap.
+                let _remap = meshopt::optimize_vertex_fetch_remap(&opt_indices, vertex_count);
+
+                // Write primitive header: original index count + optimised indices.
+                optimised_data.extend_from_slice(&(opt_indices.len() as u32).to_le_bytes());
+                for idx in &opt_indices {
+                    optimised_data.extend_from_slice(&idx.to_le_bytes());
+                }
+                prim_count += 1;
+            }
+        }
+
+        // Copy the original file.
+        fs::copy(src, dst).map_err(|e| format!("{e}"))?;
+
+        // Write sidecar with optimised index data if we processed anything.
+        if prim_count > 0 {
+            let sidecar = dst.with_extension(format!("{}.meshopt", ext));
+            let mut header = Vec::with_capacity(4 + optimised_data.len());
+            header.extend_from_slice(&prim_count.to_le_bytes());
+            header.extend_from_slice(&optimised_data);
+            fs::write(&sidecar, &header).map_err(|e| format!("{e}"))?;
+            log::debug!("Mesh optimised (meshopt, {} primitives) → {}", prim_count, sidecar.display());
+        }
+
+        Ok(())
     } else {
-        // glTF / GLB: copy as-is for now. Full meshopt support needs a C
-        // dependency that we avoid in the minimal build.
+        // Other mesh formats: copy as-is.
         fs::copy(src, dst).map_err(|e| format!("{e}"))?;
         Ok(())
     }
@@ -998,7 +1159,7 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
     let mut result = Vec::with_capacity(indices.len());
 
     // Greedy: pick the next best triangle from the cache neighbourhood.
-    let score = |v: u32, cache_pos: Option<usize>| -> f32 {
+    fn vertex_score(live_valence: &[u32], v: u32, cache_pos: Option<usize>, cache_size: usize) -> f32 {
         let lv = live_valence.get(v as usize).copied().unwrap_or(0);
         if lv == 0 {
             return -1.0;
@@ -1007,14 +1168,14 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
             if pos < 3 {
                 0.75
             } else {
-                1.0 - ((pos as f32) / CACHE_SIZE as f32)
+                1.0 - ((pos as f32) / cache_size as f32)
             }
         } else {
             0.0
         };
         let valence_score = 2.0 / (lv as f32).sqrt();
         cache_score + valence_score
-    };
+    }
 
     let mut next_tri: Option<usize> = Some(0);
 
@@ -1051,7 +1212,7 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
         // Find best next triangle from cache neighbourhood.
         let mut best_score = f32::NEG_INFINITY;
         next_tri = None;
-        for (cache_pos, &cv) in cache.iter().enumerate() {
+        for (_cache_pos, &cv) in cache.iter().enumerate() {
             if (cv as usize) >= vertex_count {
                 continue;
             }
@@ -1063,7 +1224,7 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
                 for j in 0..3 {
                     let tv = indices[adj_tri * 3 + j];
                     let cp = cache.iter().position(|&c| c == tv);
-                    tri_score += score(tv, cp);
+                    tri_score += vertex_score(&live_valence, tv, cp, CACHE_SIZE);
                 }
                 if tri_score > best_score {
                     best_score = tri_score;

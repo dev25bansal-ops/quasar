@@ -7,8 +7,51 @@ use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use rayon;
+use smallvec::SmallVec;
 
 use super::{Commands, System, SystemStage, World};
+
+/// Compact declaration of a system's data access requirements.
+/// Used by `SystemGraph` to auto-build the dependency DAG.
+#[derive(Debug, Clone, Default)]
+pub struct SystemAccess {
+    pub reads: SmallVec<[TypeId; 8]>,
+    pub writes: SmallVec<[TypeId; 8]>,
+    pub resources_read: SmallVec<[TypeId; 4]>,
+    pub resources_write: SmallVec<[TypeId; 4]>,
+}
+
+impl SystemAccess {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn read<T: 'static>(mut self) -> Self {
+        self.reads.push(TypeId::of::<T>());
+        self
+    }
+
+    pub fn write<T: 'static>(mut self) -> Self {
+        self.writes.push(TypeId::of::<T>());
+        self
+    }
+
+    pub fn res_read<T: 'static>(mut self) -> Self {
+        self.resources_read.push(TypeId::of::<T>());
+        self
+    }
+
+    pub fn res_write<T: 'static>(mut self) -> Self {
+        self.resources_write.push(TypeId::of::<T>());
+        self
+    }
+}
+
+/// Trait for systems that declare their access via `SystemAccess`.
+/// `SystemGraph` will auto-populate `SystemNode` fields from this.
+pub trait DeclareAccess: System {
+    fn access(&self) -> SystemAccess;
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccessMode {
     Read,
@@ -155,6 +198,18 @@ impl SystemGraph {
         let idx = self.nodes.len();
         self.nodes.push(node);
         idx
+    }
+
+    /// Add a system that implements `DeclareAccess`; automatically populates
+    /// reads/writes from the trait so the DAG builds itself.
+    pub fn add_system_auto<S: DeclareAccess + 'static>(&mut self, system: S) -> usize {
+        let access = system.access();
+        let mut node = SystemNode::new(Box::new(system));
+        node.component_reads = access.reads.iter().copied().collect();
+        node.component_writes = access.writes.iter().copied().collect();
+        node.resource_reads = access.resources_read.iter().copied().collect();
+        node.resource_writes = access.resources_write.iter().copied().collect();
+        self.add_system(node)
     }
 
     pub fn build_dependencies(&mut self) {
@@ -432,41 +487,24 @@ pub trait ReadWriteSet {
     fn accesses(mode: AccessMode) -> Vec<ComponentAccess>;
 }
 
-impl<T0: 'static> ReadWriteSet for (T0,) {
-    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
-        vec![ComponentAccess { type_id: TypeId::of::<T0>(), mode }]
-    }
+macro_rules! impl_read_write_set {
+    ($($T:ident),+) => {
+        impl<$($T: 'static),+> ReadWriteSet for ($($T,)+) {
+            fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
+                vec![$(ComponentAccess { type_id: TypeId::of::<$T>(), mode }),+]
+            }
+        }
+    };
 }
 
-impl<T0: 'static, T1: 'static> ReadWriteSet for (T0, T1) {
-    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
-        vec![
-            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
-        ]
-    }
-}
-
-impl<T0: 'static, T1: 'static, T2: 'static> ReadWriteSet for (T0, T1, T2) {
-    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
-        vec![
-            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T2>(), mode },
-        ]
-    }
-}
-
-impl<T0: 'static, T1: 'static, T2: 'static, T3: 'static> ReadWriteSet for (T0, T1, T2, T3) {
-    fn accesses(mode: AccessMode) -> Vec<ComponentAccess> {
-        vec![
-            ComponentAccess { type_id: TypeId::of::<T0>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T1>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T2>(), mode },
-            ComponentAccess { type_id: TypeId::of::<T3>(), mode },
-        ]
-    }
-}
+impl_read_write_set!(A);
+impl_read_write_set!(A, B);
+impl_read_write_set!(A, B, C);
+impl_read_write_set!(A, B, C, D);
+impl_read_write_set!(A, B, C, D, E);
+impl_read_write_set!(A, B, C, D, E, F);
+impl_read_write_set!(A, B, C, D, E, F, G);
+impl_read_write_set!(A, B, C, D, E, F, G, H);
 
 /// Build a `SystemNode` with declared read and write sets enforced in the parallel executor.
 pub fn system_node_with_access<S, R, W>(system: S) -> SystemNode

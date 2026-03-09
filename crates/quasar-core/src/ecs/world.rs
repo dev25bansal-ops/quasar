@@ -3,11 +3,23 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
+use rustc_hash::FxHashMap;
+
 use super::archetype::{ArchetypeGraph, ArchetypeId, ArchetypeSignature, ColumnStorage, TypedColumn};
 use super::component::Component;
 use super::entity::{Entity, EntityAllocator};
-use super::relation::{Relation, RelationGraph};
+use super::relation::{ChildOf, Relation, RelationGraph};
 use super::sparse_set::SparseSetStorage;
+
+use smallvec::SmallVec;
+
+/// Parent component — stores the parent entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Parent(pub Entity);
+
+/// Children component — stores child entities inline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Children(pub SmallVec<[Entity; 4]>);
 
 /// Create a typed SoA column factory for type T.
 fn create_typed_column<T: 'static + Send + Sync>() -> Box<dyn ColumnStorage> {
@@ -31,24 +43,24 @@ fn create_typed_column<T: 'static + Send + Sync>() -> Box<dyn ColumnStorage> {
 /// ```
 pub struct World {
     allocator: EntityAllocator,
-    resources: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    resources: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
     /// Archetype-based SoA storage — the single source of truth for component data.
     archetype_graph: ArchetypeGraph,
     /// Maps entity index to its archetype ID
-    entity_archetype: HashMap<u32, ArchetypeId>,
+    entity_archetype: FxHashMap<u32, ArchetypeId>,
     /// Maps entity index to its row within the archetype
-    entity_row: HashMap<u32, usize>,
+    entity_row: FxHashMap<u32, usize>,
     /// Track which components each entity has (for archetype migration)
-    entity_components: HashMap<u32, Vec<TypeId>>,
+    entity_components: FxHashMap<u32, Vec<TypeId>>,
     /// Per-type removal log: tracks entity indices that had a component removed this frame.
     /// Cleared once per frame via `clear_removal_log()`.
     removal_log: HashMap<TypeId, Vec<u32>>,
     /// Global change-detection tick, incremented once per frame.
     current_tick: u64,
     /// Per-(TypeId, entity_index) change tick for change-detection queries.
-    change_ticks: HashMap<TypeId, HashMap<u32, u64>>,
+    change_ticks: FxHashMap<TypeId, FxHashMap<u32, u64>>,
     /// Column factories for creating typed SoA columns from runtime TypeIds.
-    column_factories: HashMap<TypeId, fn() -> Box<dyn ColumnStorage>>,
+    column_factories: FxHashMap<TypeId, fn() -> Box<dyn ColumnStorage>>,
     /// Sparse-set storage for components that bypass archetype migration.
     sparse_storage: SparseSetStorage,
     /// Per-system last-run tick: system_name → tick when it last ran.
@@ -66,15 +78,15 @@ impl World {
     pub fn new() -> Self {
         Self {
             allocator: EntityAllocator::new(),
-            resources: HashMap::new(),
+            resources: FxHashMap::default(),
             archetype_graph: ArchetypeGraph::new(),
-            entity_archetype: HashMap::new(),
-            entity_row: HashMap::new(),
-            entity_components: HashMap::new(),
+            entity_archetype: FxHashMap::default(),
+            entity_row: FxHashMap::default(),
+            entity_components: FxHashMap::default(),
             removal_log: HashMap::new(),
             current_tick: 0,
-            change_ticks: HashMap::new(),
-            column_factories: HashMap::new(),
+            change_ticks: FxHashMap::default(),
+            column_factories: FxHashMap::default(),
             sparse_storage: SparseSetStorage::new(),
             system_last_run: HashMap::new(),
             active_system_last_run: 0,
@@ -535,6 +547,49 @@ impl World {
     /// Check whether a global resource of type `T` exists.
     pub fn has_resource<T: 'static + Send + Sync>(&self) -> bool {
         self.resources.contains_key(&TypeId::of::<T>())
+    }
+
+    // ------------------------------------------------------------------
+    // Entity hierarchy (Parent / Children)
+    // ------------------------------------------------------------------
+
+    /// Set `child`'s parent to `parent`, updating both `Parent` and `Children`
+    /// components and the underlying `ChildOf` relation.
+    pub fn set_parent(&mut self, child: Entity, parent: Entity) {
+        // Remove from old parent's Children list if any
+        if let Some(&Parent(old_parent)) = self.get::<Parent>(child) {
+            if old_parent != parent {
+                self.relation_graph.remove::<ChildOf>(child, old_parent);
+                // Remove child from old parent's Children list
+                if let Some(children) = self.get_mut::<Children>(old_parent) {
+                    children.0.retain(|e| *e != child);
+                }
+            }
+        }
+
+        self.insert(child, Parent(parent));
+        self.relation_graph.add::<ChildOf>(child, parent);
+
+        // Add to new parent's Children list
+        if self.has::<Children>(parent) {
+            if let Some(children) = self.get_mut::<Children>(parent) {
+                if !children.0.contains(&child) {
+                    children.0.push(child);
+                }
+            }
+        } else {
+            self.insert(parent, Children(SmallVec::from_elem(child, 1)));
+        }
+    }
+
+    /// Get the children of an entity (empty slice if none).
+    pub fn children_of(&self, parent: Entity) -> &[Entity] {
+        self.relation_graph.sources::<ChildOf>(parent)
+    }
+
+    /// Get the parent of an entity (if any).
+    pub fn parent_of(&self, child: Entity) -> Option<Entity> {
+        self.get::<Parent>(child).map(|p| p.0)
     }
 
     // ------------------------------------------------------------------
@@ -1155,6 +1210,54 @@ impl World {
     /// Remove a resource using runtime type information (for Commands).
     pub fn remove_resource_raw(&mut self, type_id: TypeId) {
         self.resources.remove(&type_id);
+    }
+
+    /// Propagate transforms down the entity hierarchy.
+    ///
+    /// For every entity with a `Transform` and `Parent`, computes the
+    /// `GlobalTransform` by combining the parent's global matrix with
+    /// the child's local transform. Entities without a parent get their
+    /// `GlobalTransform` set directly from their local `Transform`.
+    ///
+    /// Uses a topological walk via the `ChildOf` relation so that parents
+    /// are always processed before children.
+    pub fn propagate_transforms(&mut self) {
+        use quasar_math::transform::{GlobalTransform, Transform};
+
+        // Phase 1: roots — entities with Transform but no Parent
+        let roots: Vec<Entity> = self
+            .query::<Transform>()
+            .iter()
+            .filter(|(e, _)| self.get::<Parent>(*e).is_none())
+            .map(|(e, _)| *e)
+            .collect();
+
+        for root in &roots {
+            if let Some(t) = self.get::<Transform>(*root).copied() {
+                let gt = GlobalTransform::from(t);
+                self.insert(*root, gt);
+            }
+        }
+
+        // Phase 2: BFS children
+        let mut queue: std::collections::VecDeque<Entity> =
+            roots.into_iter().collect();
+
+        while let Some(parent) = queue.pop_front() {
+            let parent_matrix = self
+                .get::<GlobalTransform>(parent)
+                .map(|g| g.matrix)
+                .unwrap_or(quasar_math::Mat4::IDENTITY);
+
+            let children: Vec<Entity> = self.children_of(parent).to_vec();
+            for child in children {
+                if let Some(local) = self.get::<Transform>(child).copied() {
+                    let gt = GlobalTransform::from_matrix(parent_matrix * local.matrix());
+                    self.insert(child, gt);
+                }
+                queue.push_back(child);
+            }
+        }
     }
 }
 

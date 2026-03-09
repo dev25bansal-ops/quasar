@@ -6,7 +6,7 @@
 use egui::{Color32, Pos2, Rect, Stroke, Vec2, StrokeKind};
 
 use crate::logic_graph::{
-    ConnectionKind, LogicConnection, LogicGraph, LogicGraphCompiler, LogicNode, LogicNodeKind,
+    ConnectionKind, LogicGraph, LogicGraphCompiler, LogicNode, LogicNodeKind,
 };
 
 const NODE_WIDTH: f32 = 170.0;

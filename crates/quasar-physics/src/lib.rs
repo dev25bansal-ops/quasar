@@ -5,6 +5,7 @@
 //! Provides rigid body dynamics, collision detection, ray-casting, and
 //! a plugin that synchronises Rapier transforms ↔ ECS [`Transform`] components.
 
+pub mod async_step;
 pub mod character_controller;
 pub mod collider;
 pub mod debug_draw;
@@ -12,6 +13,7 @@ pub mod events;
 pub mod joints;
 pub mod plugin;
 pub mod rigidbody;
+pub mod rollback;
 pub mod world;
 
 pub use character_controller::{
@@ -27,6 +29,8 @@ pub use joints::{JointComponent, JointKind, JointMotor, MotorMode, apply_motor_t
 pub use plugin::{PhysicsPlugin, PhysicsResource};
 pub use rigidbody::{BodyType, RigidBodyComponent};
 pub use world::PhysicsWorld;
+pub use async_step::{AsyncPhysicsStepper, InterpolationSnapshot, PhysicsCommand};
+pub use rollback::{PhysicsSnapshot, RigidBodyState, ColliderState, JointState};
 
 /// Re-export rapier types for advanced users.
 pub use rapier3d;

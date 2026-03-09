@@ -5,7 +5,7 @@
 //! When the budget is exceeded the least-recently-used assets are evicted
 //! and replaced with low-resolution fallbacks.
 
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::cmp::Ordering;

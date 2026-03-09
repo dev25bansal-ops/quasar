@@ -462,6 +462,99 @@ impl Default for RenderGraph {
     }
 }
 
+// ── Resource state tracking and barrier insertion ────────────────────
+
+/// The usage state of an attachment between passes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResourceState {
+    /// Not yet used this frame.
+    Undefined,
+    /// Written as a render target (color or depth attachment).
+    RenderTarget,
+    /// Read as a sampled texture in a shader.
+    ShaderRead,
+    /// Read/written as a storage texture or buffer.
+    Storage,
+    /// Ready for presentation to the surface.
+    Present,
+}
+
+/// A resource state transition between two passes.
+#[derive(Debug, Clone)]
+pub struct ResourceTransition {
+    pub attachment: AttachmentId,
+    pub from: ResourceState,
+    pub to: ResourceState,
+    /// The pass that requires this transition *before* it runs.
+    pub before_pass: PassId,
+}
+
+impl RenderGraph {
+    /// Compute the resource transitions needed between passes in the given
+    /// topological order.  This information can be used to insert pipeline
+    /// barriers on explicit-sync APIs (Vulkan/D3D12) or to validate usage
+    /// on wgpu (which does implicit barriers but benefits from the metadata).
+    pub fn compute_transitions(&self, order: &[PassId]) -> Vec<ResourceTransition> {
+        let mut current_state: HashMap<AttachmentId, ResourceState> = HashMap::new();
+        let mut transitions = Vec::new();
+
+        for &pass_id in order {
+            let node = match self.nodes.get(&pass_id) {
+                Some(n) => n,
+                None => continue,
+            };
+
+            // Inputs need ShaderRead.
+            for &att in &node.inputs {
+                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                if prev != ResourceState::ShaderRead {
+                    transitions.push(ResourceTransition {
+                        attachment: att,
+                        from: prev,
+                        to: ResourceState::ShaderRead,
+                        before_pass: pass_id,
+                    });
+                    current_state.insert(att, ResourceState::ShaderRead);
+                }
+            }
+
+            // Outputs need RenderTarget.
+            for &att in &node.outputs {
+                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                if prev != ResourceState::RenderTarget {
+                    transitions.push(ResourceTransition {
+                        attachment: att,
+                        from: prev,
+                        to: ResourceState::RenderTarget,
+                        before_pass: pass_id,
+                    });
+                    current_state.insert(att, ResourceState::RenderTarget);
+                }
+            }
+        }
+
+        transitions
+    }
+
+    /// Return the final resource states after all passes have been executed
+    /// in the given order.  Useful for determining which attachments need a
+    /// transition to `Present` before swapchain submission.
+    pub fn final_states(&self, order: &[PassId]) -> HashMap<AttachmentId, ResourceState> {
+        let mut state: HashMap<AttachmentId, ResourceState> = HashMap::new();
+        for &pid in order {
+            if let Some(node) = self.nodes.get(&pid) {
+                for &att in &node.inputs {
+                    state.insert(att, ResourceState::ShaderRead);
+                }
+                for &att in &node.outputs {
+                    state.insert(att, ResourceState::RenderTarget);
+                }
+            }
+        }
+        state
+    }
+}
+
 /// Common pass IDs.
 pub mod pass_ids {
     use super::PassId;

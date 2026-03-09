@@ -32,6 +32,7 @@ pub mod decal;
 #[cfg(feature = "deferred")]
 pub mod deferred;
 pub mod gltf_loader;
+pub mod gpu_profiler;
 pub mod hdr;
 pub mod instanced;
 pub mod light;
@@ -39,6 +40,8 @@ pub mod loader;
 pub mod lod;
 pub mod material;
 pub mod mesh;
+#[cfg(feature = "meshlet")]
+pub mod meshlet;
 #[cfg(feature = "gpu-culling")]
 pub mod occlusion;
 pub mod pipeline;
@@ -74,8 +77,11 @@ pub mod pipeline_cache;
 #[cfg(feature = "ssr")]
 pub mod ssr;
 pub mod streaming;
+pub mod staging_belt;
+pub mod svt;
 pub mod taa;
 pub mod ssgi;
+pub mod virtual_shadow;
 
 pub use camera::Camera;
 pub use camera_controller::{FpsCameraController, OrbitController};
@@ -104,6 +110,8 @@ pub use lod::{LodGroup, LodLevel, LodSystem, LodCrossFade, LOD_CROSSFADE_BAND, L
 pub use pipeline_cache::PipelineCache;
 pub use hot_reload::HotReloadSystem;
 pub use streaming::{StreamingPool, StreamingRequest, StreamingPriority};
+pub use staging_belt::StagingBelt;
+pub use svt::{SvtSystem, TilePool, TileStreamer, VirtualTileId, PhysicalSlot, PageTableEntry, FeedbackEntry, SVT_TILE_SIZE};
 pub use gpu_memory::{GpuMemoryTracker, MemoryBudget, GpuResourceKind, AllocationId};
 
 #[cfg(feature = "post-process")]

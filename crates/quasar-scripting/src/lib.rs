@@ -8,7 +8,7 @@
 pub mod bridge;
 pub mod component_registry;
 pub mod plugin;
-
+pub mod wasm_scripting;
 use mlua::prelude::*;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
@@ -242,3 +242,6 @@ impl ScriptComponent {
 
 pub use plugin::{ScriptingPlugin, ScriptingResource};
 pub use component_registry::{ComponentDescriptor, ComponentRegistry};
+pub use wasm_scripting::ScriptingBridge;
+#[cfg(feature = "wasm")]
+pub use wasm_scripting::{WasmScriptEngine, WasmHostApi};

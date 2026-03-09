@@ -17,3 +17,8 @@ log = { workspace = true }
 env_logger = { workspace = true }
 image = { workspace = true }
 blake3 = { workspace = true }
+sha2 = "0.10"
+intel_tex_2 = "0.2"
+rayon = { workspace = true }
+gltf = { workspace = true }
+meshopt = { workspace = true }

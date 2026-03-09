@@ -40,6 +40,16 @@ struct ShadowUniform {
     pcss_params: vec4<f32>,
 };
 
+struct CascadeUniform {
+    view_proj: mat4x4<f32>,
+    split_depth: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
+const CASCADE_COUNT: u32 = 4u;
+
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
@@ -63,6 +73,50 @@ var s_shadow: sampler_comparison;
 @group(4) @binding(3)
 var s_shadow_depth: sampler;
 
+// CSM cascade bindings
+@group(4) @binding(4)
+var<storage, read> cascades: array<CascadeUniform, 4>;
+@group(4) @binding(5)
+var t_cascade_shadow: texture_depth_2d_array;
+
+/// Select the cascade index for the given view-space depth.
+fn select_cascade(view_depth: f32) -> u32 {
+    for (var i = 0u; i < CASCADE_COUNT - 1u; i++) {
+        if (view_depth < cascades[i].split_depth) {
+            return i;
+        }
+    }
+    return CASCADE_COUNT - 1u;
+}
+
+/// Sample shadow from the CSM array texture for the given world position.
+fn calculate_cascade_shadow(world_pos: vec3<f32>, view_depth: f32) -> f32 {
+    let idx = select_cascade(view_depth);
+    let light_space = cascades[idx].view_proj * vec4<f32>(world_pos, 1.0);
+    let ndc = light_space.xyz / light_space.w;
+    let uv = ndc.xy * 0.5 + 0.5;
+
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+        return 1.0;
+    }
+
+    let shadow_depth = ndc.z;
+    var shadow = 0.0;
+    let texel = 1.0 / shadow_uniform.pcss_params.y;
+    let offsets = array<vec2<f32>, 4>(
+        vec2<f32>(-texel, -texel),
+        vec2<f32>( texel, -texel),
+        vec2<f32>(-texel,  texel),
+        vec2<f32>( texel,  texel),
+    );
+    for (var s = 0u; s < 4u; s++) {
+        shadow += textureSampleCompareLevel(
+            t_cascade_shadow, s_shadow,
+            uv + offsets[s], i32(idx), shadow_depth);
+    }
+    return shadow / 4.0;
+}
+
 struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -77,6 +131,7 @@ struct VertexOutput {
     @location(2) color: vec4<f32>,
     @location(3) world_position: vec3<f32>,
     @location(4) shadow_position: vec4<f32>,
+    @location(5) view_depth: f32,
 };
 
 @vertex
@@ -94,6 +149,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
     // Calculate shadow map coordinates
     out.shadow_position = shadow_uniform.light_view_proj * world_pos;
+    out.view_depth = (camera.view_proj * world_pos).z;
 
     return out;
 }
@@ -113,19 +169,31 @@ fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     let map_size = shadow_uniform.pcss_params.y;
     let texel = 1.0 / map_size;
 
-    // 4-sample Poisson disk for blocker search and PCF.
-    let poisson = array<vec2<f32>, 4>(
+    // 16-sample blue-noise Poisson disk for high-quality PCSS.
+    let poisson = array<vec2<f32>, 16>(
         vec2<f32>(-0.94201624, -0.39906216),
         vec2<f32>( 0.94558609, -0.76890725),
         vec2<f32>(-0.09418410, -0.92938870),
         vec2<f32>( 0.34495938,  0.29387760),
+        vec2<f32>(-0.91588581,  0.45771432),
+        vec2<f32>(-0.81544232, -0.87912464),
+        vec2<f32>(-0.38277543,  0.27676845),
+        vec2<f32>( 0.97484398,  0.75648379),
+        vec2<f32>( 0.44323325, -0.97511554),
+        vec2<f32>( 0.53742981, -0.47373420),
+        vec2<f32>(-0.26496911, -0.41893023),
+        vec2<f32>( 0.79197514,  0.19090188),
+        vec2<f32>(-0.24188840,  0.99706507),
+        vec2<f32>(-0.81409955,  0.91437590),
+        vec2<f32>( 0.19984126,  0.78641367),
+        vec2<f32>( 0.14383161, -0.14100790),
     );
 
-    // --- Step 1: Blocker search ---
+    // --- Step 1: Blocker search (16 samples) ---
     let search_radius = light_size * texel * 8.0;
     var blocker_sum = 0.0;
     var blocker_count = 0.0;
-    for (var i = 0u; i < 4u; i++) {
+    for (var i = 0u; i < 16u; i++) {
         let sample_uv = uv + poisson[i] * search_radius;
         let d = textureSampleLevel(t_shadow, s_shadow_depth, sample_uv, 0.0);
         if (d < shadow_depth) {
@@ -144,14 +212,13 @@ fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     let penumbra = light_size * (shadow_depth - avg_blocker) / avg_blocker;
     let filter_radius = max(penumbra * texel * 4.0, texel);
 
-    // --- Step 3: PCF with variable filter ---
+    // --- Step 3: PCF with 16-sample variable filter ---
     var shadow = 0.0;
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[0] * filter_radius, shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[1] * filter_radius, shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[2] * filter_radius, shadow_depth);
-    shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[3] * filter_radius, shadow_depth);
+    for (var i = 0u; i < 16u; i++) {
+        shadow += textureSampleCompare(t_shadow, s_shadow, uv + poisson[i] * filter_radius, shadow_depth);
+    }
     
-    return shadow / 4.0;
+    return shadow / 16.0;
 }
 
 @fragment
@@ -163,7 +230,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base = tex_color * material.base_color * in.color;
 
     let n = normalize(in.world_normal);
-    let shadow = calculate_shadow(in.shadow_position);
+    let pcss_shadow = calculate_shadow(in.shadow_position);
+    let csm_shadow = calculate_cascade_shadow(in.world_position, in.view_depth);
+    let shadow = min(pcss_shadow, csm_shadow);
     let ambient = lights.ambient.rgb * lights.ambient.a;
 
     var diffuse_total = vec3<f32>(0.0);

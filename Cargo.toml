@@ -96,12 +96,19 @@ blake3 = "1"
 # 3D model loading
 gltf = { version = "1", features = ["import", "utils"] }
 
+# Mesh optimization
+meshopt = "0.3"
+
 # Font rendering
 fontdue = "0.9"
 
 # Profiling
 puffin = "0.19"
 tracy-client = "0.17"
+
+# Fast hashmaps
+rustc-hash = "1"
+smallvec = { version = "1", features = ["serde"] }
 
 # Serialization
 bincode = "1"

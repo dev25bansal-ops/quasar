@@ -6,8 +6,10 @@
 //! - Enabling SIMD/parallel processing within archetypes
 
 use std::any::{Any, TypeId};
-use std::cell::RefCell;
 use std::collections::HashMap;
+
+use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 
 use super::Entity;
 
@@ -64,14 +66,14 @@ pub struct Archetype {
     pub id: ArchetypeId,
     pub signature: ArchetypeSignature,
     pub entities: Vec<Entity>,
-    pub entity_to_row: HashMap<u32, usize>,
+    pub entity_to_row: FxHashMap<u32, usize>,
     // ── SoA parallel arrays for cache-friendly iteration ──
     /// Column type ids in index order.
     pub column_types: Vec<TypeId>,
     /// Parallel column storage — indexed same as `column_types`.
     pub columns: Vec<Box<dyn ColumnStorage>>,
     /// Fast lookup from TypeId to column index.
-    pub type_to_column: HashMap<TypeId, usize>,
+    pub type_to_column: FxHashMap<TypeId, usize>,
 }
 
 impl Archetype {
@@ -80,10 +82,10 @@ impl Archetype {
             id,
             signature,
             entities: Vec::new(),
-            entity_to_row: HashMap::new(),
+            entity_to_row: FxHashMap::default(),
             column_types: Vec::new(),
             columns: Vec::new(),
-            type_to_column: HashMap::new(),
+            type_to_column: FxHashMap::default(),
         }
     }
 
@@ -251,17 +253,29 @@ pub trait ColumnStorage: Send + Sync {
 }
 
 /// Strongly-typed SoA column backed by a contiguous `Vec<T>`.
+/// Includes per-row change ticks for cache-efficient change detection.
 pub struct TypedColumn<T: Send + Sync> {
     pub data: Vec<T>,
+    /// Per-row change tick — updated whenever a row is written.
+    pub change_ticks: Vec<u64>,
 }
 
 impl<T: 'static + Send + Sync> TypedColumn<T> {
     pub fn new() -> Self {
-        Self { data: Vec::new() }
+        Self {
+            data: Vec::new(),
+            change_ticks: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, value: T) {
         self.data.push(value);
+        self.change_ticks.push(0);
+    }
+
+    pub fn push_with_tick(&mut self, value: T, tick: u64) {
+        self.data.push(value);
+        self.change_ticks.push(tick);
     }
 
     pub fn get(&self, row: usize) -> Option<&T> {
@@ -270,6 +284,18 @@ impl<T: 'static + Send + Sync> TypedColumn<T> {
 
     pub fn get_mut(&mut self, row: usize) -> Option<&mut T> {
         self.data.get_mut(row)
+    }
+
+    /// Mark a row as changed at the given tick.
+    pub fn set_changed(&mut self, row: usize, tick: u64) {
+        if let Some(t) = self.change_ticks.get_mut(row) {
+            *t = tick;
+        }
+    }
+
+    /// Return the change tick of a specific row.
+    pub fn row_tick(&self, row: usize) -> u64 {
+        self.change_ticks.get(row).copied().unwrap_or(0)
     }
 }
 
@@ -285,6 +311,7 @@ impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
     fn swap_remove_entry(&mut self, row: usize) {
         if row < self.data.len() {
             self.data.swap_remove(row);
+            self.change_ticks.swap_remove(row);
         }
     }
 
@@ -295,6 +322,7 @@ impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
     fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>) {
         if let Ok(typed) = value.downcast::<T>() {
             self.data.push(*typed);
+            self.change_ticks.push(0);
         }
     }
 
@@ -315,6 +343,7 @@ impl<T: 'static + Send + Sync> ColumnStorage for TypedColumn<T> {
             return None;
         }
         let val = self.data.swap_remove(row);
+        self.change_ticks.swap_remove(row);
         Some(Box::new(val))
     }
 
@@ -327,53 +356,53 @@ pub trait ComponentSet {
     fn type_ids() -> Vec<TypeId>;
 }
 
-impl<T0: 'static, T1: 'static> ComponentSet for (T0, T1) {
-    fn type_ids() -> Vec<TypeId> {
-        let mut ids = vec![TypeId::of::<T0>(), TypeId::of::<T1>()];
-        ids.sort();
-        ids
-    }
+macro_rules! impl_component_set {
+    ($($T:ident),+) => {
+        impl<$($T: 'static),+> ComponentSet for ($($T,)+) {
+            fn type_ids() -> Vec<TypeId> {
+                let mut ids = vec![$(TypeId::of::<$T>()),+];
+                ids.sort();
+                ids
+            }
+        }
+    };
 }
 
-impl<T0: 'static, T1: 'static, T2: 'static> ComponentSet for (T0, T1, T2) {
-    fn type_ids() -> Vec<TypeId> {
-        let mut ids = vec![TypeId::of::<T0>(), TypeId::of::<T1>(), TypeId::of::<T2>()];
-        ids.sort();
-        ids
-    }
-}
-
-impl<T0: 'static, T1: 'static, T2: 'static, T3: 'static> ComponentSet for (T0, T1, T2, T3) {
-    fn type_ids() -> Vec<TypeId> {
-        let mut ids = vec![
-            TypeId::of::<T0>(),
-            TypeId::of::<T1>(),
-            TypeId::of::<T2>(),
-            TypeId::of::<T3>(),
-        ];
-        ids.sort();
-        ids
-    }
-}
+impl_component_set!(A);
+impl_component_set!(A, B);
+impl_component_set!(A, B, C);
+impl_component_set!(A, B, C, D);
+impl_component_set!(A, B, C, D, E);
+impl_component_set!(A, B, C, D, E, F);
+impl_component_set!(A, B, C, D, E, F, G);
+impl_component_set!(A, B, C, D, E, F, G, H);
+impl_component_set!(A, B, C, D, E, F, G, H, I);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K, L);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
+impl_component_set!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
 pub struct ArchetypeGraph {
-    archetypes: HashMap<ArchetypeId, Archetype>,
+    archetypes: FxHashMap<ArchetypeId, Archetype>,
     signature_to_id: HashMap<ArchetypeSignature, ArchetypeId>,
-    _edges: HashMap<ArchetypeId, HashMap<TypeId, ArchetypeId>>,
+    _edges: FxHashMap<ArchetypeId, FxHashMap<TypeId, ArchetypeId>>,
     next_id: ArchetypeId,
     /// Cached results: sorted query type IDs → matching archetype IDs.
-    /// Invalidated when new archetypes are created.
-    query_cache: RefCell<HashMap<Vec<TypeId>, Vec<ArchetypeId>>>,
+    /// Uses RwLock for thread-safe concurrent access from parallel systems.
+    query_cache: RwLock<HashMap<Vec<TypeId>, Vec<ArchetypeId>>>,
 }
 
 impl ArchetypeGraph {
     pub fn new() -> Self {
         Self {
-            archetypes: HashMap::new(),
+            archetypes: FxHashMap::default(),
             signature_to_id: HashMap::new(),
-            _edges: HashMap::new(),
+            _edges: FxHashMap::default(),
             next_id: 0,
-            query_cache: RefCell::new(HashMap::new()),
+            query_cache: RwLock::new(HashMap::new()),
         }
     }
 
@@ -389,7 +418,7 @@ impl ArchetypeGraph {
         self.archetypes.insert(id, archetype);
         self.signature_to_id.insert(signature.clone(), id);
         // New archetype may match existing cached queries — invalidate all.
-        self.query_cache.borrow_mut().clear();
+        self.query_cache.write().clear();
         id
     }
 
@@ -405,18 +434,19 @@ impl ArchetypeGraph {
     pub fn find_with_components(&self, type_ids: &[TypeId]) -> Vec<&Archetype> {
         let mut key = type_ids.to_vec();
         key.sort();
-        let cache = self.query_cache.borrow();
-        if let Some(ids) = cache.get(&key) {
-            return ids.iter().filter_map(|id| self.archetypes.get(id)).collect();
+        {
+            let cache = self.query_cache.read();
+            if let Some(ids) = cache.get(&key) {
+                return ids.iter().filter_map(|id| self.archetypes.get(id)).collect();
+            }
         }
-        drop(cache);
 
         let result: Vec<&Archetype> = self.archetypes
             .values()
             .filter(|a| a.signature.contains_all(type_ids))
             .collect();
         let cached_ids: Vec<ArchetypeId> = result.iter().map(|a| a.id).collect();
-        self.query_cache.borrow_mut().insert(key, cached_ids);
+        self.query_cache.write().insert(key, cached_ids);
         result
     }
 
@@ -424,18 +454,19 @@ impl ArchetypeGraph {
     pub fn find_with_components_ids(&self, type_ids: &[TypeId]) -> Vec<ArchetypeId> {
         let mut key = type_ids.to_vec();
         key.sort();
-        let cache = self.query_cache.borrow();
-        if let Some(ids) = cache.get(&key) {
-            return ids.clone();
+        {
+            let cache = self.query_cache.read();
+            if let Some(ids) = cache.get(&key) {
+                return ids.clone();
+            }
         }
-        drop(cache);
 
         let result: Vec<ArchetypeId> = self.archetypes
             .iter()
             .filter(|(_, a)| a.signature.contains_all(type_ids))
             .map(|(&id, _)| id)
             .collect();
-        self.query_cache.borrow_mut().insert(key, result.clone());
+        self.query_cache.write().insert(key, result.clone());
         result
     }
 

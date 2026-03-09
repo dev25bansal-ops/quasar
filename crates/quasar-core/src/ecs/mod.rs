@@ -27,8 +27,8 @@ pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::Component;
 pub use entity::Entity;
 pub use parallel::{
-    AccessMode, ComponentAccess, ParallelSchedule, ReadWriteSet, SystemGraph, SystemNode,
-    read_set, system_node_with_access, write_set,
+    AccessMode, ComponentAccess, DeclareAccess, ParallelSchedule, ReadWriteSet, SystemAccess,
+    SystemGraph, SystemNode, read_set, system_node_with_access, write_set,
 };
 pub use query::{
     FilterAdded, FilterChanged, FilterRemoved, FilterWith, FilterWithout, Query, QueryFilter,
@@ -37,7 +37,7 @@ pub use query::{
 pub use system::{Schedule, System, SystemStage};
 pub use sparse_set::{SparseSet, SparseSetStorage};
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
-pub use world::{EntityBuilder, World};
+pub use world::{Children, EntityBuilder, Parent, World};
 
 /// Marker type for change-detection queries.
 /// Use with `World::query_changed::<T>(since_tick)` to find entities whose

@@ -10,3 +10,9 @@ quasar-core = { workspace = true }
 quasar-math = { path = "../quasar-math" }
 kira = { workspace = true }
 log = { workspace = true }
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+
+[features]
+default = []
+gpu-reverb = ["wgpu", "bytemuck"]

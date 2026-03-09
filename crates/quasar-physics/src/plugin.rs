@@ -62,6 +62,7 @@ impl System for TransformWritebackSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if !quasar_core::simulation_active(world) { return; }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("transform_writeback"); }
         let handles: Vec<(rapier3d::prelude::RigidBodyHandle, Transform)> = world
             .query2::<RigidBodyComponent, Transform>()
@@ -105,6 +106,7 @@ impl System for PhysicsStepSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if !quasar_core::simulation_active(world) { return; }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("physics_step"); }
         let delta = world
             .resource::<quasar_core::TimeSnapshot>()
@@ -181,6 +183,7 @@ impl System for CollisionEventSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if !quasar_core::simulation_active(world) { return; }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("collision_events"); }
         let collider_to_entity: std::collections::HashMap<
             rapier3d::prelude::ColliderHandle,
@@ -241,6 +244,7 @@ impl System for JointSyncSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if !quasar_core::simulation_active(world) { return; }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("joint_sync"); }
         use crate::joints::{build_rapier_joint, JointComponent};
 
@@ -289,6 +293,7 @@ impl System for CharacterControllerSystem {
     }
 
     fn run(&mut self, world: &mut World) {
+        if !quasar_core::simulation_active(world) { return; }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("character_controller"); }
         let delta = world
             .resource::<quasar_core::TimeSnapshot>()

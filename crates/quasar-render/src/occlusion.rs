@@ -630,6 +630,193 @@ impl Default for IndirectDrawManager {
     }
 }
 
+// ── Bindless resource table ───────────────────────────────────────
+
+/// Maximum number of materials in the bindless material buffer.
+pub const BINDLESS_MAX_MATERIALS: u32 = 1024;
+
+/// Maximum number of textures in the bindless texture array.
+pub const BINDLESS_MAX_TEXTURES: u32 = 256;
+
+/// GPU-side packed material data for bindless rendering.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GpuMaterial {
+    pub base_color: [f32; 4],
+    /// (roughness, metallic, emissive, texture_index)
+    pub params: [f32; 4],
+}
+
+/// Per-instance data written alongside indirect draw args so the shader
+/// can look up the correct material and texture by index.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct DrawInstanceData {
+    pub material_index: u32,
+    pub texture_index: u32,
+    pub _pad: [u32; 2],
+}
+
+/// Manages a global material storage buffer and (optionally) a texture
+/// binding array for fully bindless rendering.
+///
+/// When `TEXTURE_BINDING_ARRAY` is available the shader can index into a
+/// table of textures.  Otherwise the material table alone is useful for
+/// reducing per-draw bind-group switches.
+pub struct BindlessResources {
+    /// Storage buffer holding `GpuMaterial` array.
+    pub material_buffer: wgpu::Buffer,
+    /// Storage buffer holding `DrawInstanceData` per object.
+    pub instance_data_buffer: wgpu::Buffer,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    pub bind_group: Option<wgpu::BindGroup>,
+    /// Number of materials currently uploaded.
+    pub material_count: u32,
+    /// Whether the device supports texture binding arrays.
+    pub has_texture_array: bool,
+}
+
+impl BindlessResources {
+    pub fn new(device: &wgpu::Device, has_texture_array: bool) -> Self {
+        let mat_buf_size =
+            (BINDLESS_MAX_MATERIALS as u64) * std::mem::size_of::<GpuMaterial>() as u64;
+        let material_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bindless Material Buffer"),
+            size: mat_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let inst_buf_size =
+            (GPU_CULL_MAX_OBJECTS as u64) * std::mem::size_of::<DrawInstanceData>() as u64;
+        let instance_data_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bindless Instance Data"),
+            size: inst_buf_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut entries = vec![
+            // 0: material array (storage, read)
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // 1: per-instance data (storage, read)
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
+
+        if has_texture_array {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                },
+                count: std::num::NonZeroU32::new(BINDLESS_MAX_TEXTURES),
+            });
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            });
+        }
+
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bindless Resources BGL"),
+                entries: &entries,
+            });
+
+        Self {
+            material_buffer,
+            instance_data_buffer,
+            bind_group_layout,
+            bind_group: None,
+            material_count: 0,
+            has_texture_array,
+        }
+    }
+
+    /// Upload materials to the GPU buffer.
+    pub fn upload_materials(&mut self, queue: &wgpu::Queue, materials: &[GpuMaterial]) {
+        let count = (materials.len() as u32).min(BINDLESS_MAX_MATERIALS);
+        queue.write_buffer(
+            &self.material_buffer,
+            0,
+            bytemuck::cast_slice(&materials[..count as usize]),
+        );
+        self.material_count = count;
+    }
+
+    /// Upload per-instance data (material/texture indices).
+    pub fn upload_instance_data(&self, queue: &wgpu::Queue, data: &[DrawInstanceData]) {
+        let max = (GPU_CULL_MAX_OBJECTS as usize).min(data.len());
+        queue.write_buffer(
+            &self.instance_data_buffer,
+            0,
+            bytemuck::cast_slice(&data[..max]),
+        );
+    }
+
+    /// Build (or rebuild) the bind group.  When `texture_views` is provided
+    /// and the device supports binding arrays, textures are included.
+    pub fn rebuild_bind_group(
+        &mut self,
+        device: &wgpu::Device,
+        texture_views: Option<&[&wgpu::TextureView]>,
+        sampler: Option<&wgpu::Sampler>,
+    ) {
+        let mut entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: self.material_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: self.instance_data_buffer.as_entire_binding(),
+            },
+        ];
+
+        if self.has_texture_array {
+            if let (Some(views), Some(s)) = (texture_views, sampler) {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureViewArray(views),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(s),
+                });
+            }
+        }
+
+        self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bindless Resources BG"),
+            layout: &self.bind_group_layout,
+            entries: &entries,
+        }));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

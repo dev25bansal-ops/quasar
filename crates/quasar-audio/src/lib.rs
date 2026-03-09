@@ -5,7 +5,11 @@
 //! Supports one-shot sound effects, looping music, volume/playback-rate
 //! control, and a basic spatial audio model.
 
+pub mod ambisonics;
+pub mod audio_graph;
 pub mod dsp;
+#[cfg(feature = "gpu-reverb")]
+pub mod gpu_reverb;
 pub mod plugin;
 
 use std::collections::HashMap;
@@ -448,3 +452,9 @@ pub use dsp::{
     StreamingAudioSource, StreamingAudioSystem, StreamingBuffer, StreamingMode,
     HrtfDatabase, HrtfEntry, HrtfIrPair, HrtfProcessor, HrtfSource, HrtfSystem,
 };
+pub use ambisonics::{AmbisonicsDecoder, AmbisonicsEncoder, AmbisonicsOrder, SpeakerLayout};
+pub use audio_graph::{
+    AudioGraph, Compressor, DspNode, Limiter, ParametricEq, ReverbSend, SidechainDucker,
+};
+#[cfg(feature = "gpu-reverb")]
+pub use gpu_reverb::{GpuConvolutionReverb, PartitionedIr};

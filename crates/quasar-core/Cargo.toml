@@ -13,6 +13,8 @@ bincode = { workspace = true }
 quasar-math = { path = "../quasar-math" }
 rayon = { workspace = true }
 parking_lot = { workspace = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
 crossbeam-channel = { workspace = true }
 notify = { workspace = true }
 quinn = { workspace = true, optional = true }

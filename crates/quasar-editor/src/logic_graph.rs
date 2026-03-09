@@ -5,7 +5,6 @@
 //! component read/write, etc.).  The graph compiles down to a Lua script
 //! that the scripting engine executes.
 
-use std::collections::HashMap;
 use std::fmt::Write;
 
 // ── Node types ─────────────────────────────────────────────────────
@@ -359,7 +358,7 @@ impl LogicGraphCompiler {
         out: &mut String,
         indent: usize,
     ) -> Result<(), String> {
-        let pad = "  ".repeat(indent);
+        let _pad = "  ".repeat(indent);
         let targets = graph.find_exec_outputs(from_node, from_slot);
         for conn in targets {
             let node = graph.node(conn.to_node)
