@@ -528,11 +528,7 @@ pub fn calculate_drag_delta(
 ///
 /// Returns `(ray_origin, ray_direction)`.
 /// `inv_view_proj` is the inverse of `projection * view`.
-pub fn mouse_to_ray(
-    mouse: Vec2,
-    screen_size: Vec2,
-    inv_view_proj: Mat4,
-) -> (Vec3, Vec3) {
+pub fn mouse_to_ray(mouse: Vec2, screen_size: Vec2, inv_view_proj: Mat4) -> (Vec3, Vec3) {
     // Normalised device coords: -1..1
     let ndc_x = (mouse.x / screen_size.x) * 2.0 - 1.0;
     let ndc_y = 1.0 - (mouse.y / screen_size.y) * 2.0; // flip Y

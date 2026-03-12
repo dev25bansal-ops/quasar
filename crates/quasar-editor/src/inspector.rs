@@ -4,6 +4,11 @@ use quasar_core::ecs::Entity;
 use quasar_math::{EulerRot, Quat, Transform};
 use quasar_render::MaterialOverride;
 
+use crate::editor_state::{
+    DeleteEntityCommand, EditCommand, SetMaterialCommand, SetPositionCommand, SetRotationCommand,
+    SetScaleCommand, SpawnEntityCommand, TransformData,
+};
+
 pub enum InspectorAction {
     Despawn(Entity),
     Spawn,
@@ -11,11 +16,9 @@ pub enum InspectorAction {
 
 /// Data bundle passed into the inspector for display and editing.
 ///
-/// The caller (runner) fills this with the entity's current component values.
-/// After [`inspector_panel`] returns, any modified fields can be written back
-/// to the ECS world.
+/// Stores initial values used to generate EditCommands after user edits.
 pub struct InspectorData {
-    /// A copy of the entity's [`Transform`]. Mutated in-place by the editor.
+    /// A copy of the entity's current [`Transform`].
     pub transform: Transform,
     /// Optional material override. `None` = entity has no `MaterialOverride`.
     pub material: Option<MaterialOverride>,
@@ -23,16 +26,14 @@ pub struct InspectorData {
 
 /// Draw the inspector panel for the selected entity.
 ///
-/// Returns `(bool, Option<InspectorAction>)` where:
-/// - `bool` indicates if any value was changed (so the caller knows to write back)
-/// - `Option<InspectorAction>` contains any action requested (despawn/spawn)
+/// Returns `Vec<Box<dyn EditCommand>>` containing all mutations performed.
 pub fn inspector_panel(
     ctx: &egui::Context,
     selected: &[Entity],
-    data: Option<&mut InspectorData>,
-) -> (bool, Option<InspectorAction>) {
-    let mut changed = false;
-    let mut action = None;
+    data: InspectorData,
+) -> Vec<Box<dyn EditCommand>> {
+    let mut commands: Vec<Box<dyn EditCommand>> = Vec::new();
+    let entity = selected.first().copied();
 
     egui::SidePanel::right("inspector")
         .default_width(280.0)
@@ -48,20 +49,9 @@ pub fn inspector_panel(
                 return;
             }
 
-            let (entity, data) = match (selected.first(), data) {
-                (Some(&e), Some(d)) => (e, d),
-                (Some(e), None) => {
-                    ui.label(format!(
-                        "Entity [{}:{}] — no editable data",
-                        e.index(),
-                        e.generation()
-                    ));
-                    return;
-                }
-                _ => {
-                    ui.label("Select an entity in the Hierarchy panel.");
-                    return;
-                }
+            let Some(entity) = entity else {
+                ui.label("Select an entity in the Hierarchy panel.");
+                return;
             };
 
             ui.label(format!(
@@ -75,28 +65,29 @@ pub fn inspector_panel(
             egui::CollapsingHeader::new("Transform")
                 .default_open(true)
                 .show(ui, |ui| {
+                    let mut local_transform = data.transform;
+
                     ui.label("Position");
-                    let t = &mut data.transform;
-                    changed |= ui
+                    let pos_changed = ui
                         .horizontal(|ui| {
                             let mut c = false;
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.position.x)
+                                    egui::DragValue::new(&mut local_transform.position.x)
                                         .speed(0.05)
                                         .prefix("X "),
                                 )
                                 .changed();
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.position.y)
+                                    egui::DragValue::new(&mut local_transform.position.y)
                                         .speed(0.05)
                                         .prefix("Y "),
                                 )
                                 .changed();
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.position.z)
+                                    egui::DragValue::new(&mut local_transform.position.z)
                                         .speed(0.05)
                                         .prefix("Z "),
                                 )
@@ -105,9 +96,17 @@ pub fn inspector_panel(
                         })
                         .inner;
 
+                    if pos_changed {
+                        commands.push(Box::new(SetPositionCommand {
+                            entity,
+                            old_position: data.transform.position,
+                            new_position: local_transform.position,
+                        }));
+                    }
+
                     ui.label("Rotation (Euler °)");
                     let (mut rx, mut ry, mut rz) = {
-                        let (y, x, z) = t.rotation.to_euler(EulerRot::YXZ);
+                        let (y, x, z) = local_transform.rotation.to_euler(EulerRot::YXZ);
                         (x.to_degrees(), y.to_degrees(), z.to_degrees())
                     };
                     let rot_changed = ui
@@ -140,23 +139,28 @@ pub fn inspector_panel(
                             c
                         })
                         .inner;
+
                     if rot_changed {
-                        t.rotation = Quat::from_euler(
+                        local_transform.rotation = Quat::from_euler(
                             EulerRot::YXZ,
                             ry.to_radians(),
                             rx.to_radians(),
                             rz.to_radians(),
                         );
-                        changed = true;
+                        commands.push(Box::new(SetRotationCommand {
+                            entity,
+                            old_rotation: data.transform.rotation,
+                            new_rotation: local_transform.rotation,
+                        }));
                     }
 
                     ui.label("Scale");
-                    changed |= ui
+                    let scale_changed = ui
                         .horizontal(|ui| {
                             let mut c = false;
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.scale.x)
+                                    egui::DragValue::new(&mut local_transform.scale.x)
                                         .speed(0.01)
                                         .prefix("X ")
                                         .range(0.01..=100.0),
@@ -164,7 +168,7 @@ pub fn inspector_panel(
                                 .changed();
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.scale.y)
+                                    egui::DragValue::new(&mut local_transform.scale.y)
                                         .speed(0.01)
                                         .prefix("Y ")
                                         .range(0.01..=100.0),
@@ -172,7 +176,7 @@ pub fn inspector_panel(
                                 .changed();
                             c |= ui
                                 .add(
-                                    egui::DragValue::new(&mut t.scale.z)
+                                    egui::DragValue::new(&mut local_transform.scale.z)
                                         .speed(0.01)
                                         .prefix("Z ")
                                         .range(0.01..=100.0),
@@ -181,21 +185,31 @@ pub fn inspector_panel(
                             c
                         })
                         .inner;
+
+                    if scale_changed {
+                        commands.push(Box::new(SetScaleCommand {
+                            entity,
+                            old_scale: data.transform.scale,
+                            new_scale: local_transform.scale,
+                        }));
+                    }
                 });
 
             // ── Material section ─────────────────────────────────
-            if let Some(mat) = &mut data.material {
+            if let Some(ref old_mat) = data.material {
                 ui.separator();
                 egui::CollapsingHeader::new("Material Override")
                     .default_open(true)
                     .show(ui, |ui| {
+                        let mut local_mat = old_mat.clone();
+
                         ui.label("Base Color");
-                        changed |= ui
+                        let color_changed = ui
                             .horizontal(|ui| {
                                 let mut c = false;
                                 c |= ui
                                     .add(
-                                        egui::DragValue::new(&mut mat.base_color[0])
+                                        egui::DragValue::new(&mut local_mat.base_color[0])
                                             .speed(0.01)
                                             .prefix("R ")
                                             .range(0.0..=1.0),
@@ -203,7 +217,7 @@ pub fn inspector_panel(
                                     .changed();
                                 c |= ui
                                     .add(
-                                        egui::DragValue::new(&mut mat.base_color[1])
+                                        egui::DragValue::new(&mut local_mat.base_color[1])
                                             .speed(0.01)
                                             .prefix("G ")
                                             .range(0.0..=1.0),
@@ -211,7 +225,7 @@ pub fn inspector_panel(
                                     .changed();
                                 c |= ui
                                     .add(
-                                        egui::DragValue::new(&mut mat.base_color[2])
+                                        egui::DragValue::new(&mut local_mat.base_color[2])
                                             .speed(0.01)
                                             .prefix("B ")
                                             .range(0.0..=1.0),
@@ -221,26 +235,54 @@ pub fn inspector_panel(
                             })
                             .inner;
 
-                        changed |= ui
-                            .add(egui::Slider::new(&mut mat.roughness, 0.0..=1.0).text("Roughness"))
+                        let rough_changed = ui
+                            .add(
+                                egui::Slider::new(&mut local_mat.roughness, 0.0..=1.0)
+                                    .text("Roughness"),
+                            )
                             .changed();
-                        changed |= ui
-                            .add(egui::Slider::new(&mut mat.metallic, 0.0..=1.0).text("Metallic"))
+                        let metal_changed = ui
+                            .add(
+                                egui::Slider::new(&mut local_mat.metallic, 0.0..=1.0)
+                                    .text("Metallic"),
+                            )
                             .changed();
-                        changed |= ui
-                            .add(egui::Slider::new(&mut mat.emissive, 0.0..=10.0).text("Emissive"))
+                        let emissive_changed = ui
+                            .add(
+                                egui::Slider::new(&mut local_mat.emissive, 0.0..=10.0)
+                                    .text("Emissive"),
+                            )
                             .changed();
+
+                        if color_changed || rough_changed || metal_changed || emissive_changed {
+                            commands.push(Box::new(SetMaterialCommand {
+                                entity,
+                                old_base_color: old_mat.base_color,
+                                new_base_color: local_mat.base_color,
+                                old_roughness: old_mat.roughness,
+                                new_roughness: local_mat.roughness,
+                                old_metallic: old_mat.metallic,
+                                new_metallic: local_mat.metallic,
+                                old_emissive: old_mat.emissive,
+                                new_emissive: local_mat.emissive,
+                            }));
+                        }
                     });
             }
 
             ui.separator();
             if ui.button("🗑 Despawn Entity").clicked() {
-                action = Some(InspectorAction::Despawn(entity));
+                commands.push(Box::new(DeleteEntityCommand::new(entity)));
             }
             if ui.button("➕ Spawn Entity").clicked() {
-                action = Some(InspectorAction::Spawn);
+                let transform_data = TransformData {
+                    position: [0.0, 0.0, 0.0],
+                    rotation: [0.0, 0.0, 0.0, 1.0],
+                    scale: [1.0, 1.0, 1.0],
+                };
+                commands.push(Box::new(SpawnEntityCommand::new(transform_data)));
             }
         });
 
-    (changed, action)
+    commands
 }

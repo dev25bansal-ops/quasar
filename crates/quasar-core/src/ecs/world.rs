@@ -450,6 +450,9 @@ impl World {
                 }
             }
         }
+
+        // Notify observers
+        self.fire_observers(ObserverKind::OnAdd, type_id, entity);
     }
 
     /// Remove a component from an entity, returning `true` if it existed.
@@ -526,6 +529,9 @@ impl World {
                 }
             }
         }
+
+        // Notify observers
+        self.fire_observers(ObserverKind::OnRemove, type_id, entity);
 
         true
     }

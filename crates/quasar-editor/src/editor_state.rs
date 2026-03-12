@@ -20,7 +20,15 @@ pub enum EditorMode {
 
 #[derive(Debug, Clone)]
 pub struct WorldSnapshot {
-    pub transforms: Vec<(u32, TransformData)>,
+    pub entities: Vec<EntitySnapshot>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntitySnapshot {
+    pub index: u32,
+    pub generation: u32,
+    pub transform: TransformData,
+    pub material: Option<MaterialData>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,8 +38,16 @@ pub struct TransformData {
     pub scale: [f32; 3],
 }
 
+#[derive(Debug, Clone)]
+pub struct MaterialData {
+    pub base_color: [f32; 3],
+    pub roughness: f32,
+    pub metallic: f32,
+    pub emissive: f32,
+}
+
 pub trait EditCommand: std::fmt::Debug {
-    fn execute(&self, world: &mut quasar_core::ecs::World);
+    fn execute(&mut self, world: &mut quasar_core::ecs::World);
     fn undo(&self, world: &mut quasar_core::ecs::World);
     fn description(&self) -> String;
 }
@@ -44,7 +60,7 @@ pub struct SetPositionCommand {
 }
 
 impl EditCommand for SetPositionCommand {
-    fn execute(&self, world: &mut quasar_core::ecs::World) {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
         if let Some(transform) = world.get_mut::<quasar_math::Transform>(self.entity) {
             transform.position = self.new_position;
         }
@@ -69,7 +85,7 @@ pub struct SetRotationCommand {
 }
 
 impl EditCommand for SetRotationCommand {
-    fn execute(&self, world: &mut quasar_core::ecs::World) {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
         if let Some(transform) = world.get_mut::<quasar_math::Transform>(self.entity) {
             transform.rotation = self.new_rotation;
         }
@@ -94,7 +110,7 @@ pub struct SetScaleCommand {
 }
 
 impl EditCommand for SetScaleCommand {
-    fn execute(&self, world: &mut quasar_core::ecs::World) {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
         if let Some(transform) = world.get_mut::<quasar_math::Transform>(self.entity) {
             transform.scale = self.new_scale;
         }
@@ -120,14 +136,17 @@ pub struct SetMaterialCommand {
     pub new_roughness: f32,
     pub old_metallic: f32,
     pub new_metallic: f32,
+    pub old_emissive: f32,
+    pub new_emissive: f32,
 }
 
 impl EditCommand for SetMaterialCommand {
-    fn execute(&self, world: &mut quasar_core::ecs::World) {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
         if let Some(material) = world.get_mut::<quasar_render::MaterialOverride>(self.entity) {
             material.base_color = self.new_base_color;
             material.roughness = self.new_roughness;
             material.metallic = self.new_metallic;
+            material.emissive = self.new_emissive;
         }
     }
 
@@ -136,11 +155,166 @@ impl EditCommand for SetMaterialCommand {
             material.base_color = self.old_base_color;
             material.roughness = self.old_roughness;
             material.metallic = self.old_metallic;
+            material.emissive = self.old_emissive;
         }
     }
 
     fn description(&self) -> String {
         format!("Set material of entity {:?}", self.entity)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DeleteEntityCommand {
+    pub entity: quasar_core::ecs::Entity,
+    /// Stored entity data for restoration
+    pub saved_data: Option<EntitySnapshot>,
+}
+
+impl DeleteEntityCommand {
+    pub fn new(entity: quasar_core::ecs::Entity) -> Self {
+        Self {
+            entity,
+            saved_data: None,
+        }
+    }
+}
+
+impl EditCommand for DeleteEntityCommand {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
+        // Save entity data before deletion
+        self.saved_data = if let Some(transform) = world.get::<quasar_math::Transform>(self.entity)
+        {
+            let material_override = world
+                .get::<quasar_render::MaterialOverride>(self.entity)
+                .map(|m| MaterialData {
+                    base_color: m.base_color,
+                    roughness: m.roughness,
+                    metallic: m.metallic,
+                    emissive: m.emissive,
+                });
+
+            Some(EntitySnapshot {
+                index: self.entity.index(),
+                generation: self.entity.generation(),
+                transform: TransformData {
+                    position: [
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z,
+                    ],
+                    rotation: [
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                        transform.rotation.w,
+                    ],
+                    scale: [transform.scale.x, transform.scale.y, transform.scale.z],
+                },
+                material: material_override,
+            })
+        } else {
+            None
+        };
+
+        world.despawn(self.entity);
+    }
+
+    fn undo(&self, world: &mut quasar_core::ecs::World) {
+        if let Some(data) = &self.saved_data {
+            let entity = world.spawn();
+            world.insert(
+                entity,
+                quasar_math::Transform {
+                    position: Vec3::new(
+                        data.transform.position[0],
+                        data.transform.position[1],
+                        data.transform.position[2],
+                    ),
+                    rotation: Quat::from_xyzw(
+                        data.transform.rotation[0],
+                        data.transform.rotation[1],
+                        data.transform.rotation[2],
+                        data.transform.rotation[3],
+                    ),
+                    scale: Vec3::new(
+                        data.transform.scale[0],
+                        data.transform.scale[1],
+                        data.transform.scale[2],
+                    ),
+                },
+            );
+
+            if let Some(material_data) = &data.material {
+                world.insert(
+                    entity,
+                    quasar_render::MaterialOverride {
+                        base_color: material_data.base_color,
+                        roughness: material_data.roughness,
+                        metallic: material_data.metallic,
+                        emissive: material_data.emissive,
+                    },
+                );
+            }
+        }
+    }
+
+    fn description(&self) -> String {
+        format!("Delete entity {:?}", self.entity)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnEntityCommand {
+    pub entity: Option<quasar_core::ecs::Entity>,
+    pub transform: TransformData,
+}
+
+impl SpawnEntityCommand {
+    pub fn new(transform: TransformData) -> Self {
+        Self {
+            entity: None,
+            transform,
+        }
+    }
+}
+
+impl EditCommand for SpawnEntityCommand {
+    fn execute(&mut self, world: &mut quasar_core::ecs::World) {
+        let entity = world.spawn();
+        self.entity = Some(entity);
+
+        world.insert(
+            entity,
+            quasar_math::Transform {
+                position: Vec3::new(
+                    self.transform.position[0],
+                    self.transform.position[1],
+                    self.transform.position[2],
+                ),
+                rotation: Quat::from_xyzw(
+                    self.transform.rotation[0],
+                    self.transform.rotation[1],
+                    self.transform.rotation[2],
+                    self.transform.rotation[3],
+                ),
+                scale: Vec3::new(
+                    self.transform.scale[0],
+                    self.transform.scale[1],
+                    self.transform.scale[2],
+                ),
+            },
+        );
+    }
+
+    fn undo(&self, world: &mut quasar_core::ecs::World) {
+        if let Some(entity) = self.entity {
+            world.despawn(entity);
+        }
+    }
+
+    fn description(&self) -> String {
+        format!("Spawn entity {:?}", self.entity)
     }
 }
 
@@ -177,7 +351,7 @@ impl UndoStack {
     }
 
     pub fn redo(&mut self, world: &mut quasar_core::ecs::World) -> Option<String> {
-        if let Some(command) = self.redo_stack.pop_back() {
+        if let Some(mut command) = self.redo_stack.pop_back() {
             let description = command.description();
             command.execute(world);
             self.undo_stack.push_back(command);
@@ -292,44 +466,78 @@ impl EditorState {
     }
 
     fn take_snapshot(&self, world: &quasar_core::ecs::World) -> WorldSnapshot {
-        let transforms: Vec<(u32, TransformData)> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
-            .map(|(e, t)| {
-                (
-                    e.index(),
-                    TransformData {
-                        position: [t.position.x, t.position.y, t.position.z],
-                        rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
-                        scale: [t.scale.x, t.scale.y, t.scale.z],
-                    },
-                )
-            })
-            .collect();
+        let mut entities = Vec::new();
+        for (entity, transform) in world.query::<quasar_math::Transform>() {
+            let material_override = world
+                .get::<quasar_render::MaterialOverride>(entity)
+                .map(|m| MaterialData {
+                    base_color: m.base_color,
+                    roughness: m.roughness,
+                    metallic: m.metallic,
+                    emissive: m.emissive,
+                });
 
-        WorldSnapshot { transforms }
+            entities.push(EntitySnapshot {
+                index: entity.index(),
+                generation: entity.generation(),
+                transform: TransformData {
+                    position: [
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z,
+                    ],
+                    rotation: [
+                        transform.rotation.x,
+                        transform.rotation.y,
+                        transform.rotation.z,
+                        transform.rotation.w,
+                    ],
+                    scale: [transform.scale.x, transform.scale.y, transform.scale.z],
+                },
+                material: material_override,
+            });
+        }
+        WorldSnapshot { entities }
     }
 
     fn restore_snapshot(&self, world: &mut quasar_core::ecs::World, snapshot: WorldSnapshot) {
-        for (entity_index, data) in snapshot.transforms {
-            let entities: Vec<quasar_core::ecs::Entity> = world
-                .query::<quasar_math::Transform>()
-                .into_iter()
-                .filter(|(e, _)| e.index() == entity_index)
-                .map(|(e, _)| e)
-                .collect();
+        let entity_list: Vec<quasar_core::ecs::Entity> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
 
-            for e in entities {
-                if let Some(transform) = world.get_mut::<quasar_math::Transform>(e) {
-                    transform.position =
-                        Vec3::new(data.position[0], data.position[1], data.position[2]);
-                    transform.rotation = Quat::from_xyzw(
-                        data.rotation[0],
-                        data.rotation[1],
-                        data.rotation[2],
-                        data.rotation[3],
+        for entity in entity_list {
+            if let Some(snapshot_data) =
+                snapshot.entities.iter().find(|e| e.index == entity.index())
+            {
+                if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
+                    t.position = Vec3::new(
+                        snapshot_data.transform.position[0],
+                        snapshot_data.transform.position[1],
+                        snapshot_data.transform.position[2],
                     );
-                    transform.scale = Vec3::new(data.scale[0], data.scale[1], data.scale[2]);
+                    t.rotation = Quat::from_xyzw(
+                        snapshot_data.transform.rotation[0],
+                        snapshot_data.transform.rotation[1],
+                        snapshot_data.transform.rotation[2],
+                        snapshot_data.transform.rotation[3],
+                    );
+                    t.scale = Vec3::new(
+                        snapshot_data.transform.scale[0],
+                        snapshot_data.transform.scale[1],
+                        snapshot_data.transform.scale[2],
+                    );
+                }
+
+                if let Some(material_data) = &snapshot_data.material {
+                    if let Some(material) = world.get_mut::<quasar_render::MaterialOverride>(entity)
+                    {
+                        material.base_color = material_data.base_color;
+                        material.roughness = material_data.roughness;
+                        material.metallic = material_data.metallic;
+                        material.emissive = material_data.emissive;
+                    }
                 }
             }
         }
@@ -337,7 +545,7 @@ impl EditorState {
 
     pub fn execute_command(
         &mut self,
-        command: Box<dyn EditCommand>,
+        mut command: Box<dyn EditCommand>,
         world: &mut quasar_core::ecs::World,
     ) {
         command.execute(world);

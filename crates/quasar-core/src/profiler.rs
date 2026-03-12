@@ -146,6 +146,10 @@ pub struct FrameProfile {
     pub frame_time: Duration,
     pub scopes: Vec<ProfileScope>,
     pub scope_stack: Vec<String>,
+    pub network_rtt_ms: f32,
+    pub network_packet_loss: f32,
+    pub network_bytes_sent: u64,
+    pub network_bytes_received: u64,
 }
 
 impl FrameProfile {
@@ -154,6 +158,10 @@ impl FrameProfile {
             frame_time: Duration::ZERO,
             scopes: Vec::new(),
             scope_stack: Vec::new(),
+            network_rtt_ms: 0.0,
+            network_packet_loss: 0.0,
+            network_bytes_sent: 0,
+            network_bytes_received: 0,
         }
     }
 }

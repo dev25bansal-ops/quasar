@@ -3,7 +3,7 @@
 //! Similar to the shader graph editor but operates on [`LogicGraph`] and
 //! compiles to Lua instead of WGSL.
 
-use egui::{Color32, Pos2, Rect, Stroke, Vec2, StrokeKind};
+use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, Vec2};
 
 use crate::logic_graph::{
     ConnectionKind, LogicGraph, LogicGraphCompiler, LogicNode, LogicNodeKind,
@@ -59,7 +59,11 @@ impl LogicGraphEditorState {
                             Err(e) => self.compiled_lua = format!("-- ERROR: {}", e),
                         }
                     }
-                    ui.label(format!("{} nodes, {} connections", graph.nodes.len(), graph.connections.len()));
+                    ui.label(format!(
+                        "{} nodes, {} connections",
+                        graph.nodes.len(),
+                        graph.connections.len()
+                    ));
                 });
                 ui.separator();
 
@@ -91,8 +95,10 @@ impl LogicGraphEditorState {
 
     fn canvas(&mut self, ui: &mut egui::Ui, graph: &mut LogicGraph) -> bool {
         let mut changed = false;
-        let (response, painter) =
-            ui.allocate_painter(ui.available_size_before_wrap(), egui::Sense::click_and_drag());
+        let (response, painter) = ui.allocate_painter(
+            ui.available_size_before_wrap(),
+            egui::Sense::click_and_drag(),
+        );
         let canvas_rect = response.rect;
         let origin = canvas_rect.min.to_vec2() + self.scroll;
 
@@ -132,8 +138,11 @@ impl LogicGraphEditorState {
 
             painter.rect_filled(node_rect, 6.0, Color32::from_rgb(45, 45, 48));
             painter.rect(
-                node_rect, 6.0, Color32::TRANSPARENT,
-                Stroke::new(1.0, Color32::from_rgb(80, 80, 85)), StrokeKind::Outside,
+                node_rect,
+                6.0,
+                Color32::TRANSPARENT,
+                Stroke::new(1.0, Color32::from_rgb(80, 80, 85)),
+                StrokeKind::Outside,
             );
 
             let header_rect = Rect::from_min_size(
@@ -142,8 +151,11 @@ impl LogicGraphEditorState {
             );
             painter.rect_filled(header_rect, 6.0, self.node_color(&node.kind));
             painter.text(
-                header_rect.center(), egui::Align2::CENTER_CENTER, &node.label,
-                egui::FontId::proportional(11.0 * self.zoom), Color32::WHITE,
+                header_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &node.label,
+                egui::FontId::proportional(11.0 * self.zoom),
+                Color32::WHITE,
             );
 
             // Exec input (white triangle)
@@ -159,12 +171,20 @@ impl LogicGraphEditorState {
             // Data inputs (green circles)
             for i in 0..node.data_input_count() {
                 let pos = self.data_input_pos(node, i, origin);
-                painter.circle_filled(pos, SLOT_RADIUS * self.zoom, Color32::from_rgb(100, 200, 100));
+                painter.circle_filled(
+                    pos,
+                    SLOT_RADIUS * self.zoom,
+                    Color32::from_rgb(100, 200, 100),
+                );
             }
             // Data outputs (blue circles)
             for i in 0..node.data_output_count() {
                 let pos = self.data_output_pos(node, i, origin);
-                painter.circle_filled(pos, SLOT_RADIUS * self.zoom, Color32::from_rgb(100, 150, 255));
+                painter.circle_filled(
+                    pos,
+                    SLOT_RADIUS * self.zoom,
+                    Color32::from_rgb(100, 150, 255),
+                );
             }
         }
 
@@ -215,7 +235,12 @@ impl LogicGraphEditorState {
                             ("On Start", LogicNodeKind::OnStart),
                             ("On Update", LogicNodeKind::OnUpdate),
                             ("Branch", LogicNodeKind::Branch),
-                            ("For Each", LogicNodeKind::ForEach { component: "Transform".into() }),
+                            (
+                                "For Each",
+                                LogicNodeKind::ForEach {
+                                    component: "Transform".into(),
+                                },
+                            ),
                             ("Sequence (3)", LogicNodeKind::Sequence { count: 3 }),
                             ("Self Entity", LogicNodeKind::SelfEntity),
                             ("Spawn Entity", LogicNodeKind::SpawnEntity),
@@ -262,7 +287,9 @@ impl LogicGraphEditorState {
 
         // Zoom
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-        if canvas_rect.contains(ui.ctx().pointer_latest_pos().unwrap_or_default()) && scroll_delta.abs() > 0.1 {
+        if canvas_rect.contains(ui.ctx().pointer_latest_pos().unwrap_or_default())
+            && scroll_delta.abs() > 0.1
+        {
             let factor = 1.0 + scroll_delta * 0.002;
             self.zoom = (self.zoom * factor).clamp(0.25, 3.0);
         }
@@ -284,7 +311,10 @@ impl LogicGraphEditorState {
             node.editor_pos[0] * self.zoom + origin.x,
             node.editor_pos[1] * self.zoom + origin.y,
         );
-        Rect::from_min_size(min, Vec2::new(NODE_WIDTH * self.zoom, self.node_height(node)))
+        Rect::from_min_size(
+            min,
+            Vec2::new(NODE_WIDTH * self.zoom, self.node_height(node)),
+        )
     }
 
     fn exec_input_pos(&self, node: &LogicNode, origin: Vec2) -> Pos2 {
@@ -297,12 +327,17 @@ impl LogicGraphEditorState {
     fn exec_output_pos(&self, node: &LogicNode, slot: u32, origin: Vec2) -> Pos2 {
         Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x + NODE_WIDTH * self.zoom,
-            node.editor_pos[1] * self.zoom + origin.y + (NODE_HEADER_H * 0.5 + slot as f32 * SLOT_HEIGHT) * self.zoom,
+            node.editor_pos[1] * self.zoom
+                + origin.y
+                + (NODE_HEADER_H * 0.5 + slot as f32 * SLOT_HEIGHT) * self.zoom,
         )
     }
 
     fn data_input_pos(&self, node: &LogicNode, slot: u32, origin: Vec2) -> Pos2 {
-        let y_offset = NODE_HEADER_H + node.exec_input_count() as f32 * SLOT_HEIGHT + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5;
+        let y_offset = NODE_HEADER_H
+            + node.exec_input_count() as f32 * SLOT_HEIGHT
+            + slot as f32 * SLOT_HEIGHT
+            + SLOT_HEIGHT * 0.5;
         Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x,
             node.editor_pos[1] * self.zoom + origin.y + y_offset * self.zoom,
@@ -310,7 +345,10 @@ impl LogicGraphEditorState {
     }
 
     fn data_output_pos(&self, node: &LogicNode, slot: u32, origin: Vec2) -> Pos2 {
-        let y_offset = NODE_HEADER_H + node.exec_output_count() as f32 * SLOT_HEIGHT + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5;
+        let y_offset = NODE_HEADER_H
+            + node.exec_output_count() as f32 * SLOT_HEIGHT
+            + slot as f32 * SLOT_HEIGHT
+            + SLOT_HEIGHT * 0.5;
         Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x + NODE_WIDTH * self.zoom,
             node.editor_pos[1] * self.zoom + origin.y + y_offset * self.zoom,
@@ -324,12 +362,18 @@ impl LogicGraphEditorState {
         let color = Color32::from_rgb(35, 35, 38);
         let mut x = rect.min.x + offset_x;
         while x < rect.max.x {
-            painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], Stroke::new(1.0, color));
+            painter.line_segment(
+                [Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)],
+                Stroke::new(1.0, color),
+            );
             x += step;
         }
         let mut y = rect.min.y + offset_y;
         while y < rect.max.y {
-            painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], Stroke::new(1.0, color));
+            painter.line_segment(
+                [Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)],
+                Stroke::new(1.0, color),
+            );
             y += step;
         }
     }
@@ -343,8 +387,14 @@ impl LogicGraphEditorState {
                 let t = i as f32 / 32.0;
                 let inv = 1.0 - t;
                 Pos2::new(
-                    inv.powi(3) * from.x + 3.0 * inv.powi(2) * t * cp1.x + 3.0 * inv * t.powi(2) * cp2.x + t.powi(3) * to.x,
-                    inv.powi(3) * from.y + 3.0 * inv.powi(2) * t * cp1.y + 3.0 * inv * t.powi(2) * cp2.y + t.powi(3) * to.y,
+                    inv.powi(3) * from.x
+                        + 3.0 * inv.powi(2) * t * cp1.x
+                        + 3.0 * inv * t.powi(2) * cp2.x
+                        + t.powi(3) * to.x,
+                    inv.powi(3) * from.y
+                        + 3.0 * inv.powi(2) * t * cp1.y
+                        + 3.0 * inv * t.powi(2) * cp2.y
+                        + t.powi(3) * to.y,
                 )
             })
             .collect();
@@ -355,17 +405,35 @@ impl LogicGraphEditorState {
 
     fn node_color(&self, kind: &LogicNodeKind) -> Color32 {
         match kind {
-            LogicNodeKind::OnUpdate | LogicNodeKind::OnStart | LogicNodeKind::OnEvent { .. }
+            LogicNodeKind::OnUpdate
+            | LogicNodeKind::OnStart
+            | LogicNodeKind::OnEvent { .. }
             | LogicNodeKind::OnKeyPressed { .. } => Color32::from_rgb(180, 60, 60),
-            LogicNodeKind::Branch | LogicNodeKind::ForEach { .. } | LogicNodeKind::Sequence { .. } => Color32::from_rgb(180, 140, 60),
-            LogicNodeKind::GetComponent { .. } | LogicNodeKind::SetComponent { .. }
-            | LogicNodeKind::SpawnEntity | LogicNodeKind::DespawnEntity | LogicNodeKind::SelfEntity => Color32::from_rgb(60, 130, 180),
-            LogicNodeKind::Add | LogicNodeKind::Subtract | LogicNodeKind::Multiply | LogicNodeKind::Divide
-            | LogicNodeKind::GreaterThan | LogicNodeKind::LessThan | LogicNodeKind::Equals
-            | LogicNodeKind::And | LogicNodeKind::Or | LogicNodeKind::Not
+            LogicNodeKind::Branch
+            | LogicNodeKind::ForEach { .. }
+            | LogicNodeKind::Sequence { .. } => Color32::from_rgb(180, 140, 60),
+            LogicNodeKind::GetComponent { .. }
+            | LogicNodeKind::SetComponent { .. }
+            | LogicNodeKind::SpawnEntity
+            | LogicNodeKind::DespawnEntity
+            | LogicNodeKind::SelfEntity => Color32::from_rgb(60, 130, 180),
+            LogicNodeKind::Add
+            | LogicNodeKind::Subtract
+            | LogicNodeKind::Multiply
+            | LogicNodeKind::Divide
+            | LogicNodeKind::GreaterThan
+            | LogicNodeKind::LessThan
+            | LogicNodeKind::Equals
+            | LogicNodeKind::And
+            | LogicNodeKind::Or
+            | LogicNodeKind::Not
             | LogicNodeKind::Vec3Construct => Color32::from_rgb(140, 100, 180),
-            LogicNodeKind::FloatLiteral(_) | LogicNodeKind::StringLiteral(_) | LogicNodeKind::BoolLiteral(_) => Color32::from_rgb(60, 160, 80),
-            LogicNodeKind::GetVariable { .. } | LogicNodeKind::SetVariable { .. } => Color32::from_rgb(60, 160, 130),
+            LogicNodeKind::FloatLiteral(_)
+            | LogicNodeKind::StringLiteral(_)
+            | LogicNodeKind::BoolLiteral(_) => Color32::from_rgb(60, 160, 80),
+            LogicNodeKind::GetVariable { .. } | LogicNodeKind::SetVariable { .. } => {
+                Color32::from_rgb(60, 160, 130)
+            }
             _ => Color32::from_rgb(100, 100, 110),
         }
     }

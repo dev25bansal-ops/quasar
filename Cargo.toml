@@ -14,11 +14,13 @@ members = [
     "crates/quasar-mobile",
     "crates/quasar-build",
     "crates/quasar-derive",
+    "crates/quasar-lobby",
     "examples/spinning_cube",
     "examples/showcase",
     "examples/physics_sandbox",
     "examples/audio_demo",
     "examples/scripting_demo",
+    "examples/lobby_server",
 ]
 # web_demo is wasm32-only; build with: cargo build -p web-demo --target wasm32-unknown-unknown
 exclude = ["examples/web_demo"]
@@ -44,6 +46,7 @@ quasar-ui = { path = "crates/quasar-ui" }
 quasar-mobile = { path = "crates/quasar-mobile" }
 quasar-build = { path = "crates/quasar-build" }
 quasar-derive = { path = "crates/quasar-derive" }
+quasar-lobby = { path = "crates/quasar-lobby" }
 
 # Rendering & windowing
 wgpu = "24"
@@ -122,7 +125,7 @@ proptest = "1"
 # QUIC transport
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-tokio = { version = "1", features = ["rt", "net", "time", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync"] }
 rcgen = "0.13"
 
 # WASM/Web

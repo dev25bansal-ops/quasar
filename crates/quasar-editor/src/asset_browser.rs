@@ -191,10 +191,7 @@ impl AssetBrowser {
                 ui.horizontal(|ui| {
                     ui.label("📁 Assets");
                     ui.separator();
-                    ui.label(format!(
-                        "/{}",
-                        self.current_dir.to_string_lossy()
-                    ));
+                    ui.label(format!("/{}", self.current_dir.to_string_lossy()));
                     ui.separator();
                     if ui.button("⟳ Refresh").clicked() {
                         self.dirty = true;
@@ -231,10 +228,8 @@ impl AssetBrowser {
                                     continue;
                                 }
 
-                                let is_selected = self
-                                    .selected
-                                    .as_deref()
-                                    == Some(entry.relative_path.as_str());
+                                let is_selected =
+                                    self.selected.as_deref() == Some(entry.relative_path.as_str());
 
                                 let entry_name = entry.name.clone();
                                 let entry_rel = entry.relative_path.clone();

@@ -4,8 +4,8 @@
 //! right-click menu for adding new nodes.  Operates directly on a
 //! [`ShaderGraph`] from `quasar_render`.
 
-use egui::{Color32, Pos2, Rect, Stroke, Vec2, StrokeKind};
-use quasar_render::{ShaderGraph, ShaderNode, ShaderNodeKind, ShaderConnection};
+use egui::{Color32, Pos2, Rect, Stroke, StrokeKind, Vec2};
+use quasar_render::{ShaderConnection, ShaderGraph, ShaderNode, ShaderNodeKind};
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -78,8 +78,10 @@ impl ShaderGraphEditor {
 
     fn canvas(&mut self, ui: &mut egui::Ui, graph: &mut ShaderGraph) -> bool {
         let mut changed = false;
-        let (response, painter) =
-            ui.allocate_painter(ui.available_size_before_wrap(), egui::Sense::click_and_drag());
+        let (response, painter) = ui.allocate_painter(
+            ui.available_size_before_wrap(),
+            egui::Sense::click_and_drag(),
+        );
         let canvas_rect = response.rect;
         let origin = canvas_rect.min.to_vec2() + self.scroll;
 
@@ -94,7 +96,12 @@ impl ShaderGraphEditor {
             ) {
                 let from_pos = self.output_slot_pos(from_node, conn.from_slot, origin);
                 let to_pos = self.input_slot_pos(to_node, conn.to_slot, origin);
-                self.draw_bezier_connection(&painter, from_pos, to_pos, Color32::from_rgb(120, 200, 255));
+                self.draw_bezier_connection(
+                    &painter,
+                    from_pos,
+                    to_pos,
+                    Color32::from_rgb(120, 200, 255),
+                );
             }
         }
 
@@ -103,7 +110,12 @@ impl ShaderGraphEditor {
             if let Some(from_node) = graph.nodes.iter().find(|n| n.id == from_id) {
                 let from_pos = self.output_slot_pos(from_node, from_slot, origin);
                 if let Some(pointer) = ui.ctx().pointer_latest_pos() {
-                    self.draw_bezier_connection(&painter, from_pos, pointer, Color32::from_rgb(255, 200, 50));
+                    self.draw_bezier_connection(
+                        &painter,
+                        from_pos,
+                        pointer,
+                        Color32::from_rgb(255, 200, 50),
+                    );
                 }
             }
         }
@@ -127,7 +139,10 @@ impl ShaderGraphEditor {
             );
 
             // Header
-            let header_rect = Rect::from_min_size(node_rect.min, Vec2::new(NODE_WIDTH * self.zoom, NODE_HEADER_H * self.zoom));
+            let header_rect = Rect::from_min_size(
+                node_rect.min,
+                Vec2::new(NODE_WIDTH * self.zoom, NODE_HEADER_H * self.zoom),
+            );
             let header_color = self.node_header_color(&node.kind);
             painter.rect_filled(header_rect, 6.0, header_color);
             painter.text(
@@ -141,7 +156,11 @@ impl ShaderGraphEditor {
             // Input slots
             for i in 0..node.input_count() {
                 let pos = self.input_slot_pos(node, i, origin);
-                painter.circle_filled(pos, SLOT_RADIUS * self.zoom, Color32::from_rgb(100, 200, 100));
+                painter.circle_filled(
+                    pos,
+                    SLOT_RADIUS * self.zoom,
+                    Color32::from_rgb(100, 200, 100),
+                );
                 if let Some(ptr) = ui.ctx().pointer_latest_pos() {
                     if pos.distance(ptr) < SLOT_RADIUS * self.zoom * 2.0 {
                         hovered_input = Some((node.id, i));
@@ -152,7 +171,11 @@ impl ShaderGraphEditor {
             // Output slots
             for i in 0..node.output_count() {
                 let pos = self.output_slot_pos(node, i, origin);
-                painter.circle_filled(pos, SLOT_RADIUS * self.zoom, Color32::from_rgb(200, 100, 100));
+                painter.circle_filled(
+                    pos,
+                    SLOT_RADIUS * self.zoom,
+                    Color32::from_rgb(200, 100, 100),
+                );
             }
         }
 
@@ -178,7 +201,9 @@ impl ShaderGraphEditor {
                             break;
                         }
                     }
-                    if found { break; }
+                    if found {
+                        break;
+                    }
 
                     let node_rect = self.node_rect(node, origin);
                     if node_rect.contains(pointer) {
@@ -227,7 +252,10 @@ impl ShaderGraphEditor {
                         ui.label("Add Node");
                         ui.separator();
                         let kinds: &[(&str, ShaderNodeKind)] = &[
-                            ("Texture Sample", ShaderNodeKind::TextureSample { binding_slot: 0 }),
+                            (
+                                "Texture Sample",
+                                ShaderNodeKind::TextureSample { binding_slot: 0 },
+                            ),
                             ("TexCoord", ShaderNodeKind::TexCoord { set: 0 }),
                             ("World Position", ShaderNodeKind::WorldPosition),
                             ("World Normal", ShaderNodeKind::WorldNormal),
@@ -247,7 +275,8 @@ impl ShaderGraphEditor {
                         ];
                         for (name, kind) in kinds {
                             if ui.button(*name).clicked() {
-                                let new_id = graph.nodes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
+                                let new_id =
+                                    graph.nodes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
                                 let world_pos = [
                                     (menu_pos.x - origin.x) / self.zoom,
                                     (menu_pos.y - origin.y) / self.zoom,
@@ -269,7 +298,9 @@ impl ShaderGraphEditor {
 
         // Zoom with scroll
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
-        if canvas_rect.contains(ui.ctx().pointer_latest_pos().unwrap_or_default()) && scroll_delta.abs() > 0.1 {
+        if canvas_rect.contains(ui.ctx().pointer_latest_pos().unwrap_or_default())
+            && scroll_delta.abs() > 0.1
+        {
             let factor = 1.0 + scroll_delta * 0.002;
             self.zoom = (self.zoom * factor).clamp(0.25, 3.0);
         }
@@ -289,13 +320,18 @@ impl ShaderGraphEditor {
             node.editor_pos[0] * self.zoom + origin.x,
             node.editor_pos[1] * self.zoom + origin.y,
         );
-        Rect::from_min_size(min, Vec2::new(NODE_WIDTH * self.zoom, self.node_height(node)))
+        Rect::from_min_size(
+            min,
+            Vec2::new(NODE_WIDTH * self.zoom, self.node_height(node)),
+        )
     }
 
     fn input_slot_pos(&self, node: &ShaderNode, slot: u32, origin: Vec2) -> Pos2 {
         let base = Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x,
-            node.editor_pos[1] * self.zoom + origin.y + (NODE_HEADER_H + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5) * self.zoom,
+            node.editor_pos[1] * self.zoom
+                + origin.y
+                + (NODE_HEADER_H + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5) * self.zoom,
         );
         base
     }
@@ -303,7 +339,9 @@ impl ShaderGraphEditor {
     fn output_slot_pos(&self, node: &ShaderNode, slot: u32, origin: Vec2) -> Pos2 {
         Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x + NODE_WIDTH * self.zoom,
-            node.editor_pos[1] * self.zoom + origin.y + (NODE_HEADER_H + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5) * self.zoom,
+            node.editor_pos[1] * self.zoom
+                + origin.y
+                + (NODE_HEADER_H + slot as f32 * SLOT_HEIGHT + SLOT_HEIGHT * 0.5) * self.zoom,
         )
     }
 
@@ -315,17 +353,29 @@ impl ShaderGraphEditor {
 
         let mut x = rect.min.x + offset_x;
         while x < rect.max.x {
-            painter.line_segment([Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)], Stroke::new(1.0, color));
+            painter.line_segment(
+                [Pos2::new(x, rect.min.y), Pos2::new(x, rect.max.y)],
+                Stroke::new(1.0, color),
+            );
             x += step;
         }
         let mut y = rect.min.y + offset_y;
         while y < rect.max.y {
-            painter.line_segment([Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)], Stroke::new(1.0, color));
+            painter.line_segment(
+                [Pos2::new(rect.min.x, y), Pos2::new(rect.max.x, y)],
+                Stroke::new(1.0, color),
+            );
             y += step;
         }
     }
 
-    fn draw_bezier_connection(&self, painter: &egui::Painter, from: Pos2, to: Pos2, color: Color32) {
+    fn draw_bezier_connection(
+        &self,
+        painter: &egui::Painter,
+        from: Pos2,
+        to: Pos2,
+        color: Color32,
+    ) {
         let dx = (to.x - from.x).abs() * 0.5;
         let cp1 = Pos2::new(from.x + dx, from.y);
         let cp2 = Pos2::new(to.x - dx, to.y);
@@ -334,8 +384,14 @@ impl ShaderGraphEditor {
                 let t = i as f32 / 32.0;
                 let inv = 1.0 - t;
                 Pos2::new(
-                    inv.powi(3) * from.x + 3.0 * inv.powi(2) * t * cp1.x + 3.0 * inv * t.powi(2) * cp2.x + t.powi(3) * to.x,
-                    inv.powi(3) * from.y + 3.0 * inv.powi(2) * t * cp1.y + 3.0 * inv * t.powi(2) * cp2.y + t.powi(3) * to.y,
+                    inv.powi(3) * from.x
+                        + 3.0 * inv.powi(2) * t * cp1.x
+                        + 3.0 * inv * t.powi(2) * cp2.x
+                        + t.powi(3) * to.x,
+                    inv.powi(3) * from.y
+                        + 3.0 * inv.powi(2) * t * cp1.y
+                        + 3.0 * inv * t.powi(2) * cp2.y
+                        + t.powi(3) * to.y,
                 )
             })
             .collect();

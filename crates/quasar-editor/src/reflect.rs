@@ -62,7 +62,9 @@ impl Default for FieldMeta {
 
 /// Draw a drag-value widget for an `f32`. Returns `true` if changed.
 pub fn widget_f32(ui: &mut egui::Ui, label: &str, value: &mut f32, meta: &FieldMeta) -> bool {
-    let mut dv = egui::DragValue::new(value).speed(meta.speed as f32).prefix(format!("{label} "));
+    let mut dv = egui::DragValue::new(value)
+        .speed(meta.speed as f32)
+        .prefix(format!("{label} "));
     if let Some(min) = meta.min {
         if let Some(max) = meta.max {
             dv = dv.range(min as f32..=max as f32);
@@ -73,7 +75,9 @@ pub fn widget_f32(ui: &mut egui::Ui, label: &str, value: &mut f32, meta: &FieldM
 
 /// Draw a drag-value widget for an `f64`. Returns `true` if changed.
 pub fn widget_f64(ui: &mut egui::Ui, label: &str, value: &mut f64, meta: &FieldMeta) -> bool {
-    let mut dv = egui::DragValue::new(value).speed(meta.speed).prefix(format!("{label} "));
+    let mut dv = egui::DragValue::new(value)
+        .speed(meta.speed)
+        .prefix(format!("{label} "));
     if let Some(min) = meta.min {
         if let Some(max) = meta.max {
             dv = dv.range(min..=max);
@@ -130,11 +134,30 @@ pub fn widget_vec3(ui: &mut egui::Ui, label: &str, value: &mut [f32; 3], speed: 
     ui.label(label);
     ui.horizontal(|ui| {
         let mut c = false;
-        c |= ui.add(egui::DragValue::new(&mut value[0]).speed(speed).prefix("X ")).changed();
-        c |= ui.add(egui::DragValue::new(&mut value[1]).speed(speed).prefix("Y ")).changed();
-        c |= ui.add(egui::DragValue::new(&mut value[2]).speed(speed).prefix("Z ")).changed();
+        c |= ui
+            .add(
+                egui::DragValue::new(&mut value[0])
+                    .speed(speed)
+                    .prefix("X "),
+            )
+            .changed();
+        c |= ui
+            .add(
+                egui::DragValue::new(&mut value[1])
+                    .speed(speed)
+                    .prefix("Y "),
+            )
+            .changed();
+        c |= ui
+            .add(
+                egui::DragValue::new(&mut value[2])
+                    .speed(speed)
+                    .prefix("Z "),
+            )
+            .changed();
         c
-    }).inner
+    })
+    .inner
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +187,9 @@ struct RegistryEntry {
 
 impl ReflectionRegistry {
     pub fn new() -> Self {
-        Self { entries: HashMap::new() }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     /// Register a type that implements [`Inspect`].

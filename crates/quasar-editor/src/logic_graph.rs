@@ -21,23 +21,37 @@ pub enum LogicNodeKind {
     /// Fires once on start. No inputs.
     OnStart,
     /// Fires on a named event. Parameter: event name.
-    OnEvent { event_name: String },
+    OnEvent {
+        event_name: String,
+    },
     /// Fires when a key is pressed. Parameter: key name.
-    OnKeyPressed { key: String },
+    OnKeyPressed {
+        key: String,
+    },
 
     // ─── Flow control ───
     /// If-else branch. Input 0 = condition (bool). Exec out 0 = true, 1 = false.
     Branch,
     /// For-each over query results. Input 0 = exec in. Exec out 0 = loop body, 1 = done.
-    ForEach { component: String },
+    ForEach {
+        component: String,
+    },
     /// Sequence: executes outputs in order.
-    Sequence { count: u32 },
+    Sequence {
+        count: u32,
+    },
 
     // ─── ECS ───
     /// Get component value. Input 0 = entity_id. Parameter: component name, field name.
-    GetComponent { component: String, field: String },
+    GetComponent {
+        component: String,
+        field: String,
+    },
     /// Set component value. Input 0 = exec, 1 = entity_id, 2 = value.
-    SetComponent { component: String, field: String },
+    SetComponent {
+        component: String,
+        field: String,
+    },
     /// Spawn entity. Exec out 0 = continue. Output 1 = new entity id.
     SpawnEntity,
     /// Despawn entity. Input 0 = exec, 1 = entity_id.
@@ -77,9 +91,13 @@ pub enum LogicNodeKind {
 
     // ─── Variables ───
     /// Get a named variable from the graph's local state.
-    GetVariable { name: String },
+    GetVariable {
+        name: String,
+    },
     /// Set a named variable. Input 0 = exec, 1 = value.
-    SetVariable { name: String },
+    SetVariable {
+        name: String,
+    },
 }
 
 /// A single node in the logic graph.
@@ -101,8 +119,12 @@ impl LogicNode {
             LogicNodeKind::Branch => "Branch".into(),
             LogicNodeKind::ForEach { component } => format!("For Each {}", component),
             LogicNodeKind::Sequence { count } => format!("Sequence ({})", count),
-            LogicNodeKind::GetComponent { component, field } => format!("Get {}.{}", component, field),
-            LogicNodeKind::SetComponent { component, field } => format!("Set {}.{}", component, field),
+            LogicNodeKind::GetComponent { component, field } => {
+                format!("Get {}.{}", component, field)
+            }
+            LogicNodeKind::SetComponent { component, field } => {
+                format!("Set {}.{}", component, field)
+            }
             LogicNodeKind::SpawnEntity => "Spawn Entity".into(),
             LogicNodeKind::DespawnEntity => "Despawn Entity".into(),
             LogicNodeKind::SelfEntity => "Self Entity".into(),
@@ -127,21 +149,38 @@ impl LogicNode {
             LogicNodeKind::GetVariable { name } => format!("Get {}", name),
             LogicNodeKind::SetVariable { name } => format!("Set {}", name),
         };
-        Self { id, kind, label, editor_pos: [0.0, 0.0] }
+        Self {
+            id,
+            kind,
+            label,
+            editor_pos: [0.0, 0.0],
+        }
     }
 
     /// Number of execution (flow) input slots.
     pub fn exec_input_count(&self) -> u32 {
         match &self.kind {
-            LogicNodeKind::OnUpdate | LogicNodeKind::OnStart
-            | LogicNodeKind::OnEvent { .. } | LogicNodeKind::OnKeyPressed { .. }
+            LogicNodeKind::OnUpdate
+            | LogicNodeKind::OnStart
+            | LogicNodeKind::OnEvent { .. }
+            | LogicNodeKind::OnKeyPressed { .. }
             | LogicNodeKind::SelfEntity
-            | LogicNodeKind::FloatLiteral(_) | LogicNodeKind::StringLiteral(_) | LogicNodeKind::BoolLiteral(_)
-            | LogicNodeKind::Add | LogicNodeKind::Subtract | LogicNodeKind::Multiply | LogicNodeKind::Divide
-            | LogicNodeKind::GreaterThan | LogicNodeKind::LessThan | LogicNodeKind::Equals
-            | LogicNodeKind::And | LogicNodeKind::Or | LogicNodeKind::Not
+            | LogicNodeKind::FloatLiteral(_)
+            | LogicNodeKind::StringLiteral(_)
+            | LogicNodeKind::BoolLiteral(_)
+            | LogicNodeKind::Add
+            | LogicNodeKind::Subtract
+            | LogicNodeKind::Multiply
+            | LogicNodeKind::Divide
+            | LogicNodeKind::GreaterThan
+            | LogicNodeKind::LessThan
+            | LogicNodeKind::Equals
+            | LogicNodeKind::And
+            | LogicNodeKind::Or
+            | LogicNodeKind::Not
             | LogicNodeKind::Vec3Construct
-            | LogicNodeKind::GetComponent { .. } | LogicNodeKind::GetVariable { .. } => 0,
+            | LogicNodeKind::GetComponent { .. }
+            | LogicNodeKind::GetVariable { .. } => 0,
             _ => 1,
         }
     }
@@ -149,45 +188,58 @@ impl LogicNode {
     /// Number of data input slots.
     pub fn data_input_count(&self) -> u32 {
         match &self.kind {
-            LogicNodeKind::OnUpdate | LogicNodeKind::OnStart
-            | LogicNodeKind::OnEvent { .. } | LogicNodeKind::SelfEntity => 0,
+            LogicNodeKind::OnUpdate
+            | LogicNodeKind::OnStart
+            | LogicNodeKind::OnEvent { .. }
+            | LogicNodeKind::SelfEntity => 0,
             LogicNodeKind::OnKeyPressed { .. } => 0,
-            LogicNodeKind::Branch => 1,              // condition
+            LogicNodeKind::Branch => 1, // condition
             LogicNodeKind::ForEach { .. } => 0,
             LogicNodeKind::Sequence { .. } => 0,
             LogicNodeKind::GetComponent { .. } => 1, // entity_id
             LogicNodeKind::SetComponent { .. } => 2, // entity_id, value
             LogicNodeKind::SpawnEntity => 0,
-            LogicNodeKind::DespawnEntity => 1,       // entity_id
-            LogicNodeKind::Add | LogicNodeKind::Subtract
-            | LogicNodeKind::Multiply | LogicNodeKind::Divide
-            | LogicNodeKind::GreaterThan | LogicNodeKind::LessThan | LogicNodeKind::Equals
-            | LogicNodeKind::And | LogicNodeKind::Or => 2,
+            LogicNodeKind::DespawnEntity => 1, // entity_id
+            LogicNodeKind::Add
+            | LogicNodeKind::Subtract
+            | LogicNodeKind::Multiply
+            | LogicNodeKind::Divide
+            | LogicNodeKind::GreaterThan
+            | LogicNodeKind::LessThan
+            | LogicNodeKind::Equals
+            | LogicNodeKind::And
+            | LogicNodeKind::Or => 2,
             LogicNodeKind::Not => 1,
-            LogicNodeKind::FloatLiteral(_) | LogicNodeKind::StringLiteral(_) | LogicNodeKind::BoolLiteral(_) => 0,
-            LogicNodeKind::Vec3Construct => 3,       // x, y, z
-            LogicNodeKind::Print => 1,               // message
-            LogicNodeKind::PlayAudio => 1,           // path
-            LogicNodeKind::ApplyForce => 4,          // entity, x, y, z
-            LogicNodeKind::SetPosition => 4,         // entity, x, y, z
+            LogicNodeKind::FloatLiteral(_)
+            | LogicNodeKind::StringLiteral(_)
+            | LogicNodeKind::BoolLiteral(_) => 0,
+            LogicNodeKind::Vec3Construct => 3, // x, y, z
+            LogicNodeKind::Print => 1,         // message
+            LogicNodeKind::PlayAudio => 1,     // path
+            LogicNodeKind::ApplyForce => 4,    // entity, x, y, z
+            LogicNodeKind::SetPosition => 4,   // entity, x, y, z
             LogicNodeKind::GetVariable { .. } => 0,
-            LogicNodeKind::SetVariable { .. } => 1,  // value
+            LogicNodeKind::SetVariable { .. } => 1, // value
         }
     }
 
     /// Number of execution (flow) output slots.
     pub fn exec_output_count(&self) -> u32 {
         match &self.kind {
-            LogicNodeKind::OnUpdate | LogicNodeKind::OnStart
-            | LogicNodeKind::OnEvent { .. } | LogicNodeKind::OnKeyPressed { .. } => 1,
-            LogicNodeKind::Branch => 2,               // true, false
-            LogicNodeKind::ForEach { .. } => 2,       // body, done
+            LogicNodeKind::OnUpdate
+            | LogicNodeKind::OnStart
+            | LogicNodeKind::OnEvent { .. }
+            | LogicNodeKind::OnKeyPressed { .. } => 1,
+            LogicNodeKind::Branch => 2,         // true, false
+            LogicNodeKind::ForEach { .. } => 2, // body, done
             LogicNodeKind::Sequence { count } => *count,
             LogicNodeKind::SpawnEntity => 1,
             LogicNodeKind::DespawnEntity => 1,
             LogicNodeKind::SetComponent { .. } => 1,
-            LogicNodeKind::Print | LogicNodeKind::PlayAudio
-            | LogicNodeKind::ApplyForce | LogicNodeKind::SetPosition => 1,
+            LogicNodeKind::Print
+            | LogicNodeKind::PlayAudio
+            | LogicNodeKind::ApplyForce
+            | LogicNodeKind::SetPosition => 1,
             LogicNodeKind::SetVariable { .. } => 1,
             _ => 0,
         }
@@ -196,17 +248,25 @@ impl LogicNode {
     /// Number of data output slots.
     pub fn data_output_count(&self) -> u32 {
         match &self.kind {
-            LogicNodeKind::OnUpdate => 1,             // dt
-            LogicNodeKind::ForEach { .. } => 1,       // current entity_id
-            LogicNodeKind::GetComponent { .. } => 1,  // value
-            LogicNodeKind::SpawnEntity => 1,          // new entity id
-            LogicNodeKind::SelfEntity => 1,           // entity id
-            LogicNodeKind::Add | LogicNodeKind::Subtract
-            | LogicNodeKind::Multiply | LogicNodeKind::Divide => 1,
-            LogicNodeKind::GreaterThan | LogicNodeKind::LessThan | LogicNodeKind::Equals
-            | LogicNodeKind::And | LogicNodeKind::Or | LogicNodeKind::Not => 1,
-            LogicNodeKind::FloatLiteral(_) | LogicNodeKind::StringLiteral(_) | LogicNodeKind::BoolLiteral(_) => 1,
-            LogicNodeKind::Vec3Construct => 3,        // x, y, z
+            LogicNodeKind::OnUpdate => 1,            // dt
+            LogicNodeKind::ForEach { .. } => 1,      // current entity_id
+            LogicNodeKind::GetComponent { .. } => 1, // value
+            LogicNodeKind::SpawnEntity => 1,         // new entity id
+            LogicNodeKind::SelfEntity => 1,          // entity id
+            LogicNodeKind::Add
+            | LogicNodeKind::Subtract
+            | LogicNodeKind::Multiply
+            | LogicNodeKind::Divide => 1,
+            LogicNodeKind::GreaterThan
+            | LogicNodeKind::LessThan
+            | LogicNodeKind::Equals
+            | LogicNodeKind::And
+            | LogicNodeKind::Or
+            | LogicNodeKind::Not => 1,
+            LogicNodeKind::FloatLiteral(_)
+            | LogicNodeKind::StringLiteral(_)
+            | LogicNodeKind::BoolLiteral(_) => 1,
+            LogicNodeKind::Vec3Construct => 3, // x, y, z
             LogicNodeKind::GetVariable { .. } => 1,
             _ => 0,
         }
@@ -260,8 +320,21 @@ impl LogicGraph {
         id
     }
 
-    pub fn connect(&mut self, kind: ConnectionKind, from_node: NodeId, from_slot: SlotIndex, to_node: NodeId, to_slot: SlotIndex) {
-        self.connections.push(LogicConnection { kind, from_node, from_slot, to_node, to_slot });
+    pub fn connect(
+        &mut self,
+        kind: ConnectionKind,
+        from_node: NodeId,
+        from_slot: SlotIndex,
+        to_node: NodeId,
+        to_slot: SlotIndex,
+    ) {
+        self.connections.push(LogicConnection {
+            kind,
+            from_node,
+            from_slot,
+            to_node,
+            to_slot,
+        });
     }
 
     pub fn node(&self, id: NodeId) -> Option<&LogicNode> {
@@ -270,16 +343,19 @@ impl LogicGraph {
 
     /// Find the data connection driving a specific input slot.
     pub fn find_data_input(&self, node_id: NodeId, slot: SlotIndex) -> Option<&LogicConnection> {
-        self.connections.iter().find(|c| {
-            c.kind == ConnectionKind::Data && c.to_node == node_id && c.to_slot == slot
-        })
+        self.connections
+            .iter()
+            .find(|c| c.kind == ConnectionKind::Data && c.to_node == node_id && c.to_slot == slot)
     }
 
     /// Find exec connections from a specific output slot.
     pub fn find_exec_outputs(&self, node_id: NodeId, slot: SlotIndex) -> Vec<&LogicConnection> {
-        self.connections.iter().filter(|c| {
-            c.kind == ConnectionKind::Exec && c.from_node == node_id && c.from_slot == slot
-        }).collect()
+        self.connections
+            .iter()
+            .filter(|c| {
+                c.kind == ConnectionKind::Exec && c.from_node == node_id && c.from_slot == slot
+            })
+            .collect()
     }
 }
 
@@ -299,13 +375,19 @@ impl LogicGraphCompiler {
         writeln!(out).unwrap();
 
         // Find entry-point nodes.
-        let on_start_nodes: Vec<&LogicNode> = graph.nodes.iter()
+        let on_start_nodes: Vec<&LogicNode> = graph
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, LogicNodeKind::OnStart))
             .collect();
-        let on_update_nodes: Vec<&LogicNode> = graph.nodes.iter()
+        let on_update_nodes: Vec<&LogicNode> = graph
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, LogicNodeKind::OnUpdate))
             .collect();
-        let on_event_nodes: Vec<&LogicNode> = graph.nodes.iter()
+        let on_event_nodes: Vec<&LogicNode> = graph
+            .nodes
+            .iter()
             .filter(|n| matches!(n.kind, LogicNodeKind::OnEvent { .. }))
             .collect();
 
@@ -332,7 +414,11 @@ impl LogicGraphCompiler {
         // on_event handlers → registered via on_start
         if !on_event_nodes.is_empty() {
             // Append event registrations to on_start
-            writeln!(out, "local _orig_start = behaviour.on_start or function() end").unwrap();
+            writeln!(
+                out,
+                "local _orig_start = behaviour.on_start or function() end"
+            )
+            .unwrap();
             writeln!(out, "function behaviour.on_start(entity_id)").unwrap();
             writeln!(out, "  _orig_start(entity_id)").unwrap();
             for node in &on_event_nodes {
@@ -361,7 +447,8 @@ impl LogicGraphCompiler {
         let _pad = "  ".repeat(indent);
         let targets = graph.find_exec_outputs(from_node, from_slot);
         for conn in targets {
-            let node = graph.node(conn.to_node)
+            let node = graph
+                .node(conn.to_node)
                 .ok_or_else(|| format!("Missing node {}", conn.to_node))?;
             Self::compile_node(graph, node, out, indent)?;
         }
@@ -387,7 +474,12 @@ impl LogicGraphCompiler {
                 let x = Self::compile_data_input(graph, node.id, 1)?;
                 let y = Self::compile_data_input(graph, node.id, 2)?;
                 let z = Self::compile_data_input(graph, node.id, 3)?;
-                writeln!(out, "{}quasar.set_position({}, {}, {}, {})", pad, eid, x, y, z).unwrap();
+                writeln!(
+                    out,
+                    "{}quasar.set_position({}, {}, {}, {})",
+                    pad, eid, x, y, z
+                )
+                .unwrap();
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::ApplyForce => {
@@ -395,7 +487,12 @@ impl LogicGraphCompiler {
                 let x = Self::compile_data_input(graph, node.id, 1)?;
                 let y = Self::compile_data_input(graph, node.id, 2)?;
                 let z = Self::compile_data_input(graph, node.id, 3)?;
-                writeln!(out, "{}quasar.apply_force({}, {}, {}, {})", pad, eid, x, y, z).unwrap();
+                writeln!(
+                    out,
+                    "{}quasar.apply_force({}, {}, {}, {})",
+                    pad, eid, x, y, z
+                )
+                .unwrap();
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::PlayAudio => {
@@ -415,7 +512,12 @@ impl LogicGraphCompiler {
             LogicNodeKind::SetComponent { component, field } => {
                 let eid = Self::compile_data_input(graph, node.id, 0)?;
                 let val = Self::compile_data_input(graph, node.id, 1)?;
-                writeln!(out, "{}quasar.add_component({}, \"{}\", {{ {} = {} }})", pad, eid, component, field, val).unwrap();
+                writeln!(
+                    out,
+                    "{}quasar.add_component({}, \"{}\", {{ {} = {} }})",
+                    pad, eid, component, field, val
+                )
+                .unwrap();
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::Branch => {
@@ -427,7 +529,12 @@ impl LogicGraphCompiler {
                 writeln!(out, "{}end", pad).unwrap();
             }
             LogicNodeKind::ForEach { component } => {
-                writeln!(out, "{}for _, _row in ipairs(quasar.query(\"{}\")) do", pad, component).unwrap();
+                writeln!(
+                    out,
+                    "{}for _, _row in ipairs(quasar.query(\"{}\")) do",
+                    pad, component
+                )
+                .unwrap();
                 writeln!(out, "{}  local _foreach_entity = _row.entity", pad).unwrap();
                 Self::compile_exec_chain(graph, node.id, 0, out, indent + 1)?;
                 writeln!(out, "{}end", pad).unwrap();
@@ -451,9 +558,14 @@ impl LogicGraphCompiler {
     }
 
     /// Compile a data input expression by tracing back through data connections.
-    fn compile_data_input(graph: &LogicGraph, node_id: NodeId, slot: SlotIndex) -> Result<String, String> {
+    fn compile_data_input(
+        graph: &LogicGraph,
+        node_id: NodeId,
+        slot: SlotIndex,
+    ) -> Result<String, String> {
         if let Some(conn) = graph.find_data_input(node_id, slot) {
-            let source = graph.node(conn.from_node)
+            let source = graph
+                .node(conn.from_node)
                 .ok_or_else(|| format!("Missing source node {}", conn.from_node))?;
             Self::compile_data_expr(graph, source, conn.from_slot)
         } else {
@@ -462,7 +574,11 @@ impl LogicGraphCompiler {
     }
 
     /// Compile a data-producing node as an inline expression.
-    fn compile_data_expr(graph: &LogicGraph, node: &LogicNode, output_slot: SlotIndex) -> Result<String, String> {
+    fn compile_data_expr(
+        graph: &LogicGraph,
+        node: &LogicNode,
+        output_slot: SlotIndex,
+    ) -> Result<String, String> {
         match &node.kind {
             LogicNodeKind::FloatLiteral(v) => Ok(format!("{}", v)),
             LogicNodeKind::StringLiteral(s) => Ok(format!("\"{}\"", s)),
@@ -473,7 +589,10 @@ impl LogicGraphCompiler {
             LogicNodeKind::GetVariable { name } => Ok(format!("_state[\"{}\"]", name)),
             LogicNodeKind::GetComponent { component, field } => {
                 let eid = Self::compile_data_input(graph, node.id, 0)?;
-                Ok(format!("(quasar.query(\"{}\")[{}] or {{}}).{}", component, eid, field))
+                Ok(format!(
+                    "(quasar.query(\"{}\")[{}] or {{}}).{}",
+                    component, eid, field
+                ))
             }
             LogicNodeKind::Add => {
                 let a = Self::compile_data_input(graph, node.id, 0)?;

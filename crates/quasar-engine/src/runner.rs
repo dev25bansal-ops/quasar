@@ -28,9 +28,9 @@ use quasar_core::scene::SceneGraph;
 use quasar_core::App;
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
-    AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData, LightsUniform, MeshCache,
-    MeshShape, OrbitController, PointLight, RenderConfig, Renderer, ShadowCamera, ShadowMap,
-    SpotLight, TonemappingPass, gpu_profiler::GpuProfiler,
+    gpu_profiler::GpuProfiler, AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData,
+    LightsUniform, MeshCache, MeshShape, OrbitController, PointLight, RenderConfig, Renderer,
+    ShadowCamera, ShadowMap, SpotLight, TonemappingPass,
 };
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -133,7 +133,8 @@ impl ApplicationHandler for QuasarRunner {
 
         let hdr_target = HdrRenderTarget::new(&renderer.device, size.width, size.height);
         let tonemap_pass = TonemappingPass::new(&renderer.device, renderer.config.format);
-        let gpu_profiler = GpuProfiler::new(&renderer.device, renderer.queue.get_timestamp_period());
+        let gpu_profiler =
+            GpuProfiler::new(&renderer.device, renderer.queue.get_timestamp_period());
 
         self.state = Some(RunnerState {
             window,
@@ -256,7 +257,11 @@ impl ApplicationHandler for QuasarRunner {
                 if new_size.width > 0 && new_size.height > 0 {
                     state.renderer.resize(new_size.width, new_size.height);
                     state.camera.set_aspect(new_size.width, new_size.height);
-                    state.hdr_target.resize(&state.renderer.device, new_size.width, new_size.height);
+                    state.hdr_target.resize(
+                        &state.renderer.device,
+                        new_size.width,
+                        new_size.height,
+                    );
                 }
             }
 
@@ -272,9 +277,11 @@ impl ApplicationHandler for QuasarRunner {
 
                 // Insert simulation state so physics/audio/scripting systems
                 // know whether to run this frame.
-                self.app.world.insert_resource(quasar_core::SimulationState {
-                    should_tick: state.editor.state.should_tick(),
-                });
+                self.app
+                    .world
+                    .insert_resource(quasar_core::SimulationState {
+                        should_tick: state.editor.state.should_tick(),
+                    });
 
                 // Run one full ECS frame (updates time, runs all systems).
                 state.profiler.begin_scope("ecs_tick");
@@ -282,8 +289,10 @@ impl ApplicationHandler for QuasarRunner {
                 state.profiler.end_scope("ecs_tick");
 
                 // Upload instance transforms collected by RenderSyncSystem.
-                if let Some(sync) =
-                    self.app.world.remove_resource::<quasar_render::RenderSyncOutput>()
+                if let Some(sync) = self
+                    .app
+                    .world
+                    .remove_resource::<quasar_render::RenderSyncOutput>()
                 {
                     state
                         .renderer
@@ -418,8 +427,7 @@ impl ApplicationHandler for QuasarRunner {
                 {
                     // Position the shadow camera along the primary directional light
                     let dir = lights_uniform.lights[0].direction;
-                    let light_dir =
-                        glam::Vec3::new(dir[0], dir[1], dir[2]).normalize_or_zero();
+                    let light_dir = glam::Vec3::new(dir[0], dir[1], dir[2]).normalize_or_zero();
                     if light_dir != glam::Vec3::ZERO {
                         state.shadow_camera.position =
                             state.shadow_camera.target - light_dir * 30.0;
@@ -483,7 +491,9 @@ impl ApplicationHandler for QuasarRunner {
                             &state.hdr_target.view,
                             &mut encoder,
                         );
-                        if let Some(idx) = gpu_3d { state.gpu_profiler.end_pass(&mut encoder, idx); }
+                        if let Some(idx) = gpu_3d {
+                            state.gpu_profiler.end_pass(&mut encoder, idx);
+                        }
 
                         // Clear jitter so non-rendering code sees unjittered projection.
                         state.camera.jitter = (0.0, 0.0);
@@ -501,7 +511,9 @@ impl ApplicationHandler for QuasarRunner {
                                 &inv_proj,
                                 state.renderer.motion_vector_view.as_ref(),
                             );
-                            if let Some(idx) = gpu_ssgi { state.gpu_profiler.end_pass(&mut encoder, idx); }
+                            if let Some(idx) = gpu_ssgi {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
                         }
 
                         // TAA resolve → tonemapping.  Without TAA the HDR target
@@ -517,7 +529,9 @@ impl ApplicationHandler for QuasarRunner {
                                 &state.hdr_target.view,
                                 mv_view,
                             );
-                            if let Some(idx) = gpu_taa { state.gpu_profiler.end_pass(&mut encoder, idx); }
+                            if let Some(idx) = gpu_taa {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
                             tonemap_source = taa.output_view();
                         } else {
                             tonemap_source = &state.hdr_target.view;
@@ -525,9 +539,13 @@ impl ApplicationHandler for QuasarRunner {
 
                         // Tonemapping pass — HDR → LDR on the surface view.
                         let gpu_tonemap = state.gpu_profiler.begin_pass(&mut encoder, "tonemap");
-                        state.tonemap_pass.update_texture(&state.renderer.device, tonemap_source);
+                        state
+                            .tonemap_pass
+                            .update_texture(&state.renderer.device, tonemap_source);
                         state.tonemap_pass.execute(&mut encoder, &view);
-                        if let Some(idx) = gpu_tonemap { state.gpu_profiler.end_pass(&mut encoder, idx); }
+                        if let Some(idx) = gpu_tonemap {
+                            state.gpu_profiler.end_pass(&mut encoder, idx);
+                        }
 
                         // egui pass (editor overlay).
                         let egui_commands = if state.editor.enabled {
@@ -558,67 +576,39 @@ impl ApplicationHandler for QuasarRunner {
                             state.editor_renderer.begin_frame(&state.window);
 
                             // Build inspector data for the first selected entity.
-                            let mut inspector_data = state.editor.selected_entities.first().and_then(|&e| {
-                                let transform = self.app.world.get::<quasar_math::Transform>(e)?;
-                                let material = self
-                                    .app
-                                    .world
-                                    .get::<quasar_render::MaterialOverride>(e)
-                                    .copied();
-                                Some(quasar_editor::InspectorData {
-                                    transform: *transform,
-                                    material,
-                                })
-                            });
+                            let inspector_data =
+                                state.editor.selected_entities.first().and_then(|&e| {
+                                    let transform =
+                                        self.app.world.get::<quasar_math::Transform>(e)?;
+                                    let material = self
+                                        .app
+                                        .world
+                                        .get::<quasar_render::MaterialOverride>(e)
+                                        .copied();
+                                    Some(quasar_editor::InspectorData {
+                                        transform: *transform,
+                                        material,
+                                    })
+                                });
 
-                            let (inspector_changed, inspector_action, editor_action) =
-                                state.editor.ui(
-                                    &state.editor_renderer.egui_ctx,
-                                    &entity_names,
-                                    inspector_data.as_mut(),
-                                );
+                            // Run editor UI with command pattern
+                            let (edit_commands, editor_action) = state.editor.ui(
+                                &state.editor_renderer.egui_ctx,
+                                &entity_names,
+                                inspector_data,
+                            );
+
+                            // Execute inspector edit commands (undo/redo-capable)
+                            for command in edit_commands {
+                                state
+                                    .editor
+                                    .state
+                                    .execute_command(command, &mut self.app.world);
+                            }
 
                             // Handle editor actions (Play/Pause/Stop/Undo/Redo)
                             if let Some(action) = editor_action {
                                 state.editor.handle_action(action, &mut self.app.world);
-                            }
-
-                            // Handle inspector actions.
-                            if let Some(action) = inspector_action {
-                                match action {
-                                    quasar_editor::InspectorAction::Despawn(entity) => {
-                                        self.app.world.despawn(entity);
-                                        state.editor.selected_entities.retain(|e| *e != entity);
-                                        inspector_data = None;
-                                    }
-                                    quasar_editor::InspectorAction::Spawn => {
-                                        let entity = self.app.world.spawn();
-                                        state.editor.selected_entities.clear();
-                                        state.editor.selected_entities.push(entity);
-                                    }
-                                }
-                            }
-
-                            // Write back edited values.
-                            if inspector_changed {
-                                if let (Some(&entity), Some(data)) =
-                                    (state.editor.selected_entities.first(), &inspector_data)
-                                {
-                                    if let Some(t) =
-                                        self.app.world.get_mut::<quasar_math::Transform>(entity)
-                                    {
-                                        *t = data.transform;
-                                    }
-                                    if let Some(mat) = &data.material {
-                                        if let Some(m) =
-                                            self.app
-                                                .world
-                                                .get_mut::<quasar_render::MaterialOverride>(entity)
-                                        {
-                                            *m = *mat;
-                                        }
-                                    }
-                                }
                             }
 
                             let size = state.window.inner_size();
@@ -650,7 +640,9 @@ impl ApplicationHandler for QuasarRunner {
 
                         // Collect GPU profiler results and feed to editor.
                         state.gpu_profiler.request_results();
-                        if let Some(timings) = state.gpu_profiler.try_collect(&state.renderer.device) {
+                        if let Some(timings) =
+                            state.gpu_profiler.try_collect(&state.renderer.device)
+                        {
                             state.editor.gpu_pass_timings = timings.to_vec();
                         }
 
@@ -726,10 +718,7 @@ pub mod wasm_runner {
     /// This is intended to be called from the WASM entry point instead of
     /// `run()` which blocks on a native winit event loop.
     pub fn run_wasm(app: App) {
-        let state = Rc::new(RefCell::new(WasmAppState {
-            app,
-            running: true,
-        }));
+        let state = Rc::new(RefCell::new(WasmAppState { app, running: true }));
 
         schedule_frame(state);
     }

@@ -44,6 +44,10 @@ pub fn hierarchy_panel(
             });
 
             ui.separator();
-            ui.label(format!("Total: {} | Selected: {}", entities.len(), selected.len()));
+            ui.label(format!(
+                "Total: {} | Selected: {}",
+                entities.len(),
+                selected.len()
+            ));
         });
 }

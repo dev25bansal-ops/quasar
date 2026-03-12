@@ -1,4 +1,4 @@
-//! Concrete [`QuicTransportBackend`] implementation backed by the `quinn` crate.
+//! Concrete [`QuicTransportBackend`] and [`Transport`] implementation backed by the `quinn` crate.
 //!
 //! Gated behind the `quinn-transport` feature flag.
 
@@ -6,12 +6,13 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use quinn::{ClientConfig, Endpoint, RecvStream, SendStream, ServerConfig};
+use quinn::{ClientConfig, Endpoint, ServerConfig};
 use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
 
 use crate::network::{
-    NetworkError, QuicChannel, QuicEvent, QuicTransportBackend,
+    ConnectionMetrics, NetworkError, QuicChannel, QuicEvent, QuicTransportBackend,
+    SendChannel, Transport, TransportEvent,
 };
 
 /// A self-signed TLS certificate + private key generated with `rcgen`.
@@ -193,12 +194,12 @@ impl QuicTransportBackend for QuinnBackend {
         let endpoint = if let Some(ep) = self.endpoint.as_ref() {
             ep.clone()
         } else {
-            let ep = Endpoint::client("0.0.0.0:0".parse().unwrap())
+            let mut ep = Endpoint::client("0.0.0.0:0".parse().unwrap())
                 .map_err(|e| NetworkError(format!("quinn endpoint: {e}")))?;
+            ep.set_default_client_config(client_cfg);
             self.endpoint = Some(ep.clone());
             ep
         };
-        endpoint.set_default_client_config(client_cfg);
 
         let tx = self.event_tx.clone();
         self.rt.spawn(async move {
@@ -348,5 +349,75 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
             rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
             rustls::SignatureScheme::ED25519,
         ]
+    }
+}
+
+impl Transport for QuinnBackend {
+    fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        QuicTransportBackend::connect(self, addr)
+    }
+
+    fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        QuicTransportBackend::listen(self, addr)
+    }
+
+    fn poll(&mut self) -> Vec<TransportEvent> {
+        QuicTransportBackend::poll(self)
+            .into_iter()
+            .map(|e| match e {
+                QuicEvent::Connected(addr) => TransportEvent::Connected(addr),
+                QuicEvent::Disconnected(addr, reason) => TransportEvent::Disconnected(addr, reason),
+                QuicEvent::Data { from, channel, payload } => {
+                    let ch = match channel {
+                        QuicChannel::Unreliable => SendChannel::Unreliable,
+                        QuicChannel::Reliable => SendChannel::Reliable,
+                        QuicChannel::BulkTransfer => SendChannel::Bulk,
+                    };
+                    TransportEvent::Data { from, channel: ch, payload }
+                }
+            })
+            .collect()
+    }
+
+    fn send(&mut self, addr: SocketAddr, channel: SendChannel, data: &[u8]) -> Result<(), NetworkError> {
+        let ch = match channel {
+            SendChannel::Unreliable => QuicChannel::Unreliable,
+            SendChannel::Reliable => QuicChannel::Reliable,
+            SendChannel::Bulk => QuicChannel::BulkTransfer,
+        };
+        QuicTransportBackend::send(self, addr, ch, data)
+    }
+
+    fn peer_count(&self) -> usize {
+        QuicTransportBackend::peer_count(self)
+    }
+
+    fn disconnect(&mut self, addr: SocketAddr) {
+        QuicTransportBackend::disconnect(self, addr)
+    }
+
+      fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
+        self.peers.get(&addr).map(|peer| {
+            let stats = peer.connection.stats();
+            let path = &stats.path;
+            ConnectionMetrics {
+                rtt_ms: path.rtt.as_millis() as f32,
+                packet_loss: if path.sent_packets > 0 {
+                    path.lost_packets as f32 / path.sent_packets as f32
+                } else {
+                    0.0
+                },
+                bytes_sent: stats.udp_tx.bytes as u64,
+                bytes_received: stats.udp_rx.bytes as u64,
+                last_update: Some(std::time::Instant::now()),
+            }
+        })
+    }
+
+    fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        self.endpoint
+            .as_ref()
+            .map(|e| e.local_addr().map_err(|e| NetworkError(format!("local_addr: {e}"))))
+            .unwrap_or_else(|| Ok("0.0.0.0:0".parse().unwrap()))
     }
 }

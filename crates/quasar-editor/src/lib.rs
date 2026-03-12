@@ -13,6 +13,7 @@ pub mod editor_state;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
+pub mod inspector_commands;
 pub mod logic_graph;
 pub mod logic_graph_editor;
 pub mod reflect;
@@ -20,22 +21,22 @@ pub mod renderer;
 pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
-pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
-pub use logic_graph_editor::LogicGraphEditorState;
-pub use shader_graph_editor::ShaderGraphEditor;
 pub use editor_state::{
-    EditCommand, EditorMode, EditorState, SetMaterialCommand, SetPositionCommand,
-    SetRotationCommand, SetScaleCommand, UndoStack, WorldSnapshot,
+    DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
+    SetPositionCommand, SetRotationCommand, SetScaleCommand, SpawnEntityCommand, TransformData,
+    UndoStack, WorldSnapshot,
 };
 pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
-pub use reflect::{
-    FieldDescriptor, FieldMeta, Inspect, InspectFn, ReflectionRegistry,
-    widget_bool, widget_color3, widget_color4, widget_f32, widget_f64,
-    widget_i32, widget_string, widget_u32, widget_vec3,
-};
-pub use quasar_derive::Inspect as DeriveInspect;
+pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
+pub use logic_graph_editor::LogicGraphEditorState;
 use quasar_core::ecs::Entity;
+pub use quasar_derive::Inspect as DeriveInspect;
+pub use reflect::{
+    widget_bool, widget_color3, widget_color4, widget_f32, widget_f64, widget_i32, widget_string,
+    widget_u32, widget_vec3, FieldDescriptor, FieldMeta, Inspect, InspectFn, ReflectionRegistry,
+};
+pub use shader_graph_editor::ShaderGraphEditor;
 
 // ---------------------------------------------------------------------------
 // Animation Timeline Panel
@@ -107,7 +108,14 @@ impl TimelinePanel {
                 ui.horizontal(|ui| {
                     ui.label("\u{1F3AC} Timeline");
                     ui.separator();
-                    if ui.button(if self.playing { "\u{23F8} Pause" } else { "\u{25B6} Play" }).clicked() {
+                    if ui
+                        .button(if self.playing {
+                            "\u{23F8} Pause"
+                        } else {
+                            "\u{25B6} Play"
+                        })
+                        .clicked()
+                    {
                         self.playing = !self.playing;
                     }
                     if ui.button("\u{23F9} Stop").clicked() {
@@ -115,10 +123,12 @@ impl TimelinePanel {
                         self.scrub_time = 0.0;
                     }
                     ui.separator();
-                    ui.add(egui::DragValue::new(&mut self.scrub_time)
-                        .speed(0.01)
-                        .prefix("Time: ")
-                        .suffix(" s"));
+                    ui.add(
+                        egui::DragValue::new(&mut self.scrub_time)
+                            .speed(0.01)
+                            .prefix("Time: ")
+                            .suffix(" s"),
+                    );
                     ui.separator();
                     ui.add(egui::Slider::new(&mut self.zoom, 20.0..=500.0).text("Zoom"));
                 });
@@ -132,7 +142,10 @@ impl TimelinePanel {
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
                         let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(available.x.max(self.zoom * 10.0), total_height.max(available.y)),
+                            egui::vec2(
+                                available.x.max(self.zoom * 10.0),
+                                total_height.max(available.y),
+                            ),
                             egui::Sense::click_and_drag(),
                         );
                         let painter = ui.painter_at(rect);
@@ -153,7 +166,10 @@ impl TimelinePanel {
                             );
                             // Row separator
                             painter.line_segment(
-                                [egui::pos2(rect.min.x, y + track_height), egui::pos2(rect.max.x, y + track_height)],
+                                [
+                                    egui::pos2(rect.min.x, y + track_height),
+                                    egui::pos2(rect.max.x, y + track_height),
+                                ],
                                 egui::Stroke::new(0.5, egui::Color32::from_gray(60)),
                             );
                             // Keyframe diamonds
@@ -184,10 +200,14 @@ impl TimelinePanel {
                         }
 
                         // Scrub cursor
-                        let scrub_x = rect.min.x + 80.0 + (self.scrub_time - self.scroll_offset) * self.zoom;
+                        let scrub_x =
+                            rect.min.x + 80.0 + (self.scrub_time - self.scroll_offset) * self.zoom;
                         if scrub_x >= rect.min.x && scrub_x <= rect.max.x {
                             painter.line_segment(
-                                [egui::pos2(scrub_x, rect.min.y), egui::pos2(scrub_x, rect.max.y)],
+                                [
+                                    egui::pos2(scrub_x, rect.min.y),
+                                    egui::pos2(scrub_x, rect.max.y),
+                                ],
                                 egui::Stroke::new(2.0, egui::Color32::from_rgb(80, 180, 255)),
                             );
                         }
@@ -195,7 +215,8 @@ impl TimelinePanel {
                         // Click to scrub
                         if response.clicked() {
                             if let Some(pos) = response.interact_pointer_pos() {
-                                let new_time = self.scroll_offset + (pos.x - rect.min.x - 80.0) / self.zoom;
+                                let new_time =
+                                    self.scroll_offset + (pos.x - rect.min.x - 80.0) / self.zoom;
                                 self.scrub_time = new_time.max(0.0);
                             }
                         }
@@ -206,10 +227,15 @@ impl TimelinePanel {
                                 // Find the closest keyframe diamond within 6px.
                                 let mut best: Option<(usize, usize, f32)> = None;
                                 for (ch_idx, ch) in self.channels.iter().enumerate() {
-                                    let cy = rect.min.y + ch_idx as f32 * track_height + track_height * 0.5;
+                                    let cy = rect.min.y
+                                        + ch_idx as f32 * track_height
+                                        + track_height * 0.5;
                                     for (kf_idx, &t) in ch.keyframe_times.iter().enumerate() {
-                                        let kx = rect.min.x + 80.0 + (t - self.scroll_offset) * self.zoom;
-                                        let dist = ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
+                                        let kx = rect.min.x
+                                            + 80.0
+                                            + (t - self.scroll_offset) * self.zoom;
+                                        let dist =
+                                            ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
                                         if dist < 6.0 {
                                             if best.is_none() || dist < best.unwrap().2 {
                                                 best = Some((ch_idx, kf_idx, dist));
@@ -225,9 +251,13 @@ impl TimelinePanel {
                             // While dragging, retime the keyframe.
                             if response.dragged() {
                                 if let Some((ch_idx, kf_idx)) = self.dragging_keyframe {
-                                    let new_time = self.scroll_offset + (pos.x - rect.min.x - 80.0) / self.zoom;
-                                    if ch_idx < self.channels.len() && kf_idx < self.channels[ch_idx].keyframe_times.len() {
-                                        self.channels[ch_idx].keyframe_times[kf_idx] = new_time.max(0.0);
+                                    let new_time = self.scroll_offset
+                                        + (pos.x - rect.min.x - 80.0) / self.zoom;
+                                    if ch_idx < self.channels.len()
+                                        && kf_idx < self.channels[ch_idx].keyframe_times.len()
+                                    {
+                                        self.channels[ch_idx].keyframe_times[kf_idx] =
+                                            new_time.max(0.0);
                                     }
                                 }
                             }
@@ -244,24 +274,50 @@ impl TimelinePanel {
                 let t = self.channels[ch_idx].keyframe_times[kf_idx];
                 let popup_x = 80.0 + (t - self.scroll_offset) * self.zoom;
                 egui::Area::new(egui::Id::new("kf_editor"))
-                    .fixed_pos(egui::pos2(popup_x.max(100.0), ctx.screen_rect().max.y - 220.0))
+                    .fixed_pos(egui::pos2(
+                        popup_x.max(100.0),
+                        ctx.screen_rect().max.y - 220.0,
+                    ))
                     .show(ctx, |ui| {
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                             ui.label(format!("Keyframe [{}/{}]", ch_idx, kf_idx));
                             ui.horizontal(|ui| {
                                 ui.label("Value:");
-                                ui.add(egui::DragValue::new(&mut self.channels[ch_idx].keyframe_values[kf_idx]).speed(0.01));
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut self.channels[ch_idx].keyframe_values[kf_idx],
+                                    )
+                                    .speed(0.01),
+                                );
                             });
                             ui.horizontal(|ui| {
                                 ui.label("Interp:");
                                 let mode = &mut self.channels[ch_idx].interp_modes[kf_idx];
-                                if ui.selectable_label(*mode == InterpolationMode::Step, "\u{25AA} Step").clicked() {
+                                if ui
+                                    .selectable_label(
+                                        *mode == InterpolationMode::Step,
+                                        "\u{25AA} Step",
+                                    )
+                                    .clicked()
+                                {
                                     *mode = InterpolationMode::Step;
                                 }
-                                if ui.selectable_label(*mode == InterpolationMode::Linear, "\u{2500} Linear").clicked() {
+                                if ui
+                                    .selectable_label(
+                                        *mode == InterpolationMode::Linear,
+                                        "\u{2500} Linear",
+                                    )
+                                    .clicked()
+                                {
                                     *mode = InterpolationMode::Linear;
                                 }
-                                if ui.selectable_label(*mode == InterpolationMode::CubicSpline, "\u{25C6} Cubic").clicked() {
+                                if ui
+                                    .selectable_label(
+                                        *mode == InterpolationMode::CubicSpline,
+                                        "\u{25C6} Cubic",
+                                    )
+                                    .clicked()
+                                {
                                     *mode = InterpolationMode::CubicSpline;
                                 }
                             });
@@ -386,21 +442,20 @@ impl Editor {
     /// Render the full editor UI. Call this from your egui integration each frame.
     ///
     /// `inspector_data` should be `Some` when an entity is selected and the
-    /// caller has read its components. Edited values are written in-place;
-    /// the function returns `(bool, Option<InspectorAction>, Option<EditorAction>)` where:
-    /// - `bool` indicates if anything was changed so the caller can write back to ECS.
-    /// - `Option<InspectorAction>` contains any action requested (despawn/spawn).
-    /// - `Option<EditorAction>` contains editor actions like Play/Pause/Stop.
+    /// caller has read its components. Returns `(Vec<Box<dyn EditCommand>>, Option<EditorAction>)` where:
+    /// - commands contains any entity edit commands generated by the inspector.
+    /// - editor_action contains editor actions like Play/Pause/Stop.
     pub fn ui(
         &mut self,
         ctx: &egui::Context,
         entity_names: &[(Entity, String)],
-        inspector_data: Option<&mut InspectorData>,
-    ) -> (bool, Option<InspectorAction>, Option<EditorAction>) {
+        inspector_data: Option<InspectorData>,
+    ) -> (Vec<Box<dyn EditCommand>>, Option<EditorAction>) {
         if !self.enabled {
-            return (false, None, None);
+            return (Vec::new(), None);
         }
 
+        let mut commands: Vec<Box<dyn EditCommand>> = Vec::new();
         let mut editor_action = None;
 
         // Top menu bar
@@ -484,13 +539,17 @@ impl Editor {
         }
 
         // Inspector panel
-        let mut inspector_changed = false;
-        let mut inspector_action = None;
         if self.show_inspector {
-            let (changed, action) =
-                inspector::inspector_panel(ctx, &self.selected_entities, inspector_data);
-            inspector_changed = changed;
-            inspector_action = action;
+            let default_data = InspectorData {
+                transform: quasar_math::Transform::IDENTITY,
+                material: Some(quasar_render::MaterialOverride::default()),
+            };
+            let actual_data = inspector_data.unwrap_or(default_data);
+            commands.extend(inspector::inspector_panel(
+                ctx,
+                &self.selected_entities,
+                actual_data,
+            ));
         }
 
         // Console panel
@@ -510,9 +569,8 @@ impl Editor {
 
                     // Frame time graph
                     if !self.profiler_frame_times.is_empty() {
-                        let avg: f32 =
-                            self.profiler_frame_times.iter().sum::<f32>()
-                                / self.profiler_frame_times.len() as f32;
+                        let avg: f32 = self.profiler_frame_times.iter().sum::<f32>()
+                            / self.profiler_frame_times.len() as f32;
                         let max_ft = self
                             .profiler_frame_times
                             .iter()
@@ -613,7 +671,8 @@ impl Editor {
 
         // Logic graph editor panel
         if self.show_logic_graph {
-            self.logic_graph_editor_state.panel(ctx, &mut self.logic_graph);
+            self.logic_graph_editor_state
+                .panel(ctx, &mut self.logic_graph);
         }
 
         // GPU profiler panel
@@ -671,7 +730,7 @@ impl Editor {
             }
         });
 
-        (inspector_changed, inspector_action, editor_action)
+        (commands, editor_action)
     }
 
     /// Handle editor action that requires world access

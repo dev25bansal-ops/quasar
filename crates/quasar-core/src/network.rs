@@ -29,6 +29,77 @@ pub enum NetworkRole {
     ListenServer,
 }
 
+/// Transport type selection for NetworkConfig.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum TransportType {
+    #[default]
+    Udp,
+    #[cfg(feature = "quinn-transport")]
+    Quic,
+}
+
+/// Quality-of-service channel for send operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendChannel {
+    Unreliable,
+    Reliable,
+    Bulk,
+}
+
+/// Connection metrics exposed by transport implementations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ConnectionMetrics {
+    pub rtt_ms: f32,
+    pub packet_loss: f32,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub last_update: Option<std::time::Instant>,
+}
+
+/// Unified transport trait matching the UDP socket interface.
+///
+/// Implementations: UdpTransport, QuinnBackend (behind quinn-transport feature).
+/// Allows NetworkPlugin to switch transports via NetworkConfig::transport.
+pub trait Transport: Send + Sync {
+    fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
+    fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
+    fn poll(&mut self) -> Vec<TransportEvent>;
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: SendChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError>;
+    fn peer_count(&self) -> usize;
+    fn disconnect(&mut self, addr: SocketAddr);
+    fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics>;
+    fn local_addr(&self) -> Result<SocketAddr, NetworkError>;
+}
+
+/// Events produced by any Transport implementation.
+#[derive(Debug, Clone)]
+pub enum TransportEvent {
+    Connected(SocketAddr),
+    Disconnected(SocketAddr, String),
+    Data {
+        from: SocketAddr,
+        channel: SendChannel,
+        payload: Vec<u8>,
+    },
+}
+
+/// Global network metrics resource for HUD display.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkMetrics {
+    pub local_rtt_ms: f32,
+    pub local_packet_loss: f32,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub peer_count: usize,
+    pub transport_type: TransportType,
+    pub fallback_active: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
     pub role: NetworkRole,
@@ -37,6 +108,8 @@ pub struct NetworkConfig {
     pub tick_rate: u32,
     pub interpolation_delay_ms: u32,
     pub rollback_frame_count: u32,
+    pub transport: TransportType,
+    pub auto_fallback: bool,
 }
 
 impl Default for NetworkConfig {
@@ -48,6 +121,8 @@ impl Default for NetworkConfig {
             tick_rate: TICK_RATE,
             interpolation_delay_ms: 100,
             rollback_frame_count: 8,
+            transport: TransportType::default(),
+            auto_fallback: true,
         }
     }
 }
@@ -221,6 +296,7 @@ impl From<std::io::Error> for NetworkError {
 pub struct UdpTransport {
     socket: UdpSocket,
     recv_buffer: [u8; MTU_SIZE],
+    metrics: HashMap<SocketAddr, ConnectionMetrics>,
 }
 
 impl UdpTransport {
@@ -230,6 +306,7 @@ impl UdpTransport {
         Ok(Self {
             socket,
             recv_buffer: [0u8; MTU_SIZE],
+            metrics: HashMap::new(),
         })
     }
 
@@ -244,15 +321,88 @@ impl UdpTransport {
 
     pub fn send_to(&mut self, addr: SocketAddr, data: &[u8]) -> Result<(), NetworkError> {
         self.socket.send_to(data, addr)?;
+        if let Some(m) = self.metrics.get_mut(&addr) {
+            m.bytes_sent += data.len() as u64;
+        }
         Ok(())
     }
 
     pub fn receive(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError> {
         match self.socket.recv_from(&mut self.recv_buffer) {
-            Ok((len, addr)) => Ok(Some((addr, self.recv_buffer[..len].to_vec()))),
+            Ok((len, addr)) => {
+                if let Some(m) = self.metrics.get_mut(&addr) {
+                    m.bytes_received += len as u64;
+                }
+                Ok(Some((addr, self.recv_buffer[..len].to_vec())))
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(e) => Err(NetworkError(e.to_string())),
         }
+    }
+}
+
+impl Transport for UdpTransport {
+    fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        self.socket.connect(addr)?;
+        self.metrics.insert(addr, ConnectionMetrics::default());
+        Ok(())
+    }
+
+    fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
+        let socket = UdpSocket::bind(addr)?;
+        socket.set_nonblocking(true)?;
+        self.socket = socket;
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Vec<TransportEvent> {
+        let mut events = Vec::new();
+        loop {
+            match self.socket.recv_from(&mut self.recv_buffer) {
+                Ok((len, addr)) => {
+                    if let Some(m) = self.metrics.get_mut(&addr) {
+                        m.bytes_received += len as u64;
+                    }
+                    events.push(TransportEvent::Data {
+                        from: addr,
+                        channel: SendChannel::Unreliable,
+                        payload: self.recv_buffer[..len].to_vec(),
+                    });
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(_) => break,
+            }
+        }
+        events
+    }
+
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        _channel: SendChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError> {
+        self.socket.send_to(data, addr)?;
+        if let Some(m) = self.metrics.get_mut(&addr) {
+            m.bytes_sent += data.len() as u64;
+        }
+        Ok(())
+    }
+
+    fn peer_count(&self) -> usize {
+        self.metrics.len()
+    }
+
+    fn disconnect(&mut self, addr: SocketAddr) {
+        self.metrics.remove(&addr);
+    }
+
+    fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
+        self.metrics.get(&addr).copied()
+    }
+
+    fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        Ok(self.socket.local_addr()?)
     }
 }
 
@@ -353,7 +503,8 @@ impl RollbackManager {
 
     /// Record inputs for the current frame from a specific client.
     pub fn record_input(&mut self, client_id: ClientId, inputs: Vec<InputData>) {
-        self.input_history.record(self.current_frame, client_id, inputs);
+        self.input_history
+            .record(self.current_frame, client_id, inputs);
     }
 
     /// Get stored inputs for a specific frame (used during re-simulation).
@@ -373,7 +524,8 @@ impl RollbackManager {
     ) {
         // Also store inputs in the history ring buffer.
         for (client_id, input_list) in &inputs {
-            self.input_history.record(self.current_frame, *client_id, input_list.clone());
+            self.input_history
+                .record(self.current_frame, *client_id, input_list.clone());
         }
         let state = RollbackState {
             frame: self.current_frame,
@@ -445,7 +597,11 @@ impl RollbackManager {
             None => self.rollback_target_frame + 1,
         };
         let inputs = self.input_history.get(frame).cloned().unwrap_or_default();
-        let state = RollbackState { frame, entities, inputs };
+        let state = RollbackState {
+            frame,
+            entities,
+            inputs,
+        };
         self.states.push(state);
     }
 
@@ -473,7 +629,10 @@ impl RollbackManager {
         mut simulate_fn: F,
     ) -> bool
     where
-        F: FnMut(u64, &HashMap<ClientId, Vec<InputData>>) -> HashMap<NetworkEntityId, EntitySnapshot>,
+        F: FnMut(
+            u64,
+            &HashMap<ClientId, Vec<InputData>>,
+        ) -> HashMap<NetworkEntityId, EntitySnapshot>,
     {
         // 1. Detect misprediction.
         let misprediction = match self.detect_misprediction(server_frame, server_entities) {
@@ -577,7 +736,11 @@ impl SnapshotInterpolation {
     }
 
     /// Push a new authoritative server snapshot. The old `curr` becomes `prev`.
-    pub fn push_snapshot(&mut self, frame: u64, entities: HashMap<NetworkEntityId, EntitySnapshot>) {
+    pub fn push_snapshot(
+        &mut self,
+        frame: u64,
+        entities: HashMap<NetworkEntityId, EntitySnapshot>,
+    ) {
         self.prev = self.curr.take();
         self.curr = Some((frame, entities));
         self.timer = 0.0;
@@ -669,8 +832,8 @@ pub struct DeltaFlags(pub u8);
 impl DeltaFlags {
     pub const POSITION: u8 = 0b0000_0001;
     pub const ROTATION: u8 = 0b0000_0010;
-    pub const SCALE:    u8 = 0b0000_0100;
-    pub const FRAME:    u8 = 0b0000_1000;
+    pub const SCALE: u8 = 0b0000_0100;
+    pub const FRAME: u8 = 0b0000_1000;
 }
 
 /// A compact encoded delta for a single entity.
@@ -723,10 +886,19 @@ impl DeltaCompressor {
         match baseline {
             None => {
                 // Full snapshot — all fields.
-                flags = DeltaFlags::POSITION | DeltaFlags::ROTATION | DeltaFlags::SCALE | DeltaFlags::FRAME;
-                for &v in &current.position { data.extend_from_slice(&v.to_le_bytes()); }
-                for &v in &current.rotation { data.extend_from_slice(&v.to_le_bytes()); }
-                for &v in &current.scale    { data.extend_from_slice(&v.to_le_bytes()); }
+                flags = DeltaFlags::POSITION
+                    | DeltaFlags::ROTATION
+                    | DeltaFlags::SCALE
+                    | DeltaFlags::FRAME;
+                for &v in &current.position {
+                    data.extend_from_slice(&v.to_le_bytes());
+                }
+                for &v in &current.rotation {
+                    data.extend_from_slice(&v.to_le_bytes());
+                }
+                for &v in &current.scale {
+                    data.extend_from_slice(&v.to_le_bytes());
+                }
                 data.extend_from_slice(&current.frame.to_le_bytes());
             }
             Some(base) => {
@@ -775,7 +947,11 @@ impl DeltaCompressor {
             }
         }
 
-        Some(EncodedDelta { entity_id: id, flags, data })
+        Some(EncodedDelta {
+            entity_id: id,
+            flags,
+            data,
+        })
     }
 
     /// Decode a delta packet against the local baseline to reconstruct the snapshot.
@@ -795,8 +971,14 @@ impl DeltaCompressor {
         };
         let read_u64 = |d: &[u8], o: &mut usize| -> u64 {
             let bytes: [u8; 8] = [
-                d[*o], d[*o + 1], d[*o + 2], d[*o + 3],
-                d[*o + 4], d[*o + 5], d[*o + 6], d[*o + 7],
+                d[*o],
+                d[*o + 1],
+                d[*o + 2],
+                d[*o + 3],
+                d[*o + 4],
+                d[*o + 5],
+                d[*o + 6],
+                d[*o + 7],
             ];
             *o += 8;
             u64::from_le_bytes(bytes)
@@ -814,9 +996,11 @@ impl DeltaCompressor {
         let position = if delta.flags & DeltaFlags::POSITION != 0 {
             if base.is_none() {
                 // Full snapshot mode: raw f32s.
-                [read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset)]
+                [
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ]
             } else {
                 // XOR delta mode.
                 let mut pos = [0.0f32; 3];
@@ -832,10 +1016,12 @@ impl DeltaCompressor {
 
         let rotation = if delta.flags & DeltaFlags::ROTATION != 0 {
             if base.is_none() {
-                [read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset)]
+                [
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ]
             } else {
                 let mut rot = [0.0f32; 4];
                 for i in 0..4 {
@@ -850,9 +1036,11 @@ impl DeltaCompressor {
 
         let scale = if delta.flags & DeltaFlags::SCALE != 0 {
             if base.is_none() {
-                [read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset),
-                 read_f32(&delta.data, &mut offset)]
+                [
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ]
             } else {
                 let mut s = [0.0f32; 3];
                 for i in 0..3 {
@@ -995,28 +1183,114 @@ impl NetworkReplication {
     }
 }
 
+pub enum TransportResource {
+    Udp(UdpTransport),
+    #[cfg(feature = "quinn-transport")]
+    Quic(crate::net_quinn::QuinnBackend),
+}
+
+impl TransportResource {
+    pub fn poll(&mut self) -> Vec<TransportEvent> {
+        match self {
+            TransportResource::Udp(t) => Transport::poll(t),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::poll(t),
+        }
+    }
+
+    pub fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: SendChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError> {
+        match self {
+            TransportResource::Udp(t) => Transport::send(t, addr, channel, data),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::send(t, addr, channel, data),
+        }
+    }
+
+    pub fn peer_count(&self) -> usize {
+        match self {
+            TransportResource::Udp(t) => Transport::peer_count(t),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::peer_count(t),
+        }
+    }
+
+    pub fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
+        match self {
+            TransportResource::Udp(t) => Transport::metrics(t, addr),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::metrics(t, addr),
+        }
+    }
+
+    pub fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
+        match self {
+            TransportResource::Udp(t) => Transport::local_addr(t),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::local_addr(t),
+        }
+    }
+
+    pub fn transport_type(&self) -> TransportType {
+        match self {
+            TransportResource::Udp(_) => TransportType::Udp,
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(_) => TransportType::Quic,
+        }
+    }
+
+    pub fn disconnect(&mut self, addr: SocketAddr) {
+        match self {
+            TransportResource::Udp(t) => Transport::disconnect(t, addr),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => Transport::disconnect(t, addr),
+        }
+    }
+}
+
 pub struct NetworkTransportResource {
-    pub transport: UdpTransport,
+    pub transport: TransportResource,
+    pub fallback_active: bool,
 }
 
 impl NetworkTransportResource {
-    pub fn new(transport: UdpTransport) -> Self {
-        Self { transport }
+    pub fn new(transport: TransportResource) -> Self {
+        Self {
+            transport,
+            fallback_active: false,
+        }
+    }
+
+    pub fn with_fallback(transport: TransportResource, fallback_active: bool) -> Self {
+        Self {
+            transport,
+            fallback_active,
+        }
     }
 
     pub fn send(&mut self, addr: SocketAddr, message: &NetworkMessage) -> Result<(), NetworkError> {
         let data = bincode::serialize(message).map_err(|e| NetworkError(e.to_string()))?;
-        self.transport.send_to(addr, &data)
+        self.transport.send(addr, SendChannel::Unreliable, &data)
     }
 
     pub fn receive(&mut self) -> Vec<(SocketAddr, NetworkMessage)> {
         let mut messages = Vec::new();
-        while let Ok(Some((addr, data))) = self.transport.receive() {
-            if let Ok(msg) = bincode::deserialize::<NetworkMessage>(&data) {
-                messages.push((addr, msg));
+        for event in self.transport.poll() {
+            if let TransportEvent::Data { from, payload, .. } = event {
+                if let Ok(msg) = bincode::deserialize::<NetworkMessage>(&payload) {
+                    messages.push((from, msg));
+                }
             }
         }
         messages
+    }
+
+    pub fn transport_type(&self) -> TransportType {
+        self.transport.transport_type()
     }
 }
 
@@ -1053,10 +1327,9 @@ fn network_system(world: &mut crate::World) {
             match &message.payload {
                 NetworkPayload::ConnectionRequest { client_id } => {
                     if state.clients.len() < state.config.max_clients {
-                        state.clients.insert(
-                            *client_id,
-                            NetworkClient::new(*client_id, *addr),
-                        );
+                        state
+                            .clients
+                            .insert(*client_id, NetworkClient::new(*client_id, *addr));
                         log::info!("Client {:?} connected from {}", client_id, addr);
                     }
                 }
@@ -1108,7 +1381,10 @@ fn network_system(world: &mut crate::World) {
                     if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
                         t.position = quasar_math::Vec3::new(position[0], position[1], position[2]);
                         t.rotation = quasar_math::Quat::from_xyzw(
-                            rotation[0], rotation[1], rotation[2], rotation[3],
+                            rotation[0],
+                            rotation[1],
+                            rotation[2],
+                            rotation[3],
                         );
                         t.scale = quasar_math::Vec3::new(scale[0], scale[1], scale[2]);
                     }
@@ -1120,10 +1396,8 @@ fn network_system(world: &mut crate::World) {
     // Feed received state snapshots into interpolation + rollback.
     for (frame, entities) in &snapshot_updates {
         // Build map for both interpolation and rollback.
-        let map: HashMap<NetworkEntityId, EntitySnapshot> = entities
-            .iter()
-            .map(|s| (s.entity_id, s.clone()))
-            .collect();
+        let map: HashMap<NetworkEntityId, EntitySnapshot> =
+            entities.iter().map(|s| (s.entity_id, s.clone())).collect();
 
         // Push into SnapshotInterpolation for smooth rendering.
         if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
@@ -1159,30 +1433,22 @@ fn network_system(world: &mut crate::World) {
             .query::<quasar_math::Transform>()
             .into_iter()
             .filter_map(|(entity, t)| {
-                state
-                    .entity_to_network
-                    .get(&entity.index())
-                    .map(|net_id| {
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64;
-                        NetworkMessage {
-                            sequence: state.frame_number,
-                            timestamp: now,
-                            payload: NetworkPayload::EntityTransform {
-                                entity_id: *net_id,
-                                position: [t.position.x, t.position.y, t.position.z],
-                                rotation: [
-                                    t.rotation.x,
-                                    t.rotation.y,
-                                    t.rotation.z,
-                                    t.rotation.w,
-                                ],
-                                scale: [t.scale.x, t.scale.y, t.scale.z],
-                            },
-                        }
-                    })
+                state.entity_to_network.get(&entity.index()).map(|net_id| {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+                    NetworkMessage {
+                        sequence: state.frame_number,
+                        timestamp: now,
+                        payload: NetworkPayload::EntityTransform {
+                            entity_id: *net_id,
+                            position: [t.position.x, t.position.y, t.position.z],
+                            rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                            scale: [t.scale.x, t.scale.y, t.scale.z],
+                        },
+                    }
+                })
             })
             .collect();
 
@@ -1225,26 +1491,44 @@ impl crate::Plugin for NetworkPlugin {
 
         let replication = NetworkReplication::new(self.config.clone());
 
-        match UdpTransport::bind(bind_addr) {
+        let transport_result = self.create_transport(bind_addr);
+        let fallback_active = transport_result.1;
+
+        match transport_result.0 {
             Ok(transport) => {
+                let transport_type = transport.transport_type();
                 app.world
-                    .insert_resource(NetworkTransportResource::new(transport));
-                log::info!("NetworkPlugin: UDP socket bound to {}", bind_addr);
+                    .insert_resource(NetworkTransportResource::with_fallback(
+                        transport,
+                        fallback_active,
+                    ));
+                app.world.insert_resource(NetworkMetrics {
+                    transport_type,
+                    fallback_active,
+                    ..Default::default()
+                });
+                log::info!(
+                    "NetworkPlugin: Transport {:?} bound to {}",
+                    transport_type,
+                    bind_addr
+                );
             }
             Err(e) => {
                 log::warn!(
-                    "NetworkPlugin: Failed to bind UDP socket: {}, networking offline",
+                    "NetworkPlugin: Failed to bind transport: {}, networking offline",
                     e
                 );
             }
         }
 
         app.world.insert_resource(replication);
-        app.world.insert_resource(ReplicationResource::new(self.config.tick_rate));
+        app.world
+            .insert_resource(ReplicationResource::new(self.config.tick_rate));
         app.world.insert_resource(PendingServerSnapshot::default());
         app.add_system("network_system", network_system);
         app.add_system("replication_system", replication_system);
         app.add_system("rollback_system", rollback_system);
+        app.add_system("update_network_metrics", update_network_metrics);
 
         log::info!(
             "NetworkPlugin loaded — {} mode on port {}",
@@ -1255,6 +1539,68 @@ impl crate::Plugin for NetworkPlugin {
             },
             self.config.port
         );
+    }
+}
+
+impl NetworkPlugin {
+    fn create_transport(
+        &self,
+        bind_addr: SocketAddr,
+    ) -> (Result<TransportResource, NetworkError>, bool) {
+        match self.config.transport {
+            TransportType::Udp => (
+                UdpTransport::bind(bind_addr).map(TransportResource::Udp),
+                false,
+            ),
+            #[cfg(feature = "quinn-transport")]
+            TransportType::Quic => {
+                let quic_result = self.create_quic_transport(bind_addr);
+                if self.config.auto_fallback {
+                    match quic_result {
+                        Ok(backend) => (Ok(TransportResource::Quic(backend)), false),
+                        Err(e) => {
+                            log::warn!("QUIC transport failed, falling back to UDP: {}", e);
+                            (
+                                UdpTransport::bind(bind_addr).map(TransportResource::Udp),
+                                true,
+                            )
+                        }
+                    }
+                } else {
+                    (quic_result.map(TransportResource::Quic), false)
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "quinn-transport")]
+impl NetworkPlugin {
+    fn create_quic_transport(
+        &self,
+        bind_addr: SocketAddr,
+    ) -> Result<crate::net_quinn::QuinnBackend, NetworkError> {
+        let mut backend = crate::net_quinn::QuinnBackend::new()?;
+        match &self.config.role {
+            NetworkRole::Server | NetworkRole::ListenServer => {
+                QuicTransportBackend::listen(&mut backend, bind_addr)?;
+            }
+            NetworkRole::Client { server_addr } => {
+                QuicTransportBackend::connect(&mut backend, *server_addr)?;
+            }
+        }
+        Ok(backend)
+    }
+}
+
+fn update_network_metrics(world: &mut crate::World) {
+    let peer_count = world
+        .resource::<NetworkTransportResource>()
+        .map(|r| r.transport.peer_count())
+        .unwrap_or(0);
+
+    if let Some(metrics) = world.resource_mut::<NetworkMetrics>() {
+        metrics.peer_count = peer_count;
     }
 }
 
@@ -1417,8 +1763,7 @@ impl DirtyTracker {
 
     /// Mark a specific component on an entity as dirty (needs replication).
     pub fn mark(&mut self, entity: NetworkEntityId, component: &str) {
-        self.dirty
-            .insert((entity, component.to_string()), true);
+        self.dirty.insert((entity, component.to_string()), true);
     }
 
     /// Check and clear the dirty bit. Returns `true` if it was dirty.
@@ -1503,12 +1848,7 @@ impl ReliabilityManager {
     }
 
     /// Track an outgoing reliable message.
-    pub fn track_send(
-        &mut self,
-        message: NetworkMessage,
-        destination: SocketAddr,
-        now: f64,
-    ) {
+    pub fn track_send(&mut self, message: NetworkMessage, destination: SocketAddr, now: f64) {
         let seq = message.sequence;
         self.pending.insert(
             seq,
@@ -1668,7 +2008,12 @@ pub trait QuicTransportBackend: Send + Sync {
     fn poll(&mut self) -> Vec<QuicEvent>;
 
     /// Send data on the given channel to `addr`.
-    fn send(&mut self, addr: SocketAddr, channel: QuicChannel, data: &[u8]) -> Result<(), NetworkError>;
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: QuicChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError>;
 
     /// Number of currently connected peers.
     fn peer_count(&self) -> usize;
@@ -1947,7 +2292,10 @@ fn client_interpolation_tick(world: &mut crate::World) {
         results
             .iter()
             .filter_map(|(net_id, pos, rot)| {
-                state.network_to_entity.get(net_id).map(|&idx| (idx, *pos, *rot))
+                state
+                    .network_to_entity
+                    .get(net_id)
+                    .map(|&idx| (idx, *pos, *rot))
             })
             .collect()
     };
@@ -2023,7 +2371,9 @@ pub fn rollback_system(world: &mut crate::World) {
 
     // Save to rollback history.
     if let Some(replication) = world.resource_mut::<NetworkReplication>() {
-        replication.rollback.save_state(current_entities, HashMap::new());
+        replication
+            .rollback
+            .save_state(current_entities, HashMap::new());
     }
 
     // 2. Check for pending server snapshot.
@@ -2043,14 +2393,12 @@ pub fn rollback_system(world: &mut crate::World) {
         // run_rollback needs a simulate_fn — use a no-op that returns the
         // server entities as the "re-simulated" state. In a real game, this
         // closure would run the physics/gameplay systems for one tick.
-        replication.rollback.run_rollback(
-            server_frame,
-            &server_entities,
-            |_frame, _inputs| {
+        replication
+            .rollback
+            .run_rollback(server_frame, &server_entities, |_frame, _inputs| {
                 // Placeholder: real games replace this with actual re-simulation.
                 server_entities.clone()
-            },
-        )
+            })
     };
 
     if did_rollback {
@@ -2097,18 +2445,18 @@ pub fn rollback_system(world: &mut crate::World) {
                                 snap.rotation[2],
                                 snap.rotation[3],
                             );
-                            t.scale = quasar_math::Vec3::new(
-                                snap.scale[0],
-                                snap.scale[1],
-                                snap.scale[2],
-                            );
+                            t.scale =
+                                quasar_math::Vec3::new(snap.scale[0], snap.scale[1], snap.scale[2]);
                         }
                     }
                 }
             }
         }
 
-        log::debug!("Rollback reconciliation applied for server frame {}", server_frame);
+        log::debug!(
+            "Rollback reconciliation applied for server frame {}",
+            server_frame
+        );
     }
 }
 
@@ -2200,11 +2548,7 @@ impl<T: Clone> HistoryBuffer<T> {
     where
         T: Clone,
     {
-        let before = self
-            .entries
-            .iter()
-            .rev()
-            .find(|(t, _)| *t <= tick)?;
+        let before = self.entries.iter().rev().find(|(t, _)| *t <= tick)?;
         let after = self.entries.iter().find(|(t, _)| *t >= tick)?;
         if before.0 == after.0 {
             return Some((&before.1, &after.1, 0.0));
@@ -2250,7 +2594,7 @@ impl Default for LagCompensationManager {
     fn default() -> Self {
         Self {
             histories: HashMap::new(),
-            max_rewind_ticks: 30,   // ~500 ms at 60 Hz
+            max_rewind_ticks: 30, // ~500 ms at 60 Hz
             history_capacity: 64,
         }
     }
@@ -2426,8 +2770,7 @@ impl RelayServer {
     /// Prune idle sessions.
     pub fn prune_idle(&mut self) {
         let timeout = std::time::Duration::from_secs(self.config.session_timeout_secs);
-        self.sessions.retain(|s| s.last_activity.elapsed() < timeout);
+        self.sessions
+            .retain(|s| s.last_activity.elapsed() < timeout);
     }
 }
-
-
