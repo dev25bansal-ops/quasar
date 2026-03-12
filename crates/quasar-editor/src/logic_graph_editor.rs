@@ -44,9 +44,10 @@ impl LogicGraphEditorState {
         Self::default()
     }
 
-    /// Render the logic graph editor as a window. Returns true if modified.
-    pub fn panel(&mut self, ctx: &egui::Context, graph: &mut LogicGraph) -> bool {
+    /// Render the logic graph editor as a window. Returns (modified, spawn_requested).
+    pub fn panel(&mut self, ctx: &egui::Context, graph: &mut LogicGraph) -> (bool, bool) {
         let mut changed = false;
+        let mut spawn_requested = false;
 
         egui::Window::new("📜 Logic Graph")
             .default_size([850.0, 550.0])
@@ -64,6 +65,20 @@ impl LogicGraphEditorState {
                         graph.nodes.len(),
                         graph.connections.len()
                     ));
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("➕ New Graph").clicked() {
+                        *graph = LogicGraph::new("New Graph");
+                        self.compiled_lua.clear();
+                    }
+                    ui.separator();
+                    if ui
+                        .button("🎮 Spawn Test Entity")
+                        .on_hover_text("Create an entity with this logic graph attached")
+                        .clicked()
+                    {
+                        spawn_requested = true;
+                    }
                 });
                 ui.separator();
 
@@ -90,7 +105,7 @@ impl LogicGraphEditorState {
                 });
             });
 
-        changed
+        (changed, spawn_requested)
     }
 
     fn canvas(&mut self, ui: &mut egui::Ui, graph: &mut LogicGraph) -> bool {

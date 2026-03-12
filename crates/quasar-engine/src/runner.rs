@@ -25,7 +25,7 @@ use winit::{
 use quasar_core::asset::AssetManager;
 use quasar_core::profiler::Profiler;
 use quasar_core::scene::SceneGraph;
-use quasar_core::App;
+use quasar_core::{App, TimeSnapshot};
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
     gpu_profiler::GpuProfiler, AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData,
@@ -287,6 +287,19 @@ impl ApplicationHandler for QuasarRunner {
                 state.profiler.begin_scope("ecs_tick");
                 self.app.tick();
                 state.profiler.end_scope("ecs_tick");
+
+                // Periodically check for asset changes (every ~1 second when playing)
+                if state.editor.state.should_tick() {
+                    let frame_count = self
+                        .app
+                        .world
+                        .resource::<TimeSnapshot>()
+                        .map(|t| t.frame_count)
+                        .unwrap_or(0);
+                    if frame_count % 60 == 0 {
+                        state.editor.check_asset_changes();
+                    }
+                }
 
                 // Upload instance transforms collected by RenderSyncSystem.
                 if let Some(sync) = self
@@ -604,6 +617,18 @@ impl ApplicationHandler for QuasarRunner {
                                     .editor
                                     .state
                                     .execute_command(command, &mut self.app.world);
+                            }
+
+                            // Update logic graph system when playing
+                            if state.editor.state.should_tick() {
+                                let lg_commands =
+                                    state.editor.update_logic_graph(&mut self.app.world, 0.016);
+                                for command in lg_commands {
+                                    state
+                                        .editor
+                                        .state
+                                        .execute_command(command, &mut self.app.world);
+                                }
                             }
 
                             // Handle editor actions (Play/Pause/Stop/Undo/Redo)

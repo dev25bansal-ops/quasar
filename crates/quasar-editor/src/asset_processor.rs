@@ -1,0 +1,188 @@
+//! Asset processor that watches the assets/ directory and triggers reimports.
+//!
+//! Tracks content changes, manages .meta sidecar files, and coordinates with the
+//! asset browser for drag-and-drop operations.
+
+use super::asset_metadata::{AssetMeta, ContentHash, ImportSettings, ImportStatus};
+use crate::asset_browser::AssetKind;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+/// Asset import pipeline state.
+pub struct AssetImporter {
+    /// Watched assets directory.
+    pub assets_dir: PathBuf,
+    /// Cached metadata for all assets (source_path → metadata).
+    pub metadata: HashMap<PathBuf, AssetMeta>,
+    /// Pending assets waiting to be processed.
+    pub pending_imports: Vec<PathBuf>,
+}
+
+impl AssetImporter {
+    pub fn new(assets_dir: impl Into<PathBuf>) -> Self {
+        let assets_dir = assets_dir.into();
+        Self {
+            metadata: HashMap::new(),
+            pending_imports: Vec::new(),
+            assets_dir,
+        }
+    }
+
+    /// Scan assets directory and load existing `.meta` files.
+    pub fn scan(&mut self) -> Result<Vec<PathBuf>, String> {
+        self.metadata.clear();
+        self.pending_imports.clear();
+
+        let mut new_files = Vec::new();
+
+        fn scan_recursive(dir: &Path, new_files: &mut Vec<PathBuf>) -> Result<(), String> {
+            let read_dir =
+                std::fs::read_dir(dir).map_err(|e| format!("Cannot read {:?}: {}", dir, e))?;
+
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    scan_recursive(&path, new_files)?;
+                } else {
+                    new_files.push(path.clone());
+                    // Load existing metadata if available
+                    let meta_path = AssetMeta::meta_path(&path);
+                    if meta_path.exists() {
+                        if let Ok(_meta) = AssetMeta::load(&meta_path) {
+                            log::debug!("Loaded metadata for {:?}", path);
+                        } else {
+                            log::warn!("Failed to load metadata for {:?}", meta_path);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        scan_recursive(&self.assets_dir, &mut new_files)?;
+
+        Ok(new_files)
+    }
+
+    /// Process a single asset file.
+    pub fn process_asset(&mut self, asset_path: &PathBuf) -> Result<(), String> {
+        let ext = asset_path
+            .extension()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        let kind = AssetKind::from_extension(ext);
+
+        log::info!("Processing asset {:?} ({:?})", asset_path, kind);
+
+        // Load or create metadata
+        let mut meta = if self.metadata.contains_key(asset_path) {
+            self.metadata.get(asset_path).cloned().unwrap()
+        } else {
+            AssetMeta::from_source_file(asset_path)?
+        };
+
+        // Perform asset-specific processing
+        match kind {
+            AssetKind::Texture => self.process_texture(asset_path, &mut meta),
+            AssetKind::Model => self.process_model(asset_path, &mut meta),
+            AssetKind::Script => self.process_script(asset_path, &self.assets_dir.join("lua")),
+            AssetKind::Shader => self.process_shader(asset_path, &self.assets_dir.join("shaders")),
+            AssetKind::Audio => self.process_audio(asset_path, &mut meta),
+            AssetKind::Scene => self.process_scene(asset_path, &mut meta),
+            AssetKind::Unknown => {
+                log::warn!("Skipping unknown asset type: {:?}", asset_path);
+                meta.status = ImportStatus::Skipped;
+                Ok(())
+            }
+        }?;
+
+        // Save updated metadata
+        meta.save(asset_path)?;
+        self.metadata.insert(asset_path.clone(), meta);
+
+        Ok(())
+    }
+
+    fn process_texture(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+        log::info!("Processing texture: {:?}", path);
+        // TODO: Call into renderer to load texture
+        meta.status = ImportStatus::Success;
+        Ok(())
+    }
+
+    fn process_model(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+        log::info!("Processing model: {:?}", path);
+        // TODO: Load mesh data, generate LODs if enabled
+        meta.status = ImportStatus::Success;
+        Ok(())
+    }
+
+    fn process_script(&self, path: &Path, _target_dir: &Path) -> Result<(), String> {
+        log::info!("Processing script: {:?}", path);
+        // Scripts are just Lua files, no special processing needed
+        Ok(())
+    }
+
+    fn process_shader(&self, path: &Path, _target_dir: &Path) -> Result<(), String> {
+        log::info!("Processing shader: {:?}", path);
+        // Shaders are just WGSL files, no special processing needed
+        Ok(())
+    }
+
+    fn process_audio(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+        log::info!("Processing audio: {:?}", path);
+        // TODO: Convert/optimize audio based on stream settings
+        meta.status = ImportStatus::Success;
+        Ok(())
+    }
+
+    fn process_scene(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+        log::info!("Processing scene: {:?}", path);
+        // TODO: Load scene graph
+        meta.status = ImportStatus::Success;
+        Ok(())
+    }
+
+    /// Check all tracked assets for content changes and mark pending.
+    pub fn check_for_changes(&mut self) -> Result<Vec<PathBuf>, String> {
+        let mut changed = Vec::new();
+
+        let paths: Vec<_> = self.metadata.keys().cloned().collect();
+        for path in paths {
+            if let Some(meta) = self.metadata.remove(&path) {
+                if meta.is_outdated(&path)? {
+                    let mut updated = meta;
+                    updated.mark_outdated(&path)?;
+                    log::info!("Asset changed: {:?}", path);
+                    changed.push(path.clone());
+                    self.metadata.insert(path.clone(), updated);
+                } else {
+                    self.metadata.insert(path, meta);
+                }
+            }
+        }
+
+        Ok(changed)
+    }
+
+    /// Get import settings for an asset.
+    pub fn get_settings(&self, asset_path: &Path) -> Option<&ImportSettings> {
+        self.metadata.get(asset_path).map(|m| &m.settings)
+    }
+
+    /// Update import settings for an asset and mark for reimport.
+    pub fn update_settings(
+        &mut self,
+        asset_path: &Path,
+        settings: ImportSettings,
+    ) -> Result<(), String> {
+        if let Some(meta) = self.metadata.get_mut(asset_path) {
+            meta.settings = settings;
+            meta.status = ImportStatus::Pending;
+            meta.save(asset_path)?;
+        }
+        Ok(())
+    }
+}

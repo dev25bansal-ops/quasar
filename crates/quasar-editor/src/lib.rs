@@ -8,6 +8,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod asset_browser;
+pub mod asset_metadata;
+pub mod asset_processor;
 pub mod console;
 pub mod editor_state;
 pub mod gizmos;
@@ -16,11 +18,13 @@ pub mod inspector;
 pub mod inspector_commands;
 pub mod logic_graph;
 pub mod logic_graph_editor;
+pub mod logic_graph_system;
 pub mod reflect;
 pub mod renderer;
 pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
+pub use asset_processor::AssetImporter;
 pub use editor_state::{
     DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
     SetPositionCommand, SetRotationCommand, SetScaleCommand, SpawnEntityCommand, TransformData,
@@ -30,6 +34,7 @@ pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
 pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
 pub use logic_graph_editor::LogicGraphEditorState;
+pub use logic_graph_system::{LogicGraphAttachment, LogicGraphSystem};
 use quasar_core::ecs::Entity;
 pub use quasar_derive::Inspect as DeriveInspect;
 pub use reflect::{
@@ -347,6 +352,7 @@ pub enum EditorAction {
     Undo,
     Redo,
     StepFrame,
+    SpawnLogicGraph,
 }
 
 /// Editor state — tracks visible panels and the selected entity.
@@ -375,6 +381,8 @@ pub struct Editor {
     pub state: EditorState,
     /// Asset browser panel.
     pub asset_browser: AssetBrowser,
+    /// Asset importer for watching and processing assets.
+    pub asset_importer: AssetImporter,
     /// Show the Lua REPL panel.
     pub show_lua_repl: bool,
     /// Lua REPL input buffer.
@@ -396,7 +404,11 @@ pub struct Editor {
     /// Logic graph editor state.
     pub logic_graph_editor_state: LogicGraphEditorState,
     /// Active logic graph being edited.
-    pub logic_graph: LogicGraph,
+    pub logic_graph: crate::logic_graph::LogicGraph,
+    /// Logic graph system for runtime evaluation.
+    pub logic_graph_system: LogicGraphSystem,
+    /// Flag indicating spawn logic graph entity requested this frame.
+    pub spawn_logic_graph_requested: bool,
     /// Show the GPU profiler panel.
     pub show_gpu_profiler: bool,
     /// GPU pass timing data (name, duration_ms) from the last frame.
@@ -405,6 +417,7 @@ pub struct Editor {
 
 impl Editor {
     pub fn new() -> Self {
+        let assets_path = std::path::PathBuf::from("assets");
         Self {
             enabled: false,
             show_hierarchy: true,
@@ -417,7 +430,8 @@ impl Editor {
             selected_entities: Vec::new(),
             console: console::ConsoleLog::new(),
             state: EditorState::new(),
-            asset_browser: AssetBrowser::new("assets"),
+            asset_browser: AssetBrowser::new(assets_path.clone()),
+            asset_importer: AssetImporter::new(assets_path),
             show_lua_repl: false,
             lua_repl_input: String::new(),
             lua_repl_output: Vec::new(),
@@ -428,7 +442,9 @@ impl Editor {
             timeline_panel: TimelinePanel::new(),
             show_logic_graph: false,
             logic_graph_editor_state: LogicGraphEditorState::new(),
-            logic_graph: LogicGraph::new("untitled"),
+            logic_graph: crate::logic_graph::LogicGraph::new("untitled"),
+            logic_graph_system: LogicGraphSystem::new(),
+            spawn_logic_graph_requested: false,
             show_gpu_profiler: false,
             gpu_pass_timings: Vec::new(),
         }
@@ -675,6 +691,16 @@ impl Editor {
                 .panel(ctx, &mut self.logic_graph);
         }
 
+        // Logic graph editor panel
+        if self.show_logic_graph {
+            let (_changed, spawn_requested) = self
+                .logic_graph_editor_state
+                .panel(ctx, &mut self.logic_graph);
+            if spawn_requested {
+                editor_action = Some(EditorAction::SpawnLogicGraph);
+            }
+        }
+
         // GPU profiler panel
         if self.show_gpu_profiler {
             egui::Window::new("⏱ GPU Profiler")
@@ -755,6 +781,19 @@ impl Editor {
             EditorAction::StepFrame => {
                 self.state.step_frame();
             }
+            EditorAction::SpawnLogicGraph => {
+                // Spawn a new entity with the current logic graph
+                let entity = Self::spawn_entity_with_logic_graph(
+                    world,
+                    self.logic_graph.clone(),
+                    None, // default transform
+                );
+                log::info!(
+                    "Spawned entity {:?} with logic graph '{}'",
+                    entity,
+                    self.logic_graph.name
+                );
+            }
         }
     }
 
@@ -766,6 +805,19 @@ impl Editor {
         self.profiler_frame_times.push_back(dt);
     }
 
+    /// Update the logic graph system (call when simulation is active).
+    pub fn update_logic_graph(
+        &mut self,
+        world: &mut quasar_core::ecs::World,
+        dt: f32,
+    ) -> Vec<Box<dyn EditCommand>> {
+        if self.state.should_tick() {
+            self.logic_graph_system.update(world, dt)
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Push a Lua REPL result string into the output history.
     pub fn push_lua_result(&mut self, result: &str) {
         self.lua_repl_output.push(result.to_string());
@@ -774,6 +826,84 @@ impl Editor {
     /// Take a pending Lua eval command (if any).
     pub fn take_pending_lua_eval(&mut self) -> Option<String> {
         self.pending_lua_eval.take()
+    }
+
+    /// Check for asset changes and update if needed (call periodically).
+    /// Returns true if any assets were reimported.
+    pub fn check_asset_changes(&mut self) -> bool {
+        match self.asset_importer.check_for_changes() {
+            Ok(changed) => !changed.is_empty(),
+            Err(e) => {
+                log::error!("Failed to check asset changes: {}", e);
+                false
+            }
+        }
+    }
+
+    /// Process pending asset import commands (call from renderer).
+    /// Returns list of newly imported asset paths.
+    pub fn process_imports(&mut self) -> Vec<std::path::PathBuf> {
+        let mut imported = Vec::new();
+        for path in self.asset_importer.pending_imports.clone() {
+            if let Ok(()) = self.asset_importer.process_asset(&path) {
+                imported.push(path);
+            }
+        }
+        self.asset_importer.pending_imports.clear();
+        imported
+    }
+
+    /// Spawn a new entity with a LogicGraphAttachment component.
+    /// Returns the newly created entity.
+    pub fn spawn_entity_with_logic_graph(
+        world: &mut quasar_core::ecs::World,
+        graph: LogicGraph,
+        transform: Option<TransformData>,
+    ) -> quasar_core::ecs::Entity {
+        let entity = world.spawn();
+
+        // Add Transform component
+        let transform_data = transform.unwrap_or(TransformData {
+            position: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        });
+        world.insert(
+            entity,
+            quasar_math::Transform {
+                position: quasar_math::Vec3::new(
+                    transform_data.position[0],
+                    transform_data.position[1],
+                    transform_data.position[2],
+                ),
+                rotation: quasar_math::Quat::from_xyzw(
+                    transform_data.rotation[0],
+                    transform_data.rotation[1],
+                    transform_data.rotation[2],
+                    transform_data.rotation[3],
+                ),
+                scale: quasar_math::Vec3::new(
+                    transform_data.scale[0],
+                    transform_data.scale[1],
+                    transform_data.scale[2],
+                ),
+            },
+        );
+
+        // Add LogicGraphAttachment component
+        world.insert(
+            entity,
+            LogicGraphAttachment {
+                graph,
+                compiled_lua: String::new(),
+                dirty: true,
+                state: Vec::new(),
+                events: Vec::new(),
+            },
+        );
+
+        log::info!("Spawned entity {:?} with logic graph", entity);
+        entity
     }
 }
 
