@@ -3,6 +3,7 @@
 //! Scans an `assets/` directory, displays files in a grid with icons/thumbnails,
 //! and supports selection and drag-and-drop onto the scene hierarchy.
 
+use crate::asset_metadata::AssetMeta;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
@@ -76,6 +77,8 @@ pub struct AssetBrowser {
     pub filter: String,
     /// Whether a rescan is needed.
     pub dirty: bool,
+    /// Whether to show the import settings panel.
+    pub show_settings: bool,
 }
 
 impl AssetBrowser {
@@ -88,6 +91,7 @@ impl AssetBrowser {
             selected: None,
             filter: String::new(),
             dirty: true,
+            show_settings: false,
         }
     }
 
@@ -197,6 +201,10 @@ impl AssetBrowser {
                         self.dirty = true;
                     }
                     ui.separator();
+                    if ui.button("⚙ Settings").clicked() {
+                        self.show_settings = !self.show_settings;
+                    }
+                    ui.separator();
                     ui.label("🔍");
                     ui.text_edit_singleline(&mut self.filter);
                 });
@@ -283,6 +291,117 @@ impl AssetBrowser {
                 }
                 if let Some(path) = select_path {
                     self.selected = Some(path);
+                }
+
+                // Show import settings panel if enabled and asset is selected
+
+                if self.show_settings {
+                    if let Some(selected_path) = &self.selected {
+                        let asset_path = self.root.join(selected_path);
+
+                        egui::Window::new("⚙ Import Settings")
+                            .collapsible(true)
+                            .resizable(true)
+                            .default_width(400.0)
+                            .show(ctx, |ui| {
+                                ui.label(format!("Asset: {}", selected_path));
+                                ui.separator();
+
+                                let mut meta = match AssetMeta::load(&asset_path) {
+                                    Ok(Some(m)) => m,
+                                    Ok(None) => {
+                                        ui.label("No metadata file (.meta) found.");
+                                        if ui.button("Create .meta").clicked() {
+                                            let _ = AssetMeta::default().save(&asset_path);
+                                        }
+                                        ui.separator();
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        ui.colored_label(
+                                            egui::Color32::RED,
+                                            format!("Error: {}", e),
+                                        );
+                                        return;
+                                    }
+                                };
+
+                                ui.separator();
+                                ui.label(format!("Content Hash: {}", &meta.content_hash));
+                                ui.label(format!("Status: {:?}", meta.status));
+
+                                ui.separator();
+
+                                // Import Settings
+                                ui.heading("Import Settings");
+                                ui.separator();
+
+                                ui.label("Compression");
+                                if ui
+                                    .checkbox(&mut meta.settings.compression, "Enable")
+                                    .changed()
+                                {
+                                    // Auto-save on change
+                                    let _ = meta.save(&asset_path);
+                                }
+
+                                ui.separator();
+                                ui.label("Quality");
+                                let quality = meta.settings.compression_quality;
+                                ui.add(
+                                    egui::Slider::new(
+                                        &mut meta.settings.compression_quality,
+                                        1..=100,
+                                    )
+                                    .text(format!("{}", quality)),
+                                );
+                                if ui.button("Apply Quality").clicked() {
+                                    let _ = meta.save(&asset_path);
+                                }
+
+                                ui.separator();
+                                ui.label("LOD Levels");
+                                let lod = meta.settings.lod_levels;
+                                ui.add(
+                                    egui::Slider::new(&mut meta.settings.lod_levels, 1..=5)
+                                        .text(format!("{}", lod)),
+                                );
+                                if ui.button("Apply LOD").clicked() {
+                                    let _ = meta.save(&asset_path);
+                                }
+
+                                ui.separator();
+                                ui.label(format!(
+                                    "Target Format: {:?}",
+                                    meta.settings.target_format
+                                ));
+
+                                ui.separator();
+                                ui.label("Audio Stream Threshold (kbps)");
+                                let threshold = meta.settings.audio_stream_threshold;
+                                ui.add(
+                                    egui::Slider::new(
+                                        &mut meta.settings.audio_stream_threshold,
+                                        0..=1000,
+                                    )
+                                    .text(format!("{} (0 = load all)", threshold)),
+                                );
+                                if ui.button("Apply Audio").clicked() {
+                                    let _ = meta.save(&asset_path);
+                                }
+
+                                ui.separator();
+
+                                if ui.button("🔄 Reimport Now").clicked() {
+                                    let _ = meta.mark_outdated(&asset_path);
+                                }
+
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.label("Changes are auto-saved when toggling options");
+                                ui.label("Use Apply buttons for slider values");
+                            });
+                    }
                 }
             });
 

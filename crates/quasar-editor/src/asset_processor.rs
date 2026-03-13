@@ -3,11 +3,12 @@
 //! Tracks content changes, manages .meta sidecar files, and coordinates with the
 //! asset browser for drag-and-drop operations.
 
-use super::asset_metadata::{AssetMeta, ContentHash, ImportSettings, ImportStatus};
+use super::asset_metadata::{AssetMeta, ImportSettings, ImportStatus};
 use crate::asset_browser::AssetKind;
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 
 /// Asset import pipeline state.
 pub struct AssetImporter {
@@ -17,15 +18,26 @@ pub struct AssetImporter {
     pub metadata: HashMap<PathBuf, AssetMeta>,
     /// Pending assets waiting to be processed.
     pub pending_imports: Vec<PathBuf>,
+    /// Channel to receive file change events.
+    change_receiver: mpsc::Receiver<PathBuf>,
 }
 
 impl AssetImporter {
     pub fn new(assets_dir: impl Into<PathBuf>) -> Self {
         let assets_dir = assets_dir.into();
+        let (tx, rx) = mpsc::channel();
+
+        // Spawn watcher thread
+        let watch_dir = assets_dir.clone();
+        std::thread::spawn(move || {
+            Self::run_watcher(&watch_dir, tx);
+        });
+
         Self {
             metadata: HashMap::new(),
             pending_imports: Vec::new(),
             assets_dir,
+            change_receiver: rx,
         }
     }
 
@@ -184,5 +196,52 @@ impl AssetImporter {
             meta.save(asset_path)?;
         }
         Ok(())
+    }
+
+    /// Run filesystem watcher in a separate thread.
+    fn run_watcher(dir: &Path, tx: mpsc::Sender<PathBuf>) {
+        let mut watcher: RecommendedWatcher = match Watcher::new(
+            move |res: std::result::Result<notify::Event, notify::Error>| match res {
+                Ok(event) => {
+                    log::debug!("Filesystem event: {:?}", event);
+
+                    for path in event.paths {
+                        match event.kind {
+                            EventKind::Create(_) | EventKind::Modify(_) => {
+                                let _ = tx.send(path);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => log::error!("Watcher error: {:?}", e),
+            },
+            notify::Config::default(),
+        ) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("Failed to create watcher: {:?}", e);
+                return;
+            }
+        };
+
+        match watcher.watch(dir, RecursiveMode::Recursive) {
+            Ok(_) => log::info!("Watching directory: {:?}", dir),
+            Err(e) => log::error!("Failed to watch {:?}: {}", dir, e),
+        }
+
+        // Keep the watcher alive
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
+    /// Poll for file change events from the watcher thread.
+    pub fn poll_changes(&mut self) -> Vec<PathBuf> {
+        let mut changes = Vec::new();
+        while let Ok(path) = self.change_receiver.try_recv() {
+            changes.push(path);
+        }
+        changes
     }
 }

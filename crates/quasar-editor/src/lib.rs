@@ -831,6 +831,13 @@ impl Editor {
     /// Check for asset changes and update if needed (call periodically).
     /// Returns true if any assets were reimported.
     pub fn check_asset_changes(&mut self) -> bool {
+        // Check for fs watcher events first
+        let watcher_changes = self.asset_importer.poll_changes();
+        for changed_path in watcher_changes {
+            log::info!("Watcher detected change: {:?}", changed_path);
+        }
+
+        // Check tracked assets for content hash changes
         match self.asset_importer.check_for_changes() {
             Ok(changed) => !changed.is_empty(),
             Err(e) => {
