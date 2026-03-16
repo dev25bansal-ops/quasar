@@ -411,18 +411,19 @@ impl World {
                         new_arch.columns.push(empty_col);
                         new_arch.type_to_column.insert(tid, idx);
                     }
-                    let ci: usize = *new_arch.type_to_column.get(&tid).unwrap();
+                    let Some(&ci) = new_arch.type_to_column.get(&tid) else { continue };
                     (*new_arch.columns[ci]).push_raw(value);
                 }
 
                 // Push the NEW component T into its SoA column
                 new_arch.ensure_column::<T>();
-                let ci: usize = *new_arch.type_to_column.get(&type_id).unwrap();
+                if let Some(&ci) = new_arch.type_to_column.get(&type_id) {
                 if let Some(col) = (*new_arch.columns[ci])
                     .as_any_mut()
                     .downcast_mut::<TypedColumn<T>>()
                 {
-                    col.data.push(component);
+                    col.push(component);
+                }
                 }
             } else {
                 // Fallback: just record the archetype mapping
@@ -524,7 +525,7 @@ impl World {
                         new_arch.columns.push(empty_col);
                         new_arch.type_to_column.insert(tid, idx);
                     }
-                    let ci: usize = *new_arch.type_to_column.get(&tid).unwrap();
+                    let Some(&ci) = new_arch.type_to_column.get(&tid) else { continue };
                     (*new_arch.columns[ci]).push_raw(value);
                 }
             }
@@ -1051,7 +1052,7 @@ impl World {
                 let entity = arch.entities[i];
                 let changed = ticks
                     .and_then(|m| m.get(&entity.index()))
-                    .map_or(false, |&tick| tick > since_tick);
+                    .is_some_and(|&tick| tick > since_tick);
                 if changed {
                     results.push((entity, &col.data[i]));
                 }
@@ -1300,7 +1301,7 @@ impl World {
                             arch.columns[col_idx].push_raw(component);
                             // If row wasn't last, swap new value into correct position
                             let last = arch.columns[col_idx].len().saturating_sub(1);
-                            if row != last && arch.columns[col_idx].len() > 0 {
+                            if row != last && !arch.columns[col_idx].is_empty() {
                                 arch.columns[col_idx].swap_remove_entry(row);
                                 // The old "last" is now at row, push the swapped value back
                             }
@@ -1326,6 +1327,11 @@ impl World {
             .entry(type_id)
             .or_default()
             .insert(entity.index(), self.current_tick);
+    }
+
+    /// Remove a component by type from an entity.
+    pub fn remove<T: Component>(&mut self, entity: Entity) -> bool {
+        self.remove_raw(entity, TypeId::of::<T>())
     }
 
     /// Remove a component using runtime type information (for Commands).

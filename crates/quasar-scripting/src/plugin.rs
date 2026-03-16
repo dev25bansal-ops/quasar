@@ -31,8 +31,14 @@ pub struct ScriptingResource {
 
 impl ScriptingResource {
     pub fn new() -> Self {
-        let engine = ScriptEngine::new().expect("failed to create Lua scripting engine");
-        bridge::register_bridge(engine.lua()).expect("failed to register Lua bridge");
+        let engine = ScriptEngine::new().unwrap_or_else(|e| {
+            log::error!("failed to create Lua scripting engine: {}", e);
+            panic!("failed to create Lua scripting engine: {}", e);
+        });
+        bridge::register_bridge(engine.lua()).unwrap_or_else(|e| {
+            log::error!("failed to register Lua bridge: {}", e);
+            panic!("failed to register Lua bridge: {}", e);
+        });
         let entity_scripts_key = engine
             .lua()
             .create_table()
@@ -55,15 +61,38 @@ impl Default for ScriptingResource {
 
 /// Represents a single command queued by Lua for the ECS.
 enum ScriptCommand {
-    SetPosition { entity_index: u32, value: Vec3 },
-    SetRotation { entity_index: u32, value: Quat },
-    SetScale { entity_index: u32, value: Vec3 },
+    SetPosition {
+        entity_index: u32,
+        value: Vec3,
+    },
+    SetRotation {
+        entity_index: u32,
+        value: Quat,
+    },
+    SetScale {
+        entity_index: u32,
+        value: Vec3,
+    },
     Spawn,
-    Despawn { entity_index: u32 },
-    ApplyForce { entity_index: u32, force: Vec3 },
-    PlayAudio { path: String },
-    AddComponent { entity_index: u32, component_name: String, data_key: mlua::RegistryKey },
-    RemoveComponent { entity_index: u32, component_name: String },
+    Despawn {
+        entity_index: u32,
+    },
+    ApplyForce {
+        entity_index: u32,
+        force: Vec3,
+    },
+    PlayAudio {
+        path: String,
+    },
+    AddComponent {
+        entity_index: u32,
+        component_name: String,
+        data_key: mlua::RegistryKey,
+    },
+    RemoveComponent {
+        entity_index: u32,
+        component_name: String,
+    },
 }
 
 /// System that calls `on_update(dt)` in Lua every frame and checks hot-reload.
@@ -107,8 +136,12 @@ impl ScriptingSystem {
             return;
         };
         match resource.component_registry.serialize_all_to_lua(lua, world) {
-            Ok(table) => { let _ = quasar.set("_component_data", table); }
-            Err(e) => { log::error!("[scripting] Failed to serialize component data: {}", e); }
+            Ok(table) => {
+                let _ = quasar.set("_component_data", table);
+            }
+            Err(e) => {
+                log::error!("[scripting] Failed to serialize component data: {}", e);
+            }
         }
     }
 
@@ -288,10 +321,9 @@ impl ScriptingSystem {
                     }
                 }
                 "remove_component" => {
-                    if let (Ok(eid), Ok(comp_name)) = (
-                        cmd.get::<u32>("entity"),
-                        cmd.get::<String>("component"),
-                    ) {
+                    if let (Ok(eid), Ok(comp_name)) =
+                        (cmd.get::<u32>("entity"), cmd.get::<String>("component"))
+                    {
                         commands.push(ScriptCommand::RemoveComponent {
                             entity_index: eid,
                             component_name: comp_name,
@@ -421,7 +453,8 @@ impl ScriptingSystem {
                                     if let Err(e) = start_fn.call::<()>(*eid) {
                                         log::error!("[lua] {}: on_start error: {}", path, e);
                                     }
-                                } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
+                                } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init")
+                                {
                                     if let Err(e) = init_fn.call::<()>(*eid) {
                                         log::error!("[lua] {}: on_init error: {}", path, e);
                                     }
@@ -439,19 +472,17 @@ impl ScriptingSystem {
                 }
 
                 // Mark as loaded — need mutable access.
-                if let Some(sc) = world.get_mut::<ScriptComponent>(
-                    {
-                        let found: Option<Entity> = world
-                            .query::<ScriptComponent>()
-                            .iter()
-                            .find(|(e, _)| e.index() == *eid)
-                            .map(|(e, _)| *e);
-                        match found {
-                            Some(e) => e,
-                            None => continue,
-                        }
-                    },
-                ) {
+                if let Some(sc) = world.get_mut::<ScriptComponent>({
+                    let found: Option<Entity> = world
+                        .query::<ScriptComponent>()
+                        .iter()
+                        .find(|(e, _)| e.index() == *eid)
+                        .map(|(e, _)| *e);
+                    match found {
+                        Some(e) => e,
+                        None => continue,
+                    }
+                }) {
                     sc.loaded = true;
                 }
             }
@@ -556,11 +587,20 @@ impl ScriptingSystem {
                 } => {
                     if let Some(&entity) = entity_map.get(&entity_index) {
                         // Get the rigid body handle, then apply force through the physics world.
-                        if let Some(rigid_body) = world.get::<quasar_physics::RigidBodyComponent>(entity) {
+                        if let Some(rigid_body) =
+                            world.get::<quasar_physics::RigidBodyComponent>(entity)
+                        {
                             let handle = rigid_body.handle;
-                            if let Some(phys) = world.resource_mut::<quasar_physics::PhysicsResource>() {
-                                phys.physics.apply_force(handle, [force.x, force.y, force.z]);
-                                log::debug!("[lua] Applied force {:?} to entity {}", force, entity_index);
+                            if let Some(phys) =
+                                world.resource_mut::<quasar_physics::PhysicsResource>()
+                            {
+                                phys.physics
+                                    .apply_force(handle, [force.x, force.y, force.z]);
+                                log::debug!(
+                                    "[lua] Applied force {:?} to entity {}",
+                                    force,
+                                    entity_index
+                                );
                             }
                         }
                     }
@@ -585,7 +625,8 @@ impl ScriptingSystem {
                         let data_table: Option<LuaTable> = lua.registry_value(&data_key).ok();
                         if let Some(data) = data_table {
                             let inserted = {
-                                let reg = &world.resource::<ScriptingResource>()
+                                let reg = &world
+                                    .resource::<ScriptingResource>()
                                     .map(|r| &r.component_registry);
                                 if let Some(reg) = reg {
                                     if let Some(desc) = reg.get(&component_name) {
@@ -625,7 +666,8 @@ impl ScriptingSystem {
                         };
                         if found {
                             if let Some(resource) = world.resource::<ScriptingResource>() {
-                                if let Some(desc) = resource.component_registry.get(&component_name) {
+                                if let Some(desc) = resource.component_registry.get(&component_name)
+                                {
                                     (desc.remove)(world, entity);
                                 }
                             }
@@ -648,8 +690,12 @@ impl System for ScriptingSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        if !quasar_core::simulation_active(world) { return; }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("scripting_update"); }
+        if !quasar_core::simulation_active(world) {
+            return;
+        }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.begin_scope("scripting_update");
+        }
         // Read delta time from the Time resource.
         let dt = world
             .resource::<Time>()
@@ -701,7 +747,13 @@ impl System for ScriptingSystem {
             // If you need a "global" script, model it as a singleton entity
             // with a `ScriptComponent`.  The global callback will be removed
             // in a future release.
-            if resource.engine.lua().globals().get::<LuaFunction>("on_update").is_ok() {
+            if resource
+                .engine
+                .lua()
+                .globals()
+                .get::<LuaFunction>("on_update")
+                .is_ok()
+            {
                 use std::sync::Once;
                 static DEPRECATION_WARNING: Once = Once::new();
                 DEPRECATION_WARNING.call_once(|| {
@@ -726,7 +778,9 @@ impl System for ScriptingSystem {
         if !commands.is_empty() {
             Self::apply_commands(lua, world, commands);
         }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("scripting_update"); }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.end_scope("scripting_update");
+        }
     }
 }
 

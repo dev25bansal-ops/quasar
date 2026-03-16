@@ -137,7 +137,7 @@ impl AssetMeta {
     fn to_json(&self) -> Result<String, String> {
         // Simple manual JSON serialization
         let mut json = String::new();
-        json.push_str("{");
+        json.push('{');
         json.push_str(&format!("\"content_hash\":\"{}\",", self.content_hash));
         json.push_str(&format!("\"compression\":{},", self.settings.compression));
         json.push_str(&format!(
@@ -161,7 +161,7 @@ impl AssetMeta {
             json.push_str("\"last_imported\":null,");
         }
         json.push_str(&format!("\"version\":{}", self.version));
-        json.push_str("}");
+        json.push('}');
         Ok(json)
     }
 

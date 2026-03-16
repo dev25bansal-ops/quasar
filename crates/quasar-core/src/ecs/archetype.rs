@@ -277,6 +277,7 @@ pub trait ColumnStorage: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn swap_remove_entry(&mut self, row: usize);
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool { self.len() == 0 }
     fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>);
     /// Raw const pointer to the underlying contiguous data buffer.
     fn raw_ptr(&self) -> *const u8;
@@ -302,6 +303,12 @@ pub struct TypedColumn<T: Send + Sync> {
     pub data: Vec<T>,
     /// Per-row change tick — updated whenever a row is written.
     pub change_ticks: Vec<u64>,
+}
+
+impl<T: 'static + Send + Sync> Default for TypedColumn<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: 'static + Send + Sync> TypedColumn<T> {

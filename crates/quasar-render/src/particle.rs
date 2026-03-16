@@ -376,7 +376,7 @@ impl GpuParticleSystem {
     }
 
     pub fn dispatch(&self, encoder: &mut wgpu::CommandEncoder, count: u32) {
-        let groups = (count + PARTICLE_GROUP_SIZE - 1) / PARTICLE_GROUP_SIZE;
+        let groups = count.div_ceil(PARTICLE_GROUP_SIZE);
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Particle Compute Pass"),
             timestamp_writes: None,

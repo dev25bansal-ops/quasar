@@ -63,7 +63,7 @@ pub fn derive_inspect(input: TokenStream) -> TokenStream {
     let mut widget_calls = Vec::new();
 
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
+        let Some(field_name) = field.ident.as_ref() else { continue };
         let field_label = field_name.to_string();
         let ty = &field.ty;
 
@@ -206,7 +206,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let mut field_descriptors = Vec::new();
 
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
+        let Some(field_name) = field.ident.as_ref() else { continue };
         let field_str = field_name.to_string();
         let ty = &field.ty;
         let ty_str = quote!(#ty).to_string().replace(' ', "");
@@ -597,7 +597,7 @@ pub fn derive_replicate(input: TokenStream) -> TokenStream {
     let mut deser_fields = Vec::new();
 
     for field in fields {
-        let field_name = field.ident.as_ref().unwrap();
+        let Some(field_name) = field.ident.as_ref() else { continue };
         let field_str = field_name.to_string();
         let ty = &field.ty;
         let ty_str = quote!(#ty).to_string().replace(' ', "");

@@ -1,4 +1,4 @@
-//! Networking — QUIC/UDP integration for game networking.
+﻿//! Networking â€” QUIC/UDP integration for game networking.
 //!
 //! Provides:
 //! - NetworkPlugin with client/server roles
@@ -431,7 +431,7 @@ impl InputHistory {
 
     /// Record inputs for a given frame.
     pub fn record(&mut self, frame: u64, client_id: ClientId, inputs: Vec<InputData>) {
-        let entry = self.buffer.entry(frame).or_insert_with(HashMap::new);
+        let entry = self.buffer.entry(frame).or_default();
         entry.insert(client_id, inputs);
         // Evict stale frames.
         while self.buffer.len() > self.capacity as usize {
@@ -447,7 +447,7 @@ impl InputHistory {
 
     /// Replace/correct the input for a specific client at a specific frame.
     pub fn correct(&mut self, frame: u64, client_id: ClientId, inputs: Vec<InputData>) {
-        let entry = self.buffer.entry(frame).or_insert_with(HashMap::new);
+        let entry = self.buffer.entry(frame).or_default();
         entry.insert(client_id, inputs);
     }
 
@@ -579,7 +579,7 @@ impl RollbackManager {
         if let Some(idx) = self.states.iter().position(|s| s.frame == frame) {
             // Replace the snapshot at the corrected frame with server data.
             self.states[idx].entities = corrected_entities;
-            // Discard all snapshots after this frame — they will be re-simulated.
+            // Discard all snapshots after this frame â€” they will be re-simulated.
             self.states.truncate(idx + 1);
             self.is_rolling_back = true;
             self.rollback_target_frame = frame;
@@ -669,7 +669,7 @@ impl RollbackManager {
     }
 }
 
-// ── Tick-rate accumulator ──────────────────────────────────────
+// â”€â”€ Tick-rate accumulator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Server-side fixed tick-rate accumulator.
 ///
@@ -703,14 +703,14 @@ impl TickAccumulator {
         ticks
     }
 
-    /// The interpolation alpha between the last and next tick (0.0–1.0).
+    /// The interpolation alpha between the last and next tick (0.0â€“1.0).
     pub fn alpha(&self) -> f32 {
         let tick_dt = 1.0 / self.tick_rate as f32;
         self.accumulator / tick_dt
     }
 }
 
-// ── Snapshot interpolation (client-side) ───────────────────────
+// â”€â”€ Snapshot interpolation (client-side) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Stores two consecutive server snapshots and interpolates between them
 /// so that remote entities move smoothly.
@@ -813,7 +813,7 @@ fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     ]
 }
 
-// ── Delta compression ──────────────────────────────────────────
+// â”€â”€ Delta compression â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Tracks the last-sent state per entity so only changed fields are sent.
 /// Supports encoding/decoding compact binary deltas for bandwidth savings.
@@ -885,7 +885,7 @@ impl DeltaCompressor {
 
         match baseline {
             None => {
-                // Full snapshot — all fields.
+                // Full snapshot â€” all fields.
                 flags = DeltaFlags::POSITION
                     | DeltaFlags::ROTATION
                     | DeltaFlags::SCALE
@@ -1127,7 +1127,7 @@ impl NetworkReplication {
     }
 
     pub fn register_entity(&mut self, entity_index: u32) -> NetworkEntityId {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         let network_id = NetworkEntityId(state.next_entity_id);
         state.next_entity_id += 1;
         state.entity_to_network.insert(entity_index, network_id);
@@ -1136,7 +1136,7 @@ impl NetworkReplication {
     }
 
     pub fn unregister_entity(&mut self, entity_index: u32) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.state.write().unwrap_or_else(|e| e.into_inner());
         if let Some(network_id) = state.entity_to_network.remove(&entity_index) {
             state.network_to_entity.remove(&network_id);
         }
@@ -1150,7 +1150,7 @@ impl NetworkReplication {
         rotation: [f32; 4],
         scale: [f32; 3],
     ) {
-        let state = self.state.read().unwrap();
+        let state = self.state.read().unwrap_or_else(|e| e.into_inner());
         if let Some(network_id) = state.entity_to_network.get(&entity_index) {
             let message = NetworkMessage {
                 sequence: state.frame_number,
@@ -1305,7 +1305,7 @@ impl NetworkPlugin {
 }
 
 fn network_system(world: &mut crate::World) {
-    // ── Receive ──────────────────────────────────────────────────
+    // â”€â”€ Receive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let messages = {
         let Some(transport) = world.resource_mut::<NetworkTransportResource>() else {
             return;
@@ -1321,7 +1321,7 @@ fn network_system(world: &mut crate::World) {
         let Some(replication) = world.resource::<NetworkReplication>() else {
             return;
         };
-        let mut state = replication.state.write().unwrap();
+        let mut state = replication.state.write().unwrap_or_else(|e| e.into_inner());
 
         for (addr, message) in &messages {
             match &message.payload {
@@ -1359,16 +1359,16 @@ fn network_system(world: &mut crate::World) {
 
     // Apply received entity transforms.
     if !transform_updates.is_empty() {
-        // Build network_id → entity_index map
+        // Build network_id â†’ entity_index map
         let net_to_entity: HashMap<NetworkEntityId, u32> = {
             let Some(replication) = world.resource::<NetworkReplication>() else {
                 return;
             };
-            let state = replication.state.read().unwrap();
+            let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
             state.network_to_entity.clone()
         };
 
-        // Build entity_index → Entity handle
+        // Build entity_index â†’ Entity handle
         let entity_map: HashMap<u32, crate::ecs::Entity> = world
             .query::<quasar_math::Transform>()
             .into_iter()
@@ -1409,11 +1409,11 @@ fn network_system(world: &mut crate::World) {
         }
     }
 
-    // ── Send (server broadcasts entity transforms) ───────────────
+    // â”€â”€ Send (server broadcasts entity transforms) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let is_server = world
         .resource::<NetworkReplication>()
         .map(|r| {
-            let state = r.state.read().unwrap();
+            let state = r.state.read().unwrap_or_else(|e| e.into_inner());
             state.is_server()
         })
         .unwrap_or(false);
@@ -1427,7 +1427,7 @@ fn network_system(world: &mut crate::World) {
         let Some(replication) = world.resource::<NetworkReplication>() else {
             return;
         };
-        let state = replication.state.read().unwrap();
+        let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
 
         let transforms: Vec<_> = world
             .query::<quasar_math::Transform>()
@@ -1484,9 +1484,9 @@ impl crate::Plugin for NetworkPlugin {
     fn build(&self, app: &mut crate::App) {
         let bind_addr: SocketAddr = match &self.config.role {
             NetworkRole::Server | NetworkRole::ListenServer => {
-                format!("0.0.0.0:{}", self.config.port).parse().unwrap()
+                format!("0.0.0.0:{}", self.config.port).parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], self.config.port)))
             }
-            NetworkRole::Client { server_addr: _ } => "0.0.0.0:0".parse().unwrap(),
+            NetworkRole::Client { server_addr: _ } => "0.0.0.0:0".parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], 0))),
         };
 
         let replication = NetworkReplication::new(self.config.clone());
@@ -1531,7 +1531,7 @@ impl crate::Plugin for NetworkPlugin {
         app.add_system("update_network_metrics", update_network_metrics);
 
         log::info!(
-            "NetworkPlugin loaded — {} mode on port {}",
+            "NetworkPlugin loaded â€” {} mode on port {}",
             match self.config.role {
                 NetworkRole::Server => "server",
                 NetworkRole::Client { .. } => "client",
@@ -1670,10 +1670,10 @@ mod tests {
         let encoded = dc.encode_delta(id, &snap);
         assert!(encoded.is_some());
         dc.mark_sent(id, snap.clone());
-        // Same snap again — no update needed.
+        // Same snap again â€” no update needed.
         assert!(!dc.needs_update(id, &snap));
 
-        // Changed position → needs update.
+        // Changed position â†’ needs update.
         let snap2 = EntitySnapshot {
             position: [4.0, 5.0, 6.0],
             ..snap.clone()
@@ -1702,10 +1702,10 @@ mod tests {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  ADVANCED NETWORKING — server-authoritative tick, dirty-flag
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  ADVANCED NETWORKING â€” server-authoritative tick, dirty-flag
 //  replication, snapshot interpolation, `Replicated` marker
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Marker component: attach to any entity that should be replicated.
 ///
@@ -1714,7 +1714,7 @@ mod tests {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Replicated {
     pub network_id: NetworkEntityId,
-    /// `None` → server authority, `Some(id)` → client authority
+    /// `None` â†’ server authority, `Some(id)` â†’ client authority
     pub owner: Option<ClientId>,
     /// Component type-names that should be replicated.
     pub replicated_components: Vec<String>,
@@ -1746,13 +1746,13 @@ impl Replicated {
     }
 }
 
-// ── dirty-flag tracker ──────────────────────────────────────────
+// â”€â”€ dirty-flag tracker â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Tracks per-entity, per-component dirty bits so only changed data
 /// is sent over the wire.
 #[derive(Debug, Clone, Default)]
 pub struct DirtyTracker {
-    /// (NetworkEntityId, component type name) → dirty
+    /// (NetworkEntityId, component type name) â†’ dirty
     dirty: HashMap<(NetworkEntityId, String), bool>,
 }
 
@@ -1779,9 +1779,9 @@ impl DirtyTracker {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  RELIABILITY LAYER — ACK / retransmission over UDP
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  RELIABILITY LAYER â€” ACK / retransmission over UDP
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Whether a given network payload requires reliable delivery.
 pub fn payload_needs_reliability(payload: &NetworkPayload) -> bool {
@@ -1825,7 +1825,7 @@ pub struct ReliabilityManager {
     pending: HashMap<u64, PendingReliable>,
     /// Set of sequences we have received and should ACK back.
     received_sequences: Vec<u64>,
-    /// Sequences already processed — used for duplicate rejection.
+    /// Sequences already processed â€” used for duplicate rejection.
     processed_sequences: std::collections::HashSet<u64>,
     /// Maximum number of remembered processed sequences (ring eviction).
     max_processed_history: usize,
@@ -1861,7 +1861,7 @@ impl ReliabilityManager {
         );
     }
 
-    /// Process incoming ACKs — remove acknowledged messages from the pending set.
+    /// Process incoming ACKs â€” remove acknowledged messages from the pending set.
     pub fn process_acks(&mut self, acks: &[u64]) {
         for seq in acks {
             self.pending.remove(seq);
@@ -1932,9 +1932,9 @@ impl Default for ReliabilityManager {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  QUIC TRANSPORT ABSTRACTION
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Transport protocol selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1946,7 +1946,7 @@ pub enum TransportProtocol {
 /// Configuration for the QUIC transport.
 #[derive(Debug, Clone)]
 pub struct QuicConfig {
-    /// Server certificate (DER encoded) for TLS — `None` to accept any cert
+    /// Server certificate (DER encoded) for TLS â€” `None` to accept any cert
     /// (useful for development / LAN play).
     pub server_cert_der: Option<Vec<u8>>,
     /// Keep-alive interval in milliseconds. 0 = disabled.
@@ -1974,11 +1974,11 @@ impl Default for QuicConfig {
 /// Stream priority / channel designation for QUIC streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicChannel {
-    /// Reliable ordered — control messages, RPCs, spawns/despawns.
+    /// Reliable ordered â€” control messages, RPCs, spawns/despawns.
     Reliable,
-    /// Unreliable unordered — entity state snapshots (uses datagrams).
+    /// Unreliable unordered â€” entity state snapshots (uses datagrams).
     Unreliable,
-    /// Reliable unordered — asset chunk transfers.
+    /// Reliable unordered â€” asset chunk transfers.
     BulkTransfer,
 }
 
@@ -2004,7 +2004,7 @@ pub trait QuicTransportBackend: Send + Sync {
     /// Start listening on `addr`.
     fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
 
-    /// Drive the QUIC state machine — must be called every frame.
+    /// Drive the QUIC state machine â€” must be called every frame.
     fn poll(&mut self) -> Vec<QuicEvent>;
 
     /// Send data on the given channel to `addr`.
@@ -2086,10 +2086,10 @@ impl QuicTransport {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  REPLICATION SYSTEM — ties Replicated + DirtyTracker +
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  REPLICATION SYSTEM â€” ties Replicated + DirtyTracker +
 //  DeltaCompressor + SnapshotInterpolation into one ECS system
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// High-level replication resource that the `replication_system` consumes.
 pub struct ReplicationResource {
@@ -2124,17 +2124,17 @@ impl ReplicationResource {
     }
 }
 
-/// Server-side replication system — runs once per network tick.
+/// Server-side replication system â€” runs once per network tick.
 ///
 /// 1. Gathers all entities with [`Replicated`] component.
 /// 2. Collects dirty transforms into delta-compressed packets.
 /// 3. Broadcasts deltas + reliable spawn/despawn messages.
 /// 4. On clients, feeds received snapshots into `SnapshotInterpolation`.
 pub fn replication_system(world: &mut crate::World) {
-    // Phase 1: read-only gather — collect all data we need before mutating.
+    // Phase 1: read-only gather â€” collect all data we need before mutating.
     let is_server = world
         .resource::<NetworkReplication>()
-        .map(|r| r.state.read().unwrap().is_server())
+        .map(|r| r.state.read().unwrap_or_else(|e| e.into_inner()).is_server())
         .unwrap_or(false);
 
     if is_server {
@@ -2145,7 +2145,7 @@ pub fn replication_system(world: &mut crate::World) {
 }
 
 fn server_replication_tick(world: &mut crate::World) {
-    // ── Gather snapshots (read-only) ─────────────────
+    // â”€â”€ Gather snapshots (read-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let snapshots: Vec<(NetworkEntityId, EntitySnapshot)> = {
         let replicated_entities: Vec<(crate::ecs::Entity, NetworkEntityId)> = world
             .query::<Replicated>()
@@ -2171,13 +2171,13 @@ fn server_replication_tick(world: &mut crate::World) {
         out
     };
 
-    // ── Gather metadata (read-only) ──────────────────
+    // â”€â”€ Gather metadata (read-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let (frame_number, client_addrs) = {
         let default = (0u64, Vec::new());
         world
             .resource::<NetworkReplication>()
             .map(|r| {
-                let state = r.state.read().unwrap();
+                let state = r.state.read().unwrap_or_else(|e| e.into_inner());
                 let addrs: Vec<SocketAddr> = state
                     .clients
                     .values()
@@ -2193,7 +2193,7 @@ fn server_replication_tick(world: &mut crate::World) {
         return;
     }
 
-    // ── Delta-compress (mutable ReplicationResource, no other borrows) ──
+    // â”€â”€ Delta-compress (mutable ReplicationResource, no other borrows) â”€â”€
     let (outgoing_messages, _has_deltas) = {
         let Some(rep_res) = world.resource_mut::<ReplicationResource>() else {
             return;
@@ -2258,7 +2258,7 @@ fn server_replication_tick(world: &mut crate::World) {
         (msgs, has_deltas)
     };
 
-    // ── Send (mutable transport, no other borrows) ───
+    // â”€â”€ Send (mutable transport, no other borrows) â”€â”€â”€
     if !outgoing_messages.is_empty() {
         if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
             for msg in &outgoing_messages {
@@ -2283,12 +2283,12 @@ fn client_interpolation_tick(world: &mut crate::World) {
         return;
     }
 
-    // Map network IDs → entity indices.
+    // Map network IDs â†’ entity indices.
     let entity_map: Vec<(u32, [f32; 3], [f32; 4])> = {
         let Some(replication) = world.resource::<NetworkReplication>() else {
             return;
         };
-        let state = replication.state.read().unwrap();
+        let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
         results
             .iter()
             .filter_map(|(net_id, pos, rot)| {
@@ -2319,9 +2319,9 @@ fn client_interpolation_tick(world: &mut crate::World) {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  ROLLBACK SYSTEM — client-side prediction + server reconciliation
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  ROLLBACK SYSTEM â€” client-side prediction + server reconciliation
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Resource holding the latest authoritative server snapshot that has not yet
 /// been reconciled. `network_system` pushes into this; `rollback_system`
@@ -2341,7 +2341,7 @@ pub fn rollback_system(world: &mut crate::World) {
     // Only clients use rollback prediction.
     let is_client = world
         .resource::<NetworkReplication>()
-        .map(|r| !r.state.read().unwrap().is_server())
+        .map(|r| !r.state.read().unwrap_or_else(|e| e.into_inner()).is_server())
         .unwrap_or(false);
 
     if !is_client {
@@ -2390,7 +2390,7 @@ pub fn rollback_system(world: &mut crate::World) {
         let Some(replication) = world.resource_mut::<NetworkReplication>() else {
             return;
         };
-        // run_rollback needs a simulate_fn — use a no-op that returns the
+        // run_rollback needs a simulate_fn â€” use a no-op that returns the
         // server entities as the "re-simulated" state. In a real game, this
         // closure would run the physics/gameplay systems for one tick.
         replication
@@ -2419,7 +2419,7 @@ pub fn rollback_system(world: &mut crate::World) {
             let Some(replication) = world.resource::<NetworkReplication>() else {
                 return;
             };
-            let state = replication.state.read().unwrap();
+            let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
             state.network_to_entity.clone()
         };
 
@@ -2460,9 +2460,9 @@ pub fn rollback_system(world: &mut crate::World) {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-//  REPLICATION DESCRIPTOR — derive(Replicate) support types
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+//  REPLICATION DESCRIPTOR â€” derive(Replicate) support types
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Mode controlling how a field is replicated across the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2471,7 +2471,7 @@ pub enum ReplicationMode {
     Replicated,
     /// Owner predicts locally, others receive authoritative value.
     OwnerPredicted,
-    /// Server-only — never sent to clients.
+    /// Server-only â€” never sent to clients.
     ServerOnly,
 }
 
@@ -2500,7 +2500,7 @@ pub trait ReplicateDescriptor: Sized {
     fn replicate_deserialize(data: &[u8]) -> Option<Self>;
 }
 
-// ── Lag compensation ────────────────────────────────────────────
+// â”€â”€ Lag compensation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Ring buffer storing a rolling history of values for lag compensation.
 ///
@@ -2573,9 +2573,9 @@ impl<T: Clone> HistoryBuffer<T> {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  SERVER-SIDE LAG COMPENSATION (rewind & hit verification)
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Stores position history for all networked entities on the server.
 /// Used for server-side lag compensation: when a client claims a hit,
@@ -2627,11 +2627,11 @@ impl LagCompensationManager {
 
     /// Verify a hit against a rewound hitbox.
     ///
-    /// `claimed_tick` — the server tick the client claims the shot happened.
-    /// `target`       — the entity the client claims to have hit.
-    /// `shot_origin`  — world-space origin of the shot.
-    /// `shot_dir`     — normalised direction of the shot.
-    /// `hitbox_radius`— radius around the entity position to check.
+    /// `claimed_tick` â€” the server tick the client claims the shot happened.
+    /// `target`       â€” the entity the client claims to have hit.
+    /// `shot_origin`  â€” world-space origin of the shot.
+    /// `shot_dir`     â€” normalised direction of the shot.
+    /// `hitbox_radius`â€” radius around the entity position to check.
     ///
     /// Returns `true` if the shot intersects the sphere at the rewound position.
     pub fn verify_hit(
@@ -2677,9 +2677,9 @@ impl LagCompensationManager {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 //  RELAY SERVER SCAFFOLD
-// ════════════════════════════════════════════════════════════════════
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 /// Configuration for a lightweight relay server that forwards packets
 /// between clients without running game simulation (for NAT traversal).
@@ -2696,14 +2696,14 @@ pub struct RelayServerConfig {
 impl Default for RelayServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr: "0.0.0.0:7878".parse().expect("valid default relay addr"),
+            bind_addr: "0.0.0.0:7878".parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], 7878))),
             max_sessions: 256,
             session_timeout_secs: 300,
         }
     }
 }
 
-/// A session on the relay server — tracks two endpoints forwarding to each other.
+/// A session on the relay server â€” tracks two endpoints forwarding to each other.
 #[derive(Debug, Clone)]
 pub struct RelaySession {
     pub id: u64,

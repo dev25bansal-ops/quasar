@@ -488,31 +488,30 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
         let result = lua.create_table()?;
         let mut idx = 1u32;
 
-        match component_data.get::<Option<LuaTable>>(component_name.as_str())? {
-            Some(entities_table) => {
-                for pair in entities_table.pairs::<LuaValue, LuaTable>() {
-                    let (key, fields) = pair?;
-                    let row = lua.create_table()?;
-                    // Copy entity id.
-                    match key {
-                        LuaValue::Integer(i) => row.set("entity", i)?,
-                        LuaValue::String(s) => {
-                            if let Ok(id) = s.to_str()?.parse::<u32>() {
-                                row.set("entity", id)?;
-                            }
+        if let Some(entities_table) =
+            component_data.get::<Option<LuaTable>>(component_name.as_str())?
+        {
+            for pair in entities_table.pairs::<LuaValue, LuaTable>() {
+                let (key, fields) = pair?;
+                let row = lua.create_table()?;
+                // Copy entity id.
+                match key {
+                    LuaValue::Integer(i) => row.set("entity", i)?,
+                    LuaValue::String(s) => {
+                        if let Ok(id) = s.to_str()?.parse::<u32>() {
+                            row.set("entity", id)?;
                         }
-                        _ => {}
                     }
-                    // Copy all fields from the component.
-                    for pair in fields.pairs::<String, LuaValue>() {
-                        let (k, v) = pair?;
-                        row.set(k, v)?;
-                    }
-                    result.set(idx, row)?;
-                    idx += 1;
+                    _ => {}
                 }
+                // Copy all fields from the component.
+                for pair in fields.pairs::<String, LuaValue>() {
+                    let (k, v) = pair?;
+                    row.set(k, v)?;
+                }
+                result.set(idx, row)?;
+                idx += 1;
             }
-            None => {}
         }
 
         Ok(result)
@@ -521,22 +520,25 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
 
     // quasar.query_entities(component_name) -> {entity_id, entity_id, ...}
     // Returns just the entity ids (cheaper than full query).
-    let query_entities_fn = lua.create_function(|lua, component_name: String| -> LuaResult<LuaTable> {
-        let quasar: LuaTable = lua.globals().get("quasar")?;
-        let component_data: LuaTable = quasar.get("_component_data")?;
-        let result = lua.create_table()?;
-        let mut idx = 1u32;
+    let query_entities_fn =
+        lua.create_function(|lua, component_name: String| -> LuaResult<LuaTable> {
+            let quasar: LuaTable = lua.globals().get("quasar")?;
+            let component_data: LuaTable = quasar.get("_component_data")?;
+            let result = lua.create_table()?;
+            let mut idx = 1u32;
 
-        if let Some(entities_table) = component_data.get::<Option<LuaTable>>(component_name.as_str())? {
-            for pair in entities_table.pairs::<LuaValue, LuaValue>() {
-                let (key, _) = pair?;
-                result.set(idx, key)?;
-                idx += 1;
+            if let Some(entities_table) =
+                component_data.get::<Option<LuaTable>>(component_name.as_str())?
+            {
+                for pair in entities_table.pairs::<LuaValue, LuaValue>() {
+                    let (key, _) = pair?;
+                    result.set(idx, key)?;
+                    idx += 1;
+                }
             }
-        }
 
-        Ok(result)
-    })?;
+            Ok(result)
+        })?;
     quasar.set("query_entities", query_entities_fn)?;
 
     // quasar.has_component(entity_id, component_name) -> bool
@@ -572,16 +574,15 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("add_component", add_component_fn)?;
 
     // quasar.remove_component(entity_id, component_name)
-    let remove_component_fn = lua.create_function(
-        |lua, (entity_id, component_name): (u32, String)| {
+    let remove_component_fn =
+        lua.create_function(|lua, (entity_id, component_name): (u32, String)| {
             let cmd = lua.create_table()?;
             cmd.set("type", "remove_component")?;
             cmd.set("entity", entity_id)?;
             cmd.set("component", component_name)?;
             push_command(lua, cmd)?;
             Ok(())
-        },
-    )?;
+        })?;
     quasar.set("remove_component", remove_component_fn)?;
 
     // ── Event system ───────────────────────────────────────────────
@@ -591,8 +592,8 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
 
     // quasar.on_event(event_name, handler_fn)
     // Register a callback for a named event.
-    let on_event_fn = lua.create_function(
-        |lua, (event_name, handler): (String, LuaFunction)| {
+    let on_event_fn =
+        lua.create_function(|lua, (event_name, handler): (String, LuaFunction)| {
             let quasar: LuaTable = lua.globals().get("quasar")?;
             let handlers: LuaTable = quasar.get("_event_handlers")?;
             let list: LuaTable = match handlers.get::<Option<LuaTable>>(event_name.as_str())? {
@@ -606,29 +607,26 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
             let len = list.len()?;
             list.set(len + 1, handler)?;
             Ok(())
-        },
-    )?;
+        })?;
     quasar.set("on_event", on_event_fn)?;
 
     // quasar.emit_event(event_name, data_table_or_nil)
     // Fire an event, calling all registered handlers.
-    let emit_event_fn = lua.create_function(
-        |lua, (event_name, data): (String, LuaValue)| {
-            let quasar: LuaTable = lua.globals().get("quasar")?;
-            let handlers: LuaTable = quasar.get("_event_handlers")?;
-            if let Some(list) = handlers.get::<Option<LuaTable>>(event_name.as_str())? {
-                let len = list.len()?;
-                for i in 1..=len {
-                    if let Ok(handler) = list.get::<LuaFunction>(i) {
-                        if let Err(e) = handler.call::<()>(data.clone()) {
-                            log::error!("[lua] Event '{}' handler error: {}", event_name, e);
-                        }
+    let emit_event_fn = lua.create_function(|lua, (event_name, data): (String, LuaValue)| {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let handlers: LuaTable = quasar.get("_event_handlers")?;
+        if let Some(list) = handlers.get::<Option<LuaTable>>(event_name.as_str())? {
+            let len = list.len()?;
+            for i in 1..=len {
+                if let Ok(handler) = list.get::<LuaFunction>(i) {
+                    if let Err(e) = handler.call::<()>(data.clone()) {
+                        log::error!("[lua] Event '{}' handler error: {}", event_name, e);
                     }
                 }
             }
-            Ok(())
-        },
-    )?;
+        }
+        Ok(())
+    })?;
     quasar.set("emit_event", emit_event_fn)?;
 
     Ok(())

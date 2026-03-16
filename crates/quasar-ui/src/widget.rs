@@ -8,8 +8,10 @@ pub struct WidgetId(pub u32);
 
 /// Content inside a UI node.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum UiContent {
     /// No content — container only.
+    #[default]
     None,
     /// Text label.
     Text(String),
@@ -17,11 +19,6 @@ pub enum UiContent {
     Image(String),
 }
 
-impl Default for UiContent {
-    fn default() -> Self {
-        Self::None
-    }
-}
 
 /// UI interaction state.
 #[derive(Debug, Clone, Copy, Default)]

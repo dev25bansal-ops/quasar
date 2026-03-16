@@ -57,20 +57,19 @@ pub struct Renderer {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_uniform: CameraUniform,
-    pub material_bind_group_layout: wgpu::BindGroupLayout,
+    pub material_texture_bind_group_layout: wgpu::BindGroupLayout,
     pub light_buffer: wgpu::Buffer,
-    pub light_bind_group: wgpu::BindGroup,
-    pub light_bind_group_layout: wgpu::BindGroupLayout,
+    pub lighting_bind_group: wgpu::BindGroup,
+    pub lighting_bind_group_layout: wgpu::BindGroupLayout,
     pub light_uniform: LightsUniform,
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
     /// Default white material used when no material is specified.
     pub default_material: Material,
     /// Default 1×1 white texture used when no texture is specified.
     pub default_texture: Texture,
     /// Textures that can be used by entities.
     pub textures: Vec<Texture>,
-    /// Texture bind groups for quick access.
-    pub texture_bind_groups: Vec<wgpu::BindGroup>,
+    /// Material + texture bind groups for quick access.
+    pub material_texture_bind_groups: Vec<wgpu::BindGroup>,
     /// Minimum uniform buffer offset alignment (bytes), from device limits.
     pub uniform_alignment: u32,
     /// Instance data buffer for GPU instancing (model matrices).
@@ -211,22 +210,119 @@ impl Renderer {
         // -- Depth texture --
         let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height, render_config.msaa_sample_count);
 
-        // -- Material + Light + Texture bind group layouts --
-        let material_bind_group_layout = Material::bind_group_layout(&device);
-        let light_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Light Bind Group Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let texture_bind_group_layout = Texture::bind_group_layout(&device);
+        // -- Create merged material + texture bind group layout --
+        let material_texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material + Texture Bind Group Layout"),
+                entries: &[
+                    // Material uniform (binding 0)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Albedo texture (binding 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Albedo sampler (binding 2)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        // -- Create lighting (light + shadow) bind group layout --
+        let lighting_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Lighting Bind Group Layout"),
+                entries: &[
+                    // Lights storage (binding 0)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Shadow uniform (binding 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Shadow map texture (binding 2)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Depth,
+                        },
+                        count: None,
+                    },
+                    // Shadow comparison sampler (binding 3)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                        count: None,
+                    },
+                    // Shadow depth sampler (binding 4)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    // CSM cascades storage (binding 5)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // CSM cascade shadow texture array (binding 6)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            sample_type: wgpu::TextureSampleType::Depth,
+                        },
+                        count: None,
+                    },
+                ],
+            });
 
         // -- Light storage buffer --
         let light_uniform = LightsUniform::default();
@@ -236,9 +332,12 @@ impl Renderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Light Bind Group"),
-            layout: &light_bind_group_layout,
+        
+        // -- Lighting bind group (merged light + shadow) --
+        // Note: Shadow resources will be added later when shadow map is created
+        let lighting_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lighting Bind Group"),
+            layout: &lighting_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -250,12 +349,13 @@ impl Renderer {
         });
 
         // -- Default material (white, roughness=0.5, metallic=0) --
+        // We'll create the material + texture bind group later
         let default_material =
-            Material::new(&device, &material_bind_group_layout, "Default");
+            Material::new(&device, &material_texture_bind_group_layout, "Default");
 
         // -- Default 1×1 white texture --
         let default_texture =
-            Texture::white(&device, &queue, &texture_bind_group_layout);
+            Texture::white(&device, &queue, &material_texture_bind_group_layout);
 
         // -- Instance buffer for GPU instancing --
         let max_instances = MAX_RENDER_OBJECTS;
@@ -294,15 +394,51 @@ impl Renderer {
             }],
         });
 
+        // -- Create merged material + texture bind group layout --
+        let material_texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material + Texture Bind Group Layout"),
+                entries: &[
+                    // Material uniform (binding 0)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    // Albedo texture (binding 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Albedo sampler (binding 2)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
         // -- Render pipeline --
         let shader_source = include_str!("../../../assets/shaders/basic.wgsl");
         let render_pipeline = pipeline::create_render_pipeline(
             &device,
             format,
             &camera_bind_group_layout,
-            &material_bind_group_layout,
-            &light_bind_group_layout,
-            &texture_bind_group_layout,
+            &material_texture_bind_group_layout,
+            &lighting_bind_group_layout,
             shader_source,
         );
 
@@ -325,16 +461,15 @@ impl Renderer {
             camera_bind_group,
             camera_bind_group_layout,
             camera_uniform,
-            material_bind_group_layout,
+            material_texture_bind_group_layout,
             light_buffer,
-            light_bind_group,
-            light_bind_group_layout,
+            lighting_bind_group,
+            lighting_bind_group_layout,
             light_uniform,
-            texture_bind_group_layout,
             default_material,
             default_texture,
             textures: Vec::new(),
-            texture_bind_groups: Vec::new(),
+            material_texture_bind_groups: Vec::new(),
             uniform_alignment,
             instance_buffer,
             instance_bind_group,
@@ -682,7 +817,7 @@ impl Renderer {
 
         for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
             let mesh_key = *mesh as *const Mesh as usize;
-            let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+            let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
@@ -691,8 +826,8 @@ impl Renderer {
                 Batch {
                     mesh: unsafe { &*(*mesh as *const Mesh) },
                     indices: Vec::new(),
-                    material: mat_bg.map(|bg| unsafe { &*(&*bg as *const wgpu::BindGroup) }),
-                    texture: unsafe { &*(&*texture_bg as *const wgpu::BindGroup) },
+                    material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
+                    texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
                 }
             });
             entry.indices.push(i);
@@ -896,7 +1031,7 @@ impl Renderer {
 
         for (mesh, model, mat_bg, tex_index) in objects.iter() {
             let mesh_key = *mesh as *const Mesh as usize;
-            let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+            let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
@@ -1053,7 +1188,7 @@ impl Renderer {
 
                 for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
                     let mesh_key = *mesh as *const Mesh as usize;
-                    let mat_key = mat_bg.map(|bg| &*bg as *const wgpu::BindGroup as usize)
+                    let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
                         .unwrap_or(usize::MAX);
                     let tex_key = tex_index.unwrap_or(0) as usize;
 
@@ -1062,8 +1197,8 @@ impl Renderer {
                         Batch {
                             mesh: unsafe { &*(*mesh as *const Mesh) },
                             indices: Vec::new(),
-                            material: mat_bg.map(|bg| unsafe { &*(&*bg as *const wgpu::BindGroup) }),
-                            texture: unsafe { &*(&*texture_bg as *const wgpu::BindGroup) },
+                            material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
+                            texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
                         }
                     });
                     entry.indices.push(i);

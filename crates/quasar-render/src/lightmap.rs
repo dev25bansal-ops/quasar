@@ -638,8 +638,8 @@ pub fn build_lbvh(tris: &[GpuBakerTriangle]) -> Vec<GpuBvhNode> {
         }
 
         // Find highest differing bit between first and last Morton code.
-        let first_code = sorted.first().unwrap().1;
-        let last_code = sorted.last().unwrap().1;
+        let first_code = match sorted.first() { Some(f) => f.1, None => return node_idx };
+        let last_code = match sorted.last() { Some(l) => l.1, None => return node_idx };
         let diff = first_code ^ last_code;
 
         let split = if diff == 0 {
@@ -889,8 +889,8 @@ impl GpuLightmapBaker {
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
-            let wg_x = (config.width + 7) / 8;
-            let wg_y = (config.height + 7) / 8;
+            let wg_x = config.width.div_ceil(8);
+            let wg_y = config.height.div_ceil(8);
             cpass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 
@@ -1140,8 +1140,8 @@ impl GpuPathTraceBaker {
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
-            let wg_x = (config.width + 7) / 8;
-            let wg_y = (config.height + 7) / 8;
+            let wg_x = config.width.div_ceil(8);
+            let wg_y = config.height.div_ceil(8);
             cpass.dispatch_workgroups(wg_x, wg_y, 1);
         }
 

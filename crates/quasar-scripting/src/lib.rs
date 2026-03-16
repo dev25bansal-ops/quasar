@@ -62,8 +62,8 @@ impl ScriptEngine {
 
         // Setup file watcher.
         let (event_tx, event_rx) = channel();
-        let watcher: RecommendedWatcher = Watcher::new(
-            move |res: Result<Event, _>| {
+        let watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
                 if let Ok(event) = res {
                     if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                         if let Some(path) = event.paths.first() {
@@ -71,10 +71,11 @@ impl ScriptEngine {
                         }
                     }
                 }
-            },
-            notify::Config::default(),
-        )
-        .expect("Failed to create file watcher");
+            })
+            .map_err(|e| {
+                log::error!("Failed to create file watcher: {}", e);
+                mlua::Error::ExternalError(std::sync::Arc::new(e))
+            })?;
 
         log::info!("Lua scripting engine initialized with file watching");
 
@@ -227,7 +228,12 @@ impl ScriptEngine {
     /// This captures the current "state" so it can be restored after a reload.
     pub fn snapshot_globals(&self) -> Vec<(String, String)> {
         let mut snapshot = Vec::new();
-        if let Ok(globals) = self.lua.globals().pairs::<String, LuaValue>().collect::<Result<Vec<_>, _>>() {
+        if let Ok(globals) = self
+            .lua
+            .globals()
+            .pairs::<String, LuaValue>()
+            .collect::<Result<Vec<_>, _>>()
+        {
             for (key, value) in globals {
                 // Skip built-in tables and functions — only snapshot simple types.
                 match &value {
@@ -288,8 +294,8 @@ impl ScriptComponent {
     }
 }
 
-pub use plugin::{ScriptingPlugin, ScriptingResource};
 pub use component_registry::{ComponentDescriptor, ComponentRegistry};
+pub use plugin::{ScriptingPlugin, ScriptingResource};
 pub use wasm_scripting::ScriptingBridge;
 #[cfg(feature = "wasm")]
-pub use wasm_scripting::{WasmScriptEngine, WasmHostApi};
+pub use wasm_scripting::{WasmHostApi, WasmScriptEngine};

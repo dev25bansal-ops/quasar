@@ -213,8 +213,8 @@ impl SvtSystem {
             pool: TilePool::new(max_tiles),
             streamer: TileStreamer::new(tile_base_path),
             frame: 0,
-            virtual_tiles_x: (virtual_width + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
-            virtual_tiles_y: (virtual_height + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
+            virtual_tiles_x: virtual_width.div_ceil(SVT_TILE_SIZE),
+            virtual_tiles_y: virtual_height.div_ceil(SVT_TILE_SIZE),
         }
     }
 
@@ -427,8 +427,8 @@ impl VirtualTexture2D {
         let w = (self.width >> mip).max(1);
         let h = (self.height >> mip).max(1);
         (
-            (w + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
-            (h + SVT_TILE_SIZE - 1) / SVT_TILE_SIZE,
+            w.div_ceil(SVT_TILE_SIZE),
+            h.div_ceil(SVT_TILE_SIZE),
         )
     }
 }

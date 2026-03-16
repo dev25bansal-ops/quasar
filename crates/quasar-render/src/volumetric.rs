@@ -606,9 +606,9 @@ impl VolumetricFogPass {
             cpass.set_bind_group(0, &self.froxel_bind_group, &[]);
             // Workgroup size 4×4×4 → dispatch ceil(W/4) × ceil(H/4) × ceil(D/4)
             cpass.dispatch_workgroups(
-                (FROXEL_WIDTH + 3) / 4,
-                (FROXEL_HEIGHT + 3) / 4,
-                (FROXEL_DEPTH + 3) / 4,
+                FROXEL_WIDTH.div_ceil(4),
+                FROXEL_HEIGHT.div_ceil(4),
+                FROXEL_DEPTH.div_ceil(4),
             );
         }
         // Pass 2: front-to-back accumulation along depth axis.
@@ -621,8 +621,8 @@ impl VolumetricFogPass {
             cpass.set_bind_group(0, &self.froxel_bind_group, &[]);
             // Each workgroup handles one column (x, y) iterating over depth.
             cpass.dispatch_workgroups(
-                (FROXEL_WIDTH + 7) / 8,
-                (FROXEL_HEIGHT + 7) / 8,
+                FROXEL_WIDTH.div_ceil(8),
+                FROXEL_HEIGHT.div_ceil(8),
                 1,
             );
         }

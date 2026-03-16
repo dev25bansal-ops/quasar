@@ -249,7 +249,7 @@ impl GpuCullPass {
         });
         cpass.set_pipeline(&self.pipeline);
         cpass.set_bind_group(0, bind_group, &[]);
-        cpass.dispatch_workgroups((num_objects + 63) / 64, 1, 1);
+        cpass.dispatch_workgroups(num_objects.div_ceil(64), 1, 1);
     }
 }
 
@@ -352,7 +352,7 @@ impl HiZBuffer {
 
         // Successive 2× downsample using max.
         for _ in 1..HIZ_MIP_LEVELS {
-            let prev = mips.last().unwrap();
+            let Some(prev) = mips.last() else { break };
             let mw = (prev.width / 2).max(1);
             let mh = (prev.height / 2).max(1);
             let mut data = vec![0.0_f32; (mw * mh) as usize];
@@ -1055,7 +1055,7 @@ impl GpuHiZBuilder {
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &bg, &[]);
-            cpass.dispatch_workgroups((w + 7) / 8, (h + 7) / 8, 1);
+            cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
     }
 }

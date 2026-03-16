@@ -42,7 +42,9 @@ impl Default for Color {
 
 /// Anchor point for absolute positioning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Anchor {
+    #[default]
     TopLeft,
     TopCenter,
     TopRight,
@@ -54,41 +56,30 @@ pub enum Anchor {
     BottomRight,
 }
 
-impl Default for Anchor {
-    fn default() -> Self {
-        Self::TopLeft
-    }
-}
 
 /// Flex direction for child layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum FlexDirection {
     Row,
+    #[default]
     Column,
 }
 
-impl Default for FlexDirection {
-    fn default() -> Self {
-        Self::Column
-    }
-}
 
 /// A size dimension that can be fixed or flexible.
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub enum SizeDimension {
     /// Fixed pixel size.
     Px(f32),
     /// Percentage of parent.
     Percent(f32),
     /// Fit to content.
+    #[default]
     Auto,
 }
 
-impl Default for SizeDimension {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 /// Styling for a UI node.
 #[derive(Debug, Clone)]

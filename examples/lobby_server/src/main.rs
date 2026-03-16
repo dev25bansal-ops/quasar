@@ -155,7 +155,7 @@ async fn handle_get_session(session_id_str: &str, sessions: SessionStore) -> Res
     let store = sessions.read().await;
     let session = store
         .get(&SessionId(session_id))
-        .ok_or_else(|| LobbyError::SessionNotFound(SessionId(session_id)))?;
+        .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
     serde_json::to_string(session).map_err(|e| LobbyError::Serialization(e.to_string()))
 }
 
@@ -234,7 +234,7 @@ async fn handle_join_session(
     let mut store = sessions.write().await;
     let session = store
         .get_mut(&SessionId(session_id))
-        .ok_or_else(|| LobbyError::SessionNotFound(SessionId(session_id)))?;
+        .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
 
     if session.player_count >= session.config.max_players {
         return Err(LobbyError::SessionFull(SessionId(session_id)));
@@ -293,7 +293,7 @@ async fn handle_leave_session(
     let mut store = sessions.write().await;
     let session = store
         .get_mut(&SessionId(session_id))
-        .ok_or_else(|| LobbyError::SessionNotFound(SessionId(session_id)))?;
+        .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
 
     session.players.retain(|p| p.id != request.player_id);
     session.player_count = session.players.len() as u32;
@@ -312,7 +312,7 @@ async fn handle_destroy_session(
     let mut store = sessions.write().await;
     store
         .remove(&SessionId(session_id))
-        .ok_or_else(|| LobbyError::SessionNotFound(SessionId(session_id)))?;
+        .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
 
     Ok("{}".to_string())
 }

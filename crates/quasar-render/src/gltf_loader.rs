@@ -70,8 +70,8 @@ pub fn load_gltf(path: impl AsRef<Path>) -> Result<Vec<MeshData>, String> {
     for mesh in gltf.meshes() {
         for primitive in mesh.primitives() {
             let reader = primitive.reader(|buffer| {
-                let start = buffer.index() as usize;
-                let end = start + buffer.length() as usize;
+                let start = buffer.index();
+                let end = start + buffer.length();
                 if end <= contents.len() {
                     Some(&contents[start..end])
                 } else {

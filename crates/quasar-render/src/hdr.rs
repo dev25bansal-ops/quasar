@@ -51,20 +51,17 @@ impl HdrRenderTarget {
 
 /// Tonemapping algorithm selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Tonemapping {
     /// Reinhard: L = L / (1 + L). Simple but can flatten contrast.
     Reinhard,
     /// ACES Filmic: cinematic look with good highlight rolloff.
+    #[default]
     AcesFilmic,
     /// No tonemapping (passthrough).
     None,
 }
 
-impl Default for Tonemapping {
-    fn default() -> Self {
-        Self::AcesFilmic
-    }
-}
 
 /// Post-process pass for applying tonemapping.
 pub struct TonemappingPass {

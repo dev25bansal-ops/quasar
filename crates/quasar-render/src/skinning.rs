@@ -302,14 +302,14 @@ impl SkinnedMesh {
     pub fn new(device: &wgpu::Device, vertices: &[SkinnedVertex], indices: &[u32]) -> Self {
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Skinned Mesh Vertex Buffer"),
-            size: (vertices.len() * std::mem::size_of::<SkinnedVertex>()) as u64,
+            size: std::mem::size_of_val(vertices) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Skinned Mesh Index Buffer"),
-            size: (indices.len() * std::mem::size_of::<u32>()) as u64,
+            size: std::mem::size_of_val(indices) as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });

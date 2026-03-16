@@ -364,12 +364,9 @@ impl FontAtlas {
             });
 
             self.texture = Some(texture);
-            self.texture_view = Some(
-                self.texture
-                    .as_ref()
-                    .unwrap()
-                    .create_view(&wgpu::TextureViewDescriptor::default()),
-            );
+            self.texture_view = self.texture
+                .as_ref()
+                .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         }
 
         x_offset = 0;
@@ -477,7 +474,7 @@ impl TextRenderer {
             if let Some(glyph) = self.font_atlas.get_glyph(ch) {
                 let sprite = Sprite {
                     texture_path: String::from("__font_atlas__"),
-                    rect: glyph.texture_rect.clone(),
+                    rect: glyph.texture_rect,
                     z_index: 0.0,
                     color,
                     rotation: 0.0,

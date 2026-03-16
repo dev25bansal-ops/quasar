@@ -296,7 +296,7 @@ impl ApplicationHandler for QuasarRunner {
                         .resource::<TimeSnapshot>()
                         .map(|t| t.frame_count)
                         .unwrap_or(0);
-                    if frame_count % 60 == 0 {
+                    if frame_count.is_multiple_of(60) {
                         state.editor.check_asset_changes();
                     }
                 }
@@ -629,6 +629,12 @@ impl ApplicationHandler for QuasarRunner {
                                         .state
                                         .execute_command(command, &mut self.app.world);
                                 }
+
+                                // Apply physics from logic graph
+                                state.editor.apply_logic_graph_physics(&mut self.app.world);
+
+                                // Play audio from logic graph
+                                state.editor.play_logic_graph_audio(&mut self.app.world);
                             }
 
                             // Handle editor actions (Play/Pause/Stop/Undo/Redo)

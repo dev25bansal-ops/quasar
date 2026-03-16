@@ -295,7 +295,7 @@ impl ShadowMap {
 
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let mut data = vec![0u8; uniform_size];
-        for (_i, (_, model)) in objects.iter().enumerate() {
+        for (_, model) in objects.iter() {
             let mut uniform = CameraUniform::new();
             uniform.view_proj = light_view_proj.to_cols_array_2d();
             uniform.model = model.to_cols_array_2d();
@@ -337,7 +337,7 @@ impl ShadowMap {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
-            for (_i, (mesh, _)) in objects.iter().enumerate() {
+            for (mesh, _) in objects.iter() {
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);

@@ -128,7 +128,7 @@ impl Texture {
             1,
             Some("White Texture"),
         )
-        .expect("Failed to create white texture")
+        .unwrap_or_else(|_| panic!("Failed to create white texture"))
     }
 
     /// Decode a texture from encoded image bytes (PNG, JPEG, etc.) without

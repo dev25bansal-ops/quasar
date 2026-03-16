@@ -319,7 +319,7 @@ impl<T: Component> QueryFilter for FilterChanged<T> {
         let since = world.active_system_last_run();
         world
             .change_tick_for(TypeId::of::<T>(), entity_index)
-            .map_or(false, |tick| tick > since)
+            .is_some_and(|tick| tick > since)
     }
 }
 
@@ -330,7 +330,7 @@ impl<T: Component> QueryFilter for FilterAdded<T> {
     fn matches(world: &World, entity_index: u32) -> bool {
         world
             .change_tick_for(TypeId::of::<T>(), entity_index)
-            .map_or(false, |tick| tick == world.current_tick::<T>())
+            .is_some_and(|tick| tick == world.current_tick::<T>())
     }
 }
 
@@ -378,6 +378,12 @@ impl<F1: QueryFilter, F2: QueryFilter, F3: QueryFilter, F4: QueryFilter> QueryFi
 pub struct QueryState<Q: WorldQuery, F: QueryFilter = ()> {
     _q: PhantomData<Q>,
     _f: PhantomData<F>,
+}
+
+impl<Q: WorldQuery, F: QueryFilter> Default for QueryState<Q, F> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<Q: WorldQuery, F: QueryFilter> QueryState<Q, F> {

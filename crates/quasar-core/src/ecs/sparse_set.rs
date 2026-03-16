@@ -106,6 +106,7 @@ pub trait ErasedSparseSet: Any + Send + Sync {
     fn remove_entity(&mut self, entity: Entity);
     fn contains_entity(&self, entity: Entity) -> bool;
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool { self.len() == 0 }
 }
 
 impl<T: 'static + Send + Sync> ErasedSparseSet for SparseSet<T> {
@@ -141,12 +142,15 @@ impl SparseSetStorage {
     /// Get or create a typed sparse set for component T.
     pub fn get_or_create<T: 'static + Send + Sync>(&mut self) -> &mut SparseSet<T> {
         let type_id = TypeId::of::<T>();
-        self.sets
+        match self.sets
             .entry(type_id)
             .or_insert_with(|| Box::new(SparseSet::<T>::new()))
             .as_any_mut()
             .downcast_mut::<SparseSet<T>>()
-            .expect("type mismatch in sparse set storage")
+        {
+            Some(set) => set,
+            None => unreachable!("type mismatch in sparse set storage"),
+        }
     }
 
     /// Get a typed sparse set for component T (read-only).
@@ -176,7 +180,7 @@ impl SparseSetStorage {
 
     /// Check if a specific component type is stored as a sparse set for this entity.
     pub fn contains<T: 'static + Send + Sync>(&self, entity: Entity) -> bool {
-        self.get::<T>().map_or(false, |s| s.contains(entity))
+        self.get::<T>().is_some_and(|s| s.contains(entity))
     }
 
     /// Check if a type is registered as a sparse set.

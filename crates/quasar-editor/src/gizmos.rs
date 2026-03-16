@@ -590,7 +590,7 @@ pub fn pick_entity<E: Copy>(
 
     for (id, aabb) in entities {
         if let Some(t) = ray_aabb(ray_origin, inv_dir, &aabb) {
-            if best.map_or(true, |(_, bt)| t < bt) {
+            if best.is_none_or(|(_, bt)| t < bt) {
                 best = Some((id, t));
             }
         }

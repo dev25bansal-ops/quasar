@@ -41,6 +41,12 @@ pub struct RelationGraph {
     reverse: HashMap<(TypeId, u32), Vec<Entity>>,
 }
 
+impl Default for RelationGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RelationGraph {
     pub fn new() -> Self {
         Self {

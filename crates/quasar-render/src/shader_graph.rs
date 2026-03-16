@@ -1,4 +1,4 @@
-//! Shader graph — node-based visual material authoring.
+//! Shader graph â€” node-based visual material authoring.
 //!
 //! Provides:
 //! - [`ShaderNode`] / [`ShaderNodeKind`]: individual graph nodes (texture sample,
@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-// ── Validation / diagnostics ───────────────────────────────────────
+// â”€â”€ Validation / diagnostics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A single diagnostic message from graph validation or compilation.
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub struct CompileResult {
     pub success: bool,
 }
 
-// ── Node types ─────────────────────────────────────────────────────
+// â”€â”€ Node types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Unique node identifier within a graph.
 pub type NodeId = u32;
@@ -53,30 +53,30 @@ pub type SlotIndex = u32;
 /// The kinds of node available in the shader graph.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ShaderNodeKind {
-    // ─── Inputs ───
+    // â”€â”€â”€ Inputs â”€â”€â”€
     /// Mesh UV coordinate set (index).
     TexCoord { set: u32 },
     /// Camera-space position of the fragment.
     WorldPosition,
     /// World-space normal.
     WorldNormal,
-    /// View direction (camera → fragment).
+    /// View direction (camera â†’ fragment).
     ViewDirection,
     /// Time (seconds) from engine clock.
     Time,
 
-    // ─── Constants ───
+    // â”€â”€â”€ Constants â”€â”€â”€
     ConstFloat(f32),
     ConstVec2([f32; 2]),
     ConstVec3([f32; 3]),
     ConstVec4([f32; 4]),
     ConstColor([f32; 4]),
 
-    // ─── Texture ───
+    // â”€â”€â”€ Texture â”€â”€â”€
     /// Sample a 2D texture. Input 0 = UV (vec2).
     TextureSample { binding_slot: u32 },
 
-    // ─── Math ───
+    // â”€â”€â”€ Math â”€â”€â”€
     Add,
     Subtract,
     Multiply,
@@ -104,34 +104,34 @@ pub enum ShaderNodeKind {
     /// One minus value.
     OneMinus,
 
-    // ─── Interpolation ───
+    // â”€â”€â”€ Interpolation â”€â”€â”€
     /// Lerp(a, b, t). Inputs: 0=a, 1=b, 2=t.
     Lerp,
     /// Smoothstep(edge0, edge1, x). Inputs: 0=edge0, 1=edge1, 2=x.
     Smoothstep,
 
-    // ─── Comparison / branch ───
-    /// If(condition > threshold) → A else B.
+    // â”€â”€â”€ Comparison / branch â”€â”€â”€
+    /// If(condition > threshold) â†’ A else B.
     /// Inputs: 0=condition(f32), 1=threshold(f32), 2=A, 3=B.
     If,
 
-    // ─── Fresnel ───
+    // â”€â”€â”€ Fresnel â”€â”€â”€
     /// Schlick Fresnel. Inputs: 0=normal, 1=view, 2=exponent(f32).
     Fresnel,
 
-    // ─── Split / combine ───
-    /// Split vec4 → (x, y, z, w).
+    // â”€â”€â”€ Split / combine â”€â”€â”€
+    /// Split vec4 â†’ (x, y, z, w).
     SplitVec4,
-    /// Combine (x, y, z, w) → vec4.
+    /// Combine (x, y, z, w) â†’ vec4.
     CombineVec4,
 
-    // ─── Material outputs ───
-    /// The final PBR output — inputs map to base_color, normal, roughness,
+    // â”€â”€â”€ Material outputs â”€â”€â”€
+    /// The final PBR output â€” inputs map to base_color, normal, roughness,
     /// metallic, emissive, alpha.
     PbrOutput,
 }
 
-// ── Node ───────────────────────────────────────────────────────────
+// â”€â”€ Node â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A single node in the shader graph.
 #[derive(Debug, Clone)]
@@ -208,7 +208,7 @@ impl ShaderNode {
     }
 }
 
-// ── Connection ─────────────────────────────────────────────────────
+// â”€â”€ Connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A directed edge from one node's output slot to another's input slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -219,9 +219,9 @@ pub struct ShaderConnection {
     pub to_slot: SlotIndex,
 }
 
-// ── Graph ──────────────────────────────────────────────────────────
+// â”€â”€ Graph â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-/// The shader graph — a DAG of [`ShaderNode`]s connected by [`ShaderConnection`]s.
+/// The shader graph â€” a DAG of [`ShaderNode`]s connected by [`ShaderConnection`]s.
 #[derive(Debug, Clone)]
 pub struct ShaderGraph {
     pub name: String,
@@ -248,7 +248,7 @@ impl ShaderGraph {
         id
     }
 
-    /// Connect `from_node:from_slot` → `to_node:to_slot`.
+    /// Connect `from_node:from_slot` â†’ `to_node:to_slot`.
     pub fn connect(
         &mut self,
         from_node: NodeId,
@@ -296,7 +296,7 @@ impl ShaderGraph {
     }
 }
 
-// ── Compiler ───────────────────────────────────────────────────────
+// â”€â”€ Compiler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Compiles a [`ShaderGraph`] into a WGSL fragment shader string.
 pub struct ShaderGraphCompiler;
@@ -312,9 +312,9 @@ impl ShaderGraphCompiler {
         let mut wgsl = String::with_capacity(4096);
 
         // Header
-        writeln!(wgsl, "// Auto-generated by ShaderGraphCompiler").unwrap();
-        writeln!(wgsl, "// Graph: {}", graph.name).unwrap();
-        writeln!(wgsl).unwrap();
+        let _ = writeln!(wgsl, "// Auto-generated by ShaderGraphCompiler");
+        let _ = writeln!(wgsl, "// Graph: {}", graph.name);
+        let _ = writeln!(wgsl);
 
         // Collect texture bindings.
         let mut texture_slots: Vec<u32> = Vec::new();
@@ -328,48 +328,48 @@ impl ShaderGraphCompiler {
         texture_slots.sort();
 
         for (i, slot) in texture_slots.iter().enumerate() {
-            writeln!(
+            let _ = writeln!(
                 wgsl,
                 "@group(2) @binding({}) var tex_{}: texture_2d<f32>;",
                 i * 2,
                 slot
             )
-            .unwrap();
-            writeln!(
+            ;
+            let _ = writeln!(
                 wgsl,
                 "@group(2) @binding({}) var samp_{}: sampler;",
                 i * 2 + 1,
                 slot
             )
-            .unwrap();
+            ;
         }
-        writeln!(wgsl).unwrap();
+        let _ = writeln!(wgsl);
 
         // Emit struct + entry.
-        writeln!(wgsl, "struct MaterialInput {{").unwrap();
-        writeln!(wgsl, "    @location(0) uv: vec2<f32>,").unwrap();
-        writeln!(wgsl, "    @location(1) world_pos: vec3<f32>,").unwrap();
-        writeln!(wgsl, "    @location(2) world_normal: vec3<f32>,").unwrap();
-        writeln!(wgsl, "    @location(3) view_dir: vec3<f32>,").unwrap();
-        writeln!(wgsl, "}};").unwrap();
-        writeln!(wgsl).unwrap();
-        writeln!(wgsl, "struct PbrOutput {{").unwrap();
-        writeln!(wgsl, "    base_color: vec4<f32>,").unwrap();
-        writeln!(wgsl, "    normal: vec3<f32>,").unwrap();
-        writeln!(wgsl, "    roughness: f32,").unwrap();
-        writeln!(wgsl, "    metallic: f32,").unwrap();
-        writeln!(wgsl, "    emissive: vec3<f32>,").unwrap();
-        writeln!(wgsl, "}};").unwrap();
-        writeln!(wgsl).unwrap();
+        let _ = writeln!(wgsl, "struct MaterialInput {{");
+        let _ = writeln!(wgsl, "    @location(0) uv: vec2<f32>,");
+        let _ = writeln!(wgsl, "    @location(1) world_pos: vec3<f32>,");
+        let _ = writeln!(wgsl, "    @location(2) world_normal: vec3<f32>,");
+        let _ = writeln!(wgsl, "    @location(3) view_dir: vec3<f32>,");
+        let _ = writeln!(wgsl, "}};");
+        let _ = writeln!(wgsl);
+        let _ = writeln!(wgsl, "struct PbrOutput {{");
+        let _ = writeln!(wgsl, "    base_color: vec4<f32>,");
+        let _ = writeln!(wgsl, "    normal: vec3<f32>,");
+        let _ = writeln!(wgsl, "    roughness: f32,");
+        let _ = writeln!(wgsl, "    metallic: f32,");
+        let _ = writeln!(wgsl, "    emissive: vec3<f32>,");
+        let _ = writeln!(wgsl, "}};");
+        let _ = writeln!(wgsl);
 
         // Inline helper functions.
-        writeln!(wgsl, "fn fresnel_schlick(cos_theta: f32, exp: f32) -> f32 {{").unwrap();
-        writeln!(wgsl, "    return pow(1.0 - cos_theta, exp);").unwrap();
-        writeln!(wgsl, "}}").unwrap();
-        writeln!(wgsl).unwrap();
+        let _ = writeln!(wgsl, "fn fresnel_schlick(cos_theta: f32, exp: f32) -> f32 {{");
+        let _ = writeln!(wgsl, "    return pow(1.0 - cos_theta, exp);");
+        let _ = writeln!(wgsl, "}}");
+        let _ = writeln!(wgsl);
 
-        // Main function — evaluate nodes in topological order.
-        writeln!(wgsl, "fn evaluate_material(input: MaterialInput) -> PbrOutput {{").unwrap();
+        // Main function â€” evaluate nodes in topological order.
+        let _ = writeln!(wgsl, "fn evaluate_material(input: MaterialInput) -> PbrOutput {{");
 
         let order = Self::topological_order(graph)?;
 
@@ -377,7 +377,7 @@ impl ShaderGraphCompiler {
         let mut emitted: HashMap<NodeId, bool> = HashMap::new();
 
         for node_id in &order {
-            let node = graph.node(*node_id).unwrap();
+            let Some(node) = graph.node(*node_id) else { continue };
             Self::emit_node(&mut wgsl, graph, node, &emitted)?;
             emitted.insert(*node_id, true);
         }
@@ -391,22 +391,22 @@ impl ShaderGraphCompiler {
         let em = Self::input_var(graph, out_id, 4, "vec3<f32>(0.0)");
         let _al = Self::input_var(graph, out_id, 5, "1.0");
 
-        writeln!(wgsl, "    var out: PbrOutput;").unwrap();
-        writeln!(wgsl, "    out.base_color = {};", bc).unwrap();
-        writeln!(wgsl, "    out.normal     = {};", nm).unwrap();
-        writeln!(wgsl, "    out.roughness  = {};", ro).unwrap();
-        writeln!(wgsl, "    out.metallic   = {};", me).unwrap();
-        writeln!(wgsl, "    out.emissive   = {};", em).unwrap();
-        writeln!(wgsl, "    return out;").unwrap();
-        writeln!(wgsl, "}}").unwrap();
-        writeln!(wgsl).unwrap();
+        let _ = writeln!(wgsl, "    var out: PbrOutput;");
+        let _ = writeln!(wgsl, "    out.base_color = {};", bc);
+        let _ = writeln!(wgsl, "    out.normal     = {};", nm);
+        let _ = writeln!(wgsl, "    out.roughness  = {};", ro);
+        let _ = writeln!(wgsl, "    out.metallic   = {};", me);
+        let _ = writeln!(wgsl, "    out.emissive   = {};", em);
+        let _ = writeln!(wgsl, "    return out;");
+        let _ = writeln!(wgsl, "}}");
+        let _ = writeln!(wgsl);
 
         // Emit the @fragment entry point that calls evaluate_material.
-        writeln!(wgsl, "@fragment").unwrap();
-        writeln!(wgsl, "fn fs_main(input: MaterialInput) -> @location(0) vec4<f32> {{").unwrap();
-        writeln!(wgsl, "    let mat = evaluate_material(input);").unwrap();
-        writeln!(wgsl, "    return mat.base_color;").unwrap();
-        writeln!(wgsl, "}}").unwrap();
+        let _ = writeln!(wgsl, "@fragment");
+        let _ = writeln!(wgsl, "fn fs_main(input: MaterialInput) -> @location(0) vec4<f32> {{");
+        let _ = writeln!(wgsl, "    let mat = evaluate_material(input);");
+        let _ = writeln!(wgsl, "    return mat.base_color;");
+        let _ = writeln!(wgsl, "}}");
 
         Ok(wgsl)
     }
@@ -434,125 +434,125 @@ impl ShaderGraphCompiler {
             // Inputs
             ShaderNodeKind::TexCoord { set } => {
                 if *set == 0 {
-                    writeln!(wgsl, "    let {} = input.uv;", out(0)).unwrap();
+                    let _ = writeln!(wgsl, "    let {} = input.uv;", out(0));
                 } else {
-                    writeln!(wgsl, "    let {} = input.uv;", out(0)).unwrap();
+                    let _ = writeln!(wgsl, "    let {} = input.uv;", out(0));
                 }
             }
             ShaderNodeKind::WorldPosition => {
-                writeln!(wgsl, "    let {} = input.world_pos;", out(0)).unwrap();
+                let _ = writeln!(wgsl, "    let {} = input.world_pos;", out(0));
             }
             ShaderNodeKind::WorldNormal => {
-                writeln!(wgsl, "    let {} = input.world_normal;", out(0)).unwrap();
+                let _ = writeln!(wgsl, "    let {} = input.world_normal;", out(0));
             }
             ShaderNodeKind::ViewDirection => {
-                writeln!(wgsl, "    let {} = input.view_dir;", out(0)).unwrap();
+                let _ = writeln!(wgsl, "    let {} = input.view_dir;", out(0));
             }
             ShaderNodeKind::Time => {
-                writeln!(wgsl, "    let {} = 0.0;", out(0)).unwrap();
+                let _ = writeln!(wgsl, "    let {} = 0.0;", out(0));
             }
 
             // Constants
             ShaderNodeKind::ConstFloat(v) => {
-                writeln!(wgsl, "    let {} = {:.6};", out(0), v).unwrap();
+                let _ = writeln!(wgsl, "    let {} = {:.6};", out(0), v);
             }
             ShaderNodeKind::ConstVec2(v) => {
-                writeln!(wgsl, "    let {} = vec2<f32>({:.6}, {:.6});", out(0), v[0], v[1])
-                    .unwrap();
+                let _ = writeln!(wgsl, "    let {} = vec2<f32>({:.6}, {:.6});", out(0), v[0], v[1])
+                    ;
             }
             ShaderNodeKind::ConstVec3(v) => {
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = vec3<f32>({:.6}, {:.6}, {:.6});",
                     out(0), v[0], v[1], v[2]
                 )
-                .unwrap();
+                ;
             }
             ShaderNodeKind::ConstVec4(v) | ShaderNodeKind::ConstColor(v) => {
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = vec4<f32>({:.6}, {:.6}, {:.6}, {:.6});",
                     out(0), v[0], v[1], v[2], v[3]
                 )
-                .unwrap();
+                ;
             }
 
             // Texture sample
             ShaderNodeKind::TextureSample { binding_slot } => {
                 let uv = Self::input_var(graph, id, 0, "input.uv");
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = textureSample(tex_{}, samp_{}, {});",
                     out(0), binding_slot, binding_slot, uv
                 )
-                .unwrap();
+                ;
             }
 
             // Binary math
             ShaderNodeKind::Add => {
                 let a = Self::input_var(graph, id, 0, "0.0");
                 let b = Self::input_var(graph, id, 1, "0.0");
-                writeln!(wgsl, "    let {} = {} + {};", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = {} + {};", out(0), a, b);
             }
             ShaderNodeKind::Subtract => {
                 let a = Self::input_var(graph, id, 0, "0.0");
                 let b = Self::input_var(graph, id, 1, "0.0");
-                writeln!(wgsl, "    let {} = {} - {};", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = {} - {};", out(0), a, b);
             }
             ShaderNodeKind::Multiply => {
                 let a = Self::input_var(graph, id, 0, "1.0");
                 let b = Self::input_var(graph, id, 1, "1.0");
-                writeln!(wgsl, "    let {} = {} * {};", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = {} * {};", out(0), a, b);
             }
             ShaderNodeKind::Divide => {
                 let a = Self::input_var(graph, id, 0, "1.0");
                 let b = Self::input_var(graph, id, 1, "1.0");
-                writeln!(wgsl, "    let {} = {} / {};", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = {} / {};", out(0), a, b);
             }
             ShaderNodeKind::Power => {
                 let a = Self::input_var(graph, id, 0, "1.0");
                 let b = Self::input_var(graph, id, 1, "1.0");
-                writeln!(wgsl, "    let {} = pow({}, {});", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = pow({}, {});", out(0), a, b);
             }
             ShaderNodeKind::Dot => {
                 let a = Self::input_var(graph, id, 0, "vec3<f32>(0.0)");
                 let b = Self::input_var(graph, id, 1, "vec3<f32>(0.0)");
-                writeln!(wgsl, "    let {} = dot({}, {});", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = dot({}, {});", out(0), a, b);
             }
             ShaderNodeKind::Cross => {
                 let a = Self::input_var(graph, id, 0, "vec3<f32>(0.0)");
                 let b = Self::input_var(graph, id, 1, "vec3<f32>(0.0)");
-                writeln!(wgsl, "    let {} = cross({}, {});", out(0), a, b).unwrap();
+                let _ = writeln!(wgsl, "    let {} = cross({}, {});", out(0), a, b);
             }
 
             // Unary math
             ShaderNodeKind::Sqrt => {
                 let a = Self::input_var(graph, id, 0, "0.0");
-                writeln!(wgsl, "    let {} = sqrt({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = sqrt({});", out(0), a);
             }
             ShaderNodeKind::Abs => {
                 let a = Self::input_var(graph, id, 0, "0.0");
-                writeln!(wgsl, "    let {} = abs({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = abs({});", out(0), a);
             }
             ShaderNodeKind::Normalize => {
                 let a = Self::input_var(graph, id, 0, "vec3<f32>(0.0, 1.0, 0.0)");
-                writeln!(wgsl, "    let {} = normalize({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = normalize({});", out(0), a);
             }
             ShaderNodeKind::Length => {
                 let a = Self::input_var(graph, id, 0, "vec3<f32>(0.0)");
-                writeln!(wgsl, "    let {} = length({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = length({});", out(0), a);
             }
             ShaderNodeKind::Saturate => {
                 let a = Self::input_var(graph, id, 0, "0.0");
-                writeln!(wgsl, "    let {} = clamp({}, 0.0, 1.0);", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = clamp({}, 0.0, 1.0);", out(0), a);
             }
             ShaderNodeKind::Negate => {
                 let a = Self::input_var(graph, id, 0, "0.0");
-                writeln!(wgsl, "    let {} = -({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = -({});", out(0), a);
             }
             ShaderNodeKind::OneMinus => {
                 let a = Self::input_var(graph, id, 0, "0.0");
-                writeln!(wgsl, "    let {} = 1.0 - ({});", out(0), a).unwrap();
+                let _ = writeln!(wgsl, "    let {} = 1.0 - ({});", out(0), a);
             }
 
             // Clamp / lerp / smoothstep
@@ -560,20 +560,20 @@ impl ShaderGraphCompiler {
                 let v = Self::input_var(graph, id, 0, "0.0");
                 let lo = Self::input_var(graph, id, 1, "0.0");
                 let hi = Self::input_var(graph, id, 2, "1.0");
-                writeln!(wgsl, "    let {} = clamp({}, {}, {});", out(0), v, lo, hi).unwrap();
+                let _ = writeln!(wgsl, "    let {} = clamp({}, {}, {});", out(0), v, lo, hi);
             }
             ShaderNodeKind::Lerp => {
                 let a = Self::input_var(graph, id, 0, "0.0");
                 let b = Self::input_var(graph, id, 1, "1.0");
                 let t = Self::input_var(graph, id, 2, "0.5");
-                writeln!(wgsl, "    let {} = mix({}, {}, {});", out(0), a, b, t).unwrap();
+                let _ = writeln!(wgsl, "    let {} = mix({}, {}, {});", out(0), a, b, t);
             }
             ShaderNodeKind::Smoothstep => {
                 let e0 = Self::input_var(graph, id, 0, "0.0");
                 let e1 = Self::input_var(graph, id, 1, "1.0");
                 let x = Self::input_var(graph, id, 2, "0.5");
-                writeln!(wgsl, "    let {} = smoothstep({}, {}, {});", out(0), e0, e1, x)
-                    .unwrap();
+                let _ = writeln!(wgsl, "    let {} = smoothstep({}, {}, {});", out(0), e0, e1, x)
+                    ;
             }
 
             // Fresnel
@@ -581,12 +581,12 @@ impl ShaderGraphCompiler {
                 let n = Self::input_var(graph, id, 0, "input.world_normal");
                 let v = Self::input_var(graph, id, 1, "input.view_dir");
                 let exp = Self::input_var(graph, id, 2, "5.0");
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = fresnel_schlick(max(dot({}, {}), 0.0), {});",
                     out(0), n, v, exp
                 )
-                .unwrap();
+                ;
             }
 
             // If
@@ -595,34 +595,34 @@ impl ShaderGraphCompiler {
                 let thresh = Self::input_var(graph, id, 1, "0.5");
                 let a = Self::input_var(graph, id, 2, "1.0");
                 let b = Self::input_var(graph, id, 3, "0.0");
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = select({}, {}, {} > {});",
                     out(0), b, a, cond, thresh
                 )
-                .unwrap();
+                ;
             }
 
             // Split / Combine
             ShaderNodeKind::SplitVec4 => {
                 let v = Self::input_var(graph, id, 0, "vec4<f32>(0.0)");
-                writeln!(wgsl, "    let {}_v = {};", out(0), v).unwrap();
-                writeln!(wgsl, "    let {} = {}_v.x;", out(0), out(0)).unwrap();
-                writeln!(wgsl, "    let {} = {}_v.y;", format!("node_{}_{}", id, 1), out(0)).unwrap();
-                writeln!(wgsl, "    let {} = {}_v.z;", format!("node_{}_{}", id, 2), out(0)).unwrap();
-                writeln!(wgsl, "    let {} = {}_v.w;", format!("node_{}_{}", id, 3), out(0)).unwrap();
+                let _ = writeln!(wgsl, "    let {}_v = {};", out(0), v);
+                let _ = writeln!(wgsl, "    let {} = {}_v.x;", out(0), out(0));
+                let _ = writeln!(wgsl, "    let {} = {}_v.y;", format!("node_{}_{}", id, 1), out(0));
+                let _ = writeln!(wgsl, "    let {} = {}_v.z;", format!("node_{}_{}", id, 2), out(0));
+                let _ = writeln!(wgsl, "    let {} = {}_v.w;", format!("node_{}_{}", id, 3), out(0));
             }
             ShaderNodeKind::CombineVec4 => {
                 let x = Self::input_var(graph, id, 0, "0.0");
                 let y = Self::input_var(graph, id, 1, "0.0");
                 let z = Self::input_var(graph, id, 2, "0.0");
                 let w = Self::input_var(graph, id, 3, "1.0");
-                writeln!(
+                let _ = writeln!(
                     wgsl,
                     "    let {} = vec4<f32>({}, {}, {}, {});",
                     out(0), x, y, z, w
                 )
-                .unwrap();
+                ;
             }
 
             // PBR output handled in the caller
@@ -653,10 +653,11 @@ impl ShaderGraphCompiler {
             order.push(node_id);
             for conn in &graph.connections {
                 if conn.from_node == node_id {
-                    let deg = in_degree.get_mut(&conn.to_node).unwrap();
-                    *deg -= 1;
-                    if *deg == 0 {
-                        queue.push(conn.to_node);
+                    if let Some(deg) = in_degree.get_mut(&conn.to_node) {
+                        *deg -= 1;
+                        if *deg == 0 {
+                            queue.push(conn.to_node);
+                        }
                     }
                 }
             }
@@ -758,7 +759,7 @@ impl ShaderGraphCompiler {
                     diags.push(ShaderGraphDiagnostic {
                         node_id: Some(out.id),
                         severity: DiagnosticSeverity::Warning,
-                        message: format!("PbrOutput.{name} is unconnected — using default."),
+                        message: format!("PbrOutput.{name} is unconnected â€” using default."),
                     });
                 }
             }
@@ -791,7 +792,7 @@ impl ShaderGraphCompiler {
                 diagnostics.push(ShaderGraphDiagnostic {
                     node_id: None,
                     severity: DiagnosticSeverity::Info,
-                    message: format!("Compiled OK — {} bytes WGSL.", wgsl.len()),
+                    message: format!("Compiled OK â€” {} bytes WGSL.", wgsl.len()),
                 });
                 CompileResult {
                     wgsl,
@@ -815,7 +816,7 @@ impl ShaderGraphCompiler {
     }
 }
 
-// ── Cache ──────────────────────────────────────────────────────────
+// â”€â”€ Cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Caches compiled WGSL by graph content hash.
 pub struct ShaderGraphCache {
@@ -852,7 +853,7 @@ impl Default for ShaderGraphCache {
     }
 }
 
-// ── Material Domains ───────────────────────────────────────────────
+// â”€â”€ Material Domains â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// The domain a material graph targets. Each domain changes which outputs
 /// are available and how the compiled WGSL is integrated into the pipeline.
@@ -867,7 +868,7 @@ pub enum MaterialDomain {
     Decal,
     /// UI / 2D element. Outputs: color, alpha.
     UI,
-    /// Unlit surface — no PBR lighting. Outputs: color, alpha.
+    /// Unlit surface â€” no PBR lighting. Outputs: color, alpha.
     Unlit,
 }
 
@@ -933,7 +934,7 @@ impl MaterialGraph {
             MaterialDomain::Surface => ShaderGraphCompiler::compile(&self.graph),
             _ => {
                 // For non-surface domains, delegate to the standard compiler
-                // which already handles PbrOutput — real domain-specific codegen
+                // which already handles PbrOutput â€” real domain-specific codegen
                 // can be added later.
                 ShaderGraphCompiler::compile(&self.graph)
             }

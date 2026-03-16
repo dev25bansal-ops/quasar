@@ -6,16 +6,14 @@ use super::vertex::Vertex;
 ///
 /// Bind group layouts (in order):
 /// - `camera_layout` — group 0: camera uniform (view_proj + model + normal_matrix)
-/// - `material_layout` — group 1: material uniform (base_color, roughness, etc.)
-/// - `light_layout` — group 2: light uniform (directional + ambient)
-/// - `texture_layout` — group 3: albedo texture + sampler
+/// - `material_texture_layout` — group 1: material uniform + albedo texture + sampler
+/// - `lighting_layout` — group 2: lights storage + shadow data
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
     camera_layout: &wgpu::BindGroupLayout,
-    material_layout: &wgpu::BindGroupLayout,
-    light_layout: &wgpu::BindGroupLayout,
-    texture_layout: &wgpu::BindGroupLayout,
+    material_texture_layout: &wgpu::BindGroupLayout,
+    lighting_layout: &wgpu::BindGroupLayout,
     shader_source: &str,
 ) -> wgpu::RenderPipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -25,7 +23,7 @@ pub fn create_render_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[camera_layout, material_layout, light_layout, texture_layout],
+        bind_group_layouts: &[camera_layout, material_texture_layout, lighting_layout],
         push_constant_ranges: &[],
     });
 

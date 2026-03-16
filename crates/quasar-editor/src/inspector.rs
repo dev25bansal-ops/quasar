@@ -201,7 +201,7 @@ pub fn inspector_panel(
                 egui::CollapsingHeader::new("Material Override")
                     .default_open(true)
                     .show(ui, |ui| {
-                        let mut local_mat = old_mat.clone();
+                        let mut local_mat = *old_mat;
 
                         ui.label("Base Color");
                         let color_changed = ui

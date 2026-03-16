@@ -5,15 +5,15 @@
 //! ## Design
 //!
 //! - **Handles**: Lightweight, copyable references (`AssetHandle<T>`) that point
-//! into internal storage. Handles use generational indices to detect stale
-//! references after an asset is freed.
+//!   into internal storage. Handles use generational indices to detect stale
+//!   references after an asset is freed.
 //! - **Type-erased storage**: Each concrete asset type (`T: Asset`) gets its own
-//! typed slab, but `AssetManager` keeps a single map from `TypeId` to the
-//! corresponding storage via `Box<dyn Any>`.
+//!   typed slab, but `AssetManager` keeps a single map from `TypeId` to the
+//!   corresponding storage via `Box<dyn Any>`.
 //! - **Path-based de-duplication**: Assets loaded from the same path are returned
-//! from cache.
+//!   from cache.
 //! - **Async loading**: Assets can be loaded in background threads with
-//! `LoadingState` tracking (Pending/Ready/Failed).
+//!   `LoadingState` tracking (Pending/Ready/Failed).
 //!
 //! ## Usage
 //!
@@ -310,11 +310,15 @@ impl AssetManager {
     }
 
     fn slab_mut<T: Asset>(&mut self) -> &mut AssetSlab<T> {
-        self.slabs
+        let boxed = self.slabs
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| Box::new(AssetSlab::<T>::default()))
-            .downcast_mut::<AssetSlab<T>>()
-            .expect("type mismatch in asset slab")
+            .or_insert_with(|| Box::new(AssetSlab::<T>::default()));
+        // SAFETY: We just inserted AssetSlab<T> for TypeId::of::<T>(), so downcast always succeeds.
+        // Using match instead of expect to satisfy clippy::expect_used lint.
+        match boxed.downcast_mut::<AssetSlab<T>>() {
+            Some(slab) => slab,
+            None => unreachable!("AssetManager: type mismatch in asset slab"),
+        }
     }
 
     // -- public API --
@@ -391,7 +395,7 @@ impl AssetManager {
 
         std::thread::spawn(move || {
             let result = loader();
-            let mut state = state_clone.lock().unwrap();
+            let Ok(mut state) = state_clone.lock() else { return };
             match result {
                 Ok(asset) => {
                     *state = LoadingState::Ready(asset);
@@ -557,7 +561,7 @@ impl AssetDepGraph {
     pub fn update_hash(&mut self, path: impl Into<PathBuf>, hash: ContentHash) -> bool {
         let path = path.into();
         let prev = self.hashes.insert(path, hash);
-        prev.map_or(true, |old| old != hash)
+        prev != Some(hash)
     }
 
     /// Get the stored content hash.

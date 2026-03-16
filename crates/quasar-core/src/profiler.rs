@@ -85,7 +85,7 @@ impl Profiler {
     }
 
     fn find_scope_mut_impl<'a>(
-        scopes: &'a mut Vec<ProfileScope>,
+        scopes: &'a mut [ProfileScope],
         name: &str,
     ) -> Option<&'a mut ProfileScope> {
         for scope in scopes.iter_mut() {

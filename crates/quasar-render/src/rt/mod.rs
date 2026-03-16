@@ -319,8 +319,8 @@ impl RtGiPass {
         });
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        let groups_x = (self.width + 7) / 8;
-        let groups_y = (self.height + 7) / 8;
+        let groups_x = self.width.div_ceil(8);
+        let groups_y = self.height.div_ceil(8);
         pass.dispatch_workgroups(groups_x, groups_y, 1);
     }
 }

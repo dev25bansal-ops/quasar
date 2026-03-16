@@ -296,7 +296,11 @@ impl ReflectionProbeManager {
     where
         F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, glam::Mat4, glam::Mat4),
     {
-        let slot = probe.slot.expect("probe must have an assigned slot — call update_probes first");
+        let Some(slot) = probe.slot else {
+            return device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Reflection Probe Bake (no slot)"),
+            }).finish();
+        };
         let face_views = self.face_views(slot as u32);
         let view_matrices = Self::cubemap_view_matrices(probe.position);
         let projection = Self::cubemap_projection();

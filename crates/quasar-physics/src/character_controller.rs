@@ -2,8 +2,8 @@
 //! for smooth player movement with ground detection, slope handling,
 //! and step climbing.
 
-use rapier3d::prelude::*;
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
+use rapier3d::prelude::*;
 
 use crate::world::PhysicsWorld;
 
@@ -104,19 +104,19 @@ impl PhysicsWorld {
             self.query_pipeline_dirty = false;
         }
 
-        let mut controller = KinematicCharacterController::default();
-        controller.max_slope_climb_angle = config.max_slope_angle;
-        controller.min_slope_slide_angle = config.max_slope_angle;
-        controller.offset = CharacterLength::Absolute(config.offset);
-        controller.slide = config.slide;
-        controller.snap_to_ground = config
-            .snap_to_ground
-            .map(CharacterLength::Absolute);
-        controller.autostep = Some(CharacterAutostep {
-            max_height: CharacterLength::Absolute(config.max_step_height),
-            min_width: CharacterLength::Absolute(0.1),
-            include_dynamic_bodies: false,
-        });
+        let controller = KinematicCharacterController {
+            max_slope_climb_angle: config.max_slope_angle,
+            min_slope_slide_angle: config.max_slope_angle,
+            offset: CharacterLength::Absolute(config.offset),
+            slide: config.slide,
+            snap_to_ground: config.snap_to_ground.map(CharacterLength::Absolute),
+            autostep: Some(CharacterAutostep {
+                max_height: CharacterLength::Absolute(config.max_step_height),
+                min_width: CharacterLength::Absolute(0.1),
+                include_dynamic_bodies: false,
+            }),
+            ..Default::default()
+        };
 
         let desired = nalgebra::vector![
             desired_translation[0],
@@ -136,7 +136,8 @@ impl PhysicsWorld {
                 .get(collider_handle)
                 .map(|c| c.shape())
                 .unwrap_or(&*SharedShape::ball(0.5)),
-            &self.bodies
+            &self
+                .bodies
                 .get(body_handle)
                 .map(|rb| rb.position())
                 .copied()

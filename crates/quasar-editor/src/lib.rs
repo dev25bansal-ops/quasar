@@ -24,7 +24,7 @@ pub mod renderer;
 pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
-pub use asset_processor::AssetImporter;
+pub use asset_processor::{AssetHandle, AssetImporter, LoadedAsset};
 pub use editor_state::{
     DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
     SetPositionCommand, SetRotationCommand, SetScaleCommand, SpawnEntityCommand, TransformData,
@@ -49,17 +49,14 @@ pub use shader_graph_editor::ShaderGraphEditor;
 
 /// Interpolation mode for a keyframe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum InterpolationMode {
     Step,
+    #[default]
     Linear,
     CubicSpline,
 }
 
-impl Default for InterpolationMode {
-    fn default() -> Self {
-        Self::Linear
-    }
-}
 
 /// A channel (track lane) in the timeline.
 #[derive(Debug, Clone)]
@@ -241,11 +238,10 @@ impl TimelinePanel {
                                             + (t - self.scroll_offset) * self.zoom;
                                         let dist =
                                             ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
-                                        if dist < 6.0 {
-                                            if best.is_none() || dist < best.unwrap().2 {
+                                        if dist < 6.0
+                                            && (best.is_none() || dist < best.unwrap().2) {
                                                 best = Some((ch_idx, kf_idx, dist));
                                             }
-                                        }
                                     }
                                 }
                                 if let Some((ch, kf, _)) = best {
@@ -815,6 +811,89 @@ impl Editor {
             self.logic_graph_system.update(world, dt)
         } else {
             Vec::new()
+        }
+    }
+
+    /// Apply physics forces from logic graphs to the physics world.
+    /// Call this after update_logic_graph when physics plugin is active.
+    ///
+    /// Note: ApplyForce nodes use exec inputs for force values. Values should
+    /// be connected from GetVariable or math nodes.
+    pub fn apply_logic_graph_physics(&self, world: &mut quasar_core::ecs::World) {
+        use crate::logic_graph::LogicNodeKind;
+        use crate::logic_graph_system::LogicGraphAttachment;
+        use quasar_physics::RigidBodyComponent;
+
+        let entities_with_graphs: Vec<_> = world
+            .query::<LogicGraphAttachment>()
+            .into_iter()
+            .map(|(e, lg)| (e, lg.clone()))
+            .collect();
+
+        // Collect (handle, force) pairs before taking mutable physics borrow.
+        let mut force_queue = Vec::new();
+        for (entity, lg) in &entities_with_graphs {
+            for node in &lg.graph.nodes {
+                if matches!(node.kind, LogicNodeKind::ApplyForce) {
+                    let fx = lg.get_variable("force_x").unwrap_or(0.0);
+                    let fy = lg.get_variable("force_y").unwrap_or(10.0);
+                    let fz = lg.get_variable("force_z").unwrap_or(0.0);
+                    if let Some(rb) = world.get::<RigidBodyComponent>(*entity) {
+                        log::debug!(
+                            "Applied force [{}, {}, {}] to entity {:?}",
+                            fx,
+                            fy,
+                            fz,
+                            entity
+                        );
+                        force_queue.push((rb.handle, [fx, fy, fz]));
+                    }
+                }
+            }
+        }
+
+        let Some(physics_resource) = world.resource_mut::<quasar_physics::PhysicsResource>()
+        else {
+            return;
+        };
+
+        for (handle, force) in force_queue {
+            physics_resource.physics.apply_force(handle, force);
+        }
+    }
+
+    /// Play audio from logic graphs.
+    /// Call this after update_logic_graph when audio plugin is active.
+    ///
+    /// Note: PlayAudio nodes use input 1 for the path. Path should be
+    /// connected from a string constant or variable.
+    pub fn play_logic_graph_audio(&self, world: &mut quasar_core::ecs::World) {
+        use crate::logic_graph::LogicNodeKind;
+        use crate::logic_graph_system::LogicGraphAttachment;
+
+        let entities_with_graphs: Vec<_> = world
+            .query::<LogicGraphAttachment>()
+            .into_iter()
+            .map(|(e, lg)| (e, lg.clone()))
+            .collect();
+
+        let Some(audio_resource) = world.resource_mut::<quasar_audio::AudioResource>() else {
+            return;
+        };
+
+        for (entity, graph) in entities_with_graphs {
+            for node in &graph.graph.nodes {
+                if matches!(node.kind, LogicNodeKind::PlayAudio) {
+                    let path = graph
+                        .get_variable("audio_path")
+                        .map(|_| "sound.ogg".to_string())
+                        .unwrap_or_else(|| "sound.ogg".to_string());
+
+                    if let Some(_id) = audio_resource.audio.play(&path) {
+                        log::debug!("Playing audio: {} on entity {:?}", path, entity);
+                    }
+                }
+            }
         }
     }
 

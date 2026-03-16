@@ -47,6 +47,12 @@ pub struct ComponentRegistry {
     descriptors: HashMap<&'static str, ComponentDescriptor>,
 }
 
+impl Default for ComponentRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ComponentRegistry {
     pub fn new() -> Self {
         Self {

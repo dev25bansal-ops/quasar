@@ -72,7 +72,7 @@ pub fn build_meshlets(
     positions: &[[f32; 3]],
     indices: &[u32],
 ) -> MeshletMesh {
-    assert!(indices.len() % 3 == 0, "index count must be a multiple of 3");
+    assert!(indices.len().is_multiple_of(3), "index count must be a multiple of 3");
 
     let mut meshlets = Vec::new();
     let mut bounds_vec = Vec::new();
@@ -239,7 +239,7 @@ impl MeshletGpuBuffers {
         });
         // Pad triangle indices to 4-byte alignment
         let mut tri_padded = mesh.triangle_indices.clone();
-        while tri_padded.len() % 4 != 0 {
+        while !tri_padded.len().is_multiple_of(4) {
             tri_padded.push(0);
         }
         let triangle_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

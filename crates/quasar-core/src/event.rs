@@ -39,10 +39,11 @@ impl Events {
             .channels
             .entry(type_id)
             .or_insert_with(|| Box::new(Vec::<T>::new()));
-        channel
+        if let Some(vec) = channel
             .downcast_mut::<Vec<T>>()
-            .expect("event type mismatch")
-            .push(event);
+        {
+            vec.push(event);
+        }
     }
 
     /// Read all events of type `T` sent since last clear.

@@ -531,10 +531,12 @@ impl quasar_core::Plugin for RenderPlugin {
             if app.world.resource::<quasar_core::OverrideRegistry>().is_none() {
                 app.world.insert_resource(quasar_core::OverrideRegistry::new());
             }
-            let registry = app
+            let Some(registry) = app
                 .world
                 .resource_mut::<quasar_core::OverrideRegistry>()
-                .unwrap();
+            else {
+                return;
+            };
 
             registry.register("PointLight", |world, entity, field, value| {
                 if let Some(light) = world.get_mut::<crate::light::PointLight>(entity) {

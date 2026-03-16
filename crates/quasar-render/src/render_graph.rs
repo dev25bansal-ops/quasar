@@ -195,7 +195,7 @@ impl RenderGraph {
         att_ids.sort_by_key(|id| lifetimes.get(id).map(|r| r.0).unwrap_or(usize::MAX));
 
         for att_id in att_ids {
-            let attachment = self.attachments.get_mut(&att_id).unwrap();
+            let Some(attachment) = self.attachments.get_mut(&att_id) else { continue };
             let key = (attachment.format, attachment.size.0, attachment.size.1);
             let (first, last) = match lifetimes.get(&att_id) {
                 Some(&(f, l)) => (f, l),
@@ -342,7 +342,7 @@ impl RenderGraph {
                     Some(&(writer_id, _)) => {
                         // Check transitive dependency.
                         let deps = transitive.get(&reader_id);
-                        let has_dep = deps.map_or(false, |d| d.contains(&writer_id));
+                        let has_dep = deps.is_some_and(|d| d.contains(&writer_id));
                         if !has_dep {
                             return Err(RenderGraphError::MissingDependency {
                                 reader: reader_id,

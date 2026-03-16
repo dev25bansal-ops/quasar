@@ -449,18 +449,15 @@ impl ConvolutionReverbZone {
 
 /// Streaming mode for audio playback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum StreamingMode {
     /// Load the entire file into memory before playing.
+    #[default]
     FullyLoaded,
     /// Stream from disk in chunks.
     Streaming { chunk_size_bytes: usize },
 }
 
-impl Default for StreamingMode {
-    fn default() -> Self {
-        Self::FullyLoaded
-    }
-}
 
 /// ECS component marking an audio source for streaming playback.
 ///
@@ -804,7 +801,7 @@ impl System for HrtfSystem {
             .into_iter()
             .filter_map(|(e, _)| {
                 let t = world.get::<Transform>(e)?;
-                Some(t.clone())
+                Some(*t)
             })
             .next();
         let listener = match listener {

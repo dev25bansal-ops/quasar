@@ -6,9 +6,9 @@
 
 #[cfg(feature = "wasm")]
 mod inner {
-    use wasmtime::*;
     use std::path::Path;
     use std::sync::Arc;
+    use wasmtime::*;
 
     /// Host API functions exposed to WASM guest modules.
     ///
@@ -19,7 +19,13 @@ mod inner {
         fn spawn_entity(&mut self) -> u32;
         fn despawn_entity(&mut self, entity_id: u32);
         fn get_component_f32(&self, entity_id: u32, component_name: &str, field_name: &str) -> f32;
-        fn set_component_f32(&mut self, entity_id: u32, component_name: &str, field_name: &str, value: f32);
+        fn set_component_f32(
+            &mut self,
+            entity_id: u32,
+            component_name: &str,
+            field_name: &str,
+            value: f32,
+        );
         fn log_message(&self, level: u32, message: &str);
     }
 
@@ -67,7 +73,9 @@ mod inner {
             api: Box<dyn WasmHostApi>,
             dt: f32,
         ) -> Result<(), anyhow::Error> {
-            let module = self.modules.iter()
+            let module = self
+                .modules
+                .iter()
                 .find(|(n, _)| n == module_name)
                 .map(|(_, m)| m)
                 .ok_or_else(|| anyhow::anyhow!("WASM module '{}' not found", module_name))?;
@@ -76,51 +84,81 @@ mod inner {
             let mut linker = Linker::new(&self.engine);
 
             // Register host functions.
-            linker.func_wrap("env", "log_info", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
-                let mem = caller.get_export("memory")
-                    .and_then(|e| e.into_memory());
-                if let Some(mem) = mem {
-                    let data = mem.data(&caller);
-                    if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
-                        if let Ok(msg) = std::str::from_utf8(slice) {
-                            caller.data().api.log_message(0, msg);
+            linker.func_wrap(
+                "env",
+                "log_info",
+                |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| {
+                    let mem = caller.get_export("memory").and_then(|e| e.into_memory());
+                    if let Some(mem) = mem {
+                        let data = mem.data(&caller);
+                        if let Some(slice) = data.get(ptr as usize..(ptr as usize + len as usize)) {
+                            if let Ok(msg) = std::str::from_utf8(slice) {
+                                caller.data().api.log_message(0, msg);
+                            }
                         }
                     }
-                }
-            })?;
+                },
+            )?;
 
-            linker.func_wrap("env", "spawn_entity", |mut caller: Caller<'_, HostState>| -> i32 {
-                caller.data_mut().api.spawn_entity() as i32
-            })?;
+            linker.func_wrap(
+                "env",
+                "spawn_entity",
+                |mut caller: Caller<'_, HostState>| -> i32 {
+                    caller.data_mut().api.spawn_entity() as i32
+                },
+            )?;
 
-            linker.func_wrap("env", "despawn_entity", |mut caller: Caller<'_, HostState>, entity_id: i32| {
-                caller.data_mut().api.despawn_entity(entity_id as u32);
-            })?;
+            linker.func_wrap(
+                "env",
+                "despawn_entity",
+                |mut caller: Caller<'_, HostState>, entity_id: i32| {
+                    caller.data_mut().api.despawn_entity(entity_id as u32);
+                },
+            )?;
 
-            linker.func_wrap("env", "get_transform_x", |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
-                caller.data().api.get_transform(entity_id as u32)[0]
-            })?;
+            linker.func_wrap(
+                "env",
+                "get_transform_x",
+                |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
+                    caller.data().api.get_transform(entity_id as u32)[0]
+                },
+            )?;
 
-            linker.func_wrap("env", "get_transform_y", |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
-                caller.data().api.get_transform(entity_id as u32)[1]
-            })?;
+            linker.func_wrap(
+                "env",
+                "get_transform_y",
+                |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
+                    caller.data().api.get_transform(entity_id as u32)[1]
+                },
+            )?;
 
-            linker.func_wrap("env", "get_transform_z", |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
-                caller.data().api.get_transform(entity_id as u32)[2]
-            })?;
+            linker.func_wrap(
+                "env",
+                "get_transform_z",
+                |caller: Caller<'_, HostState>, entity_id: i32| -> f32 {
+                    caller.data().api.get_transform(entity_id as u32)[2]
+                },
+            )?;
 
-            linker.func_wrap("env", "set_position", |mut caller: Caller<'_, HostState>, entity_id: i32, x: f32, y: f32, z: f32| {
-                let mut data = caller.data().api.get_transform(entity_id as u32);
-                data[0] = x;
-                data[1] = y;
-                data[2] = z;
-                caller.data_mut().api.set_transform(entity_id as u32, &data);
-            })?;
+            linker.func_wrap(
+                "env",
+                "set_position",
+                |mut caller: Caller<'_, HostState>, entity_id: i32, x: f32, y: f32, z: f32| {
+                    let mut data = caller.data().api.get_transform(entity_id as u32);
+                    data[0] = x;
+                    data[1] = y;
+                    data[2] = z;
+                    caller.data_mut().api.set_transform(entity_id as u32, &data);
+                },
+            )?;
 
             let instance = linker.instantiate(&mut store, module)?;
 
             // Call the on_update export if it exists.
-            if let Some(func) = instance.get_typed_func::<f32, ()>(&mut store, "on_update").ok() {
+            if let Some(func) = instance
+                .get_typed_func::<f32, ()>(&mut store, "on_update")
+                .ok()
+            {
                 func.call(&mut store, dt)?;
             }
 

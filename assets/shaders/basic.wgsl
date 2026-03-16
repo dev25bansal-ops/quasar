@@ -1,11 +1,9 @@
 // Quasar Engine — Basic 3D shader with materials, textures, lighting, and shadows.
 //
-// Bind groups:
+// Bind groups (4 total to fit wgpu limit):
 // group(0) = camera (view_proj + model + normal_matrix)
-// group(1) = material (base_color, roughness, metallic, emissive)
-// group(2) = lights (storage buffer, multiple lights + ambient)
-// group(3) = texture (albedo texture + sampler)
-// group(4) = shadow (shadow map + comparison sampler)
+// group(1) = material + texture (base_color, roughness, metallic, emissive, albedo texture + sampler)
+// group(2) = lighting (lights storage + shadow data)
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
@@ -55,28 +53,24 @@ var<uniform> camera: CameraUniform;
 
 @group(1) @binding(0)
 var<uniform> material: MaterialUniform;
+@group(1) @binding(1)
+var t_albedo: texture_2d<f32>;
+@group(1) @binding(2)
+var s_albedo: sampler;
 
 @group(2) @binding(0)
 var<storage, read> lights: LightsUniform;
-
-@group(3) @binding(0)
-var t_albedo: texture_2d<f32>;
-@group(3) @binding(1)
-var s_albedo: sampler;
-
-@group(4) @binding(0)
+@group(2) @binding(1)
 var<uniform> shadow_uniform: ShadowUniform;
-@group(4) @binding(1)
+@group(2) @binding(2)
 var t_shadow: texture_depth_2d;
-@group(4) @binding(2)
+@group(2) @binding(3)
 var s_shadow: sampler_comparison;
-@group(4) @binding(3)
+@group(2) @binding(4)
 var s_shadow_depth: sampler;
-
-// CSM cascade bindings
-@group(4) @binding(4)
+@group(2) @binding(5)
 var<storage, read> cascades: array<CascadeUniform, 4>;
-@group(4) @binding(5)
+@group(2) @binding(6)
 var t_cascade_shadow: texture_depth_2d_array;
 
 /// Select the cascade index for the given view-space depth.

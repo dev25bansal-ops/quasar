@@ -58,6 +58,7 @@ impl Default for GestureConfig {
 
 /// Stateful gesture recognizer. Feed it a [`TouchInput`] every frame.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct GestureRecognizer {
     pub config: GestureConfig,
     // internal bookkeeping
@@ -66,16 +67,6 @@ pub struct GestureRecognizer {
     tap_start_time: Option<f32>,
 }
 
-impl Default for GestureRecognizer {
-    fn default() -> Self {
-        Self {
-            config: GestureConfig::default(),
-            prev_pinch_dist: None,
-            prev_pinch_angle: None,
-            tap_start_time: None,
-        }
-    }
-}
 
 impl GestureRecognizer {
     pub fn new(config: GestureConfig) -> Self {

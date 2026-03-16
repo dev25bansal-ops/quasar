@@ -10,6 +10,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+/// Unique handle for a loaded asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AssetHandle(pub u64);
+
+/// Information about a loaded asset.
+#[derive(Debug, Clone)]
+pub struct LoadedAsset {
+    pub source_path: PathBuf,
+    pub kind: AssetKind,
+    pub handle: AssetHandle,
+    pub content_hash: String,
+}
+
 /// Asset import pipeline state.
 pub struct AssetImporter {
     /// Watched assets directory.
@@ -20,6 +33,10 @@ pub struct AssetImporter {
     pub pending_imports: Vec<PathBuf>,
     /// Channel to receive file change events.
     change_receiver: mpsc::Receiver<PathBuf>,
+    /// Successfully loaded assets (source_path → loaded asset info).
+    pub loaded_assets: HashMap<PathBuf, LoadedAsset>,
+    /// Next asset handle ID.
+    next_handle_id: u64,
 }
 
 impl AssetImporter {
@@ -38,6 +55,8 @@ impl AssetImporter {
             pending_imports: Vec::new(),
             assets_dir,
             change_receiver: rx,
+            loaded_assets: HashMap::new(),
+            next_handle_id: 1,
         }
     }
 
@@ -117,16 +136,49 @@ impl AssetImporter {
         Ok(())
     }
 
-    fn process_texture(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+    fn process_texture(&mut self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
         log::info!("Processing texture: {:?}", path);
-        // TODO: Call into renderer to load texture
+
+        // Generate a handle for this texture
+        let handle = AssetHandle(self.next_handle_id);
+        self.next_handle_id += 1;
+
+        // Track the loaded asset
+        let loaded = LoadedAsset {
+            source_path: path.to_path_buf(),
+            kind: AssetKind::Texture,
+            handle,
+            content_hash: meta.content_hash.clone(),
+        };
+        self.loaded_assets.insert(path.to_path_buf(), loaded);
+
+        // Note: Actual GPU texture loading should be done by the renderer
+        // The renderer should call get_loaded_textures() to get paths that need GPU upload
+        log::info!("Texture {:?} imported with handle {:?}", path, handle);
+
         meta.status = ImportStatus::Success;
         Ok(())
     }
 
-    fn process_model(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+    fn process_model(&mut self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
         log::info!("Processing model: {:?}", path);
-        // TODO: Load mesh data, generate LODs if enabled
+
+        // Generate a handle for this model
+        let handle = AssetHandle(self.next_handle_id);
+        self.next_handle_id += 1;
+
+        // Track the loaded asset
+        let loaded = LoadedAsset {
+            source_path: path.to_path_buf(),
+            kind: AssetKind::Model,
+            handle,
+            content_hash: meta.content_hash.clone(),
+        };
+        self.loaded_assets.insert(path.to_path_buf(), loaded);
+
+        // Note: Actual mesh loading should be done by the renderer
+        log::info!("Model {:?} imported with handle {:?}", path, handle);
+
         meta.status = ImportStatus::Success;
         Ok(())
     }
@@ -143,16 +195,40 @@ impl AssetImporter {
         Ok(())
     }
 
-    fn process_audio(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+    fn process_audio(&mut self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
         log::info!("Processing audio: {:?}", path);
-        // TODO: Convert/optimize audio based on stream settings
+
+        let handle = AssetHandle(self.next_handle_id);
+        self.next_handle_id += 1;
+
+        let loaded = LoadedAsset {
+            source_path: path.to_path_buf(),
+            kind: AssetKind::Audio,
+            handle,
+            content_hash: meta.content_hash.clone(),
+        };
+        self.loaded_assets.insert(path.to_path_buf(), loaded);
+
+        log::info!("Audio {:?} imported with handle {:?}", path, handle);
         meta.status = ImportStatus::Success;
         Ok(())
     }
 
-    fn process_scene(&self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
+    fn process_scene(&mut self, path: &Path, meta: &mut AssetMeta) -> Result<(), String> {
         log::info!("Processing scene: {:?}", path);
-        // TODO: Load scene graph
+
+        let handle = AssetHandle(self.next_handle_id);
+        self.next_handle_id += 1;
+
+        let loaded = LoadedAsset {
+            source_path: path.to_path_buf(),
+            kind: AssetKind::Scene,
+            handle,
+            content_hash: meta.content_hash.clone(),
+        };
+        self.loaded_assets.insert(path.to_path_buf(), loaded);
+
+        log::info!("Scene {:?} imported with handle {:?}", path, handle);
         meta.status = ImportStatus::Success;
         Ok(())
     }
@@ -243,5 +319,36 @@ impl AssetImporter {
             changes.push(path);
         }
         changes
+    }
+
+    /// Get all loaded textures that need GPU upload.
+    pub fn get_loaded_textures(&self) -> Vec<&LoadedAsset> {
+        self.loaded_assets
+            .values()
+            .filter(|a| a.kind == AssetKind::Texture)
+            .collect()
+    }
+
+    /// Get all loaded models that need GPU upload.
+    pub fn get_loaded_models(&self) -> Vec<&LoadedAsset> {
+        self.loaded_assets
+            .values()
+            .filter(|a| a.kind == AssetKind::Model)
+            .collect()
+    }
+
+    /// Get a loaded asset by path.
+    pub fn get_asset(&self, path: &Path) -> Option<&LoadedAsset> {
+        self.loaded_assets.get(path)
+    }
+
+    /// Get a loaded asset by handle.
+    pub fn get_asset_by_handle(&self, handle: AssetHandle) -> Option<&LoadedAsset> {
+        self.loaded_assets.values().find(|a| a.handle == handle)
+    }
+
+    /// Remove a loaded asset (call when GPU resource is freed).
+    pub fn unload_asset(&mut self, path: &Path) -> Option<LoadedAsset> {
+        self.loaded_assets.remove(path)
     }
 }

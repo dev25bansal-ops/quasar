@@ -170,8 +170,8 @@ fn shares_edge(a: &[usize], b: &[usize]) -> bool {
             let (u, v) = (w[0], w[1]);
             edges.push((u.min(v), u.max(v)));
         }
-        if list.len() > 2 {
-            let (u, v) = (*list.last().unwrap(), list[0]);
+        if let Some(&last) = list.last() {
+            let (u, v) = (last, list[0]);
             edges.push((u.min(v), u.max(v)));
         }
         edges

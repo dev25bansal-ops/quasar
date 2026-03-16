@@ -57,7 +57,7 @@ impl AsyncPhysicsStepper {
             .spawn(move || {
                 physics_thread_main(world, cmd_rx, snap_ref);
             })
-            .expect("Failed to spawn physics thread");
+            .unwrap_or_else(|e| panic!("Failed to spawn physics thread: {}", e));
 
         Self {
             cmd_tx,

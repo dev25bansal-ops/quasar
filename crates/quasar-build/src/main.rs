@@ -612,8 +612,8 @@ fn compress_texture_bc7(img: &image::DynamicImage, dst: &Path) -> Result<(), Str
 fn compress_texture_astc(img: &image::DynamicImage, dst: &Path) -> Result<(), String> {
     let rgba = img.to_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
-    let bw = (w + 3) / 4;
-    let bh = (h + 3) / 4;
+    let bw = w.div_ceil(4);
+    let bh = h.div_ceil(4);
 
     // ASTC file header: 4-byte magic, 3-byte block dims, 3-byte x size, 3-byte y size, 3-byte z size.
     let mut out = Vec::with_capacity(16 + (bw * bh * 16) as usize);
@@ -1212,7 +1212,7 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
         // Find best next triangle from cache neighbourhood.
         let mut best_score = f32::NEG_INFINITY;
         next_tri = None;
-        for (_cache_pos, &cv) in cache.iter().enumerate() {
+        for &cv in cache.iter() {
             if (cv as usize) >= vertex_count {
                 continue;
             }

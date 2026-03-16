@@ -32,9 +32,11 @@ pub type SoundId = u64;
 
 /// Named audio bus (sub-mix channel).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum AudioBus {
     Master,
     Music,
+    #[default]
     Sfx,
     Voice,
     Ambient,
@@ -42,11 +44,6 @@ pub enum AudioBus {
     Custom(String),
 }
 
-impl Default for AudioBus {
-    fn default() -> Self {
-        Self::Sfx
-    }
-}
 
 /// Manages per-bus mixer tracks routed through Kira.
 pub struct BusManager {
@@ -156,7 +153,7 @@ impl AudioSystem {
         if manager.is_none() {
             log::warn!("Failed to initialize audio backend \u{2014} audio will be silent");
         }
-        let bus_manager = manager.as_mut().map(|m| BusManager::new(m));
+        let bus_manager = manager.as_mut().map(BusManager::new);
         Self {
             manager,
             next_id: 1,

@@ -755,7 +755,9 @@ fn create_ssao_noise_texture(device: &wgpu::Device) -> wgpu::Texture {
     }
 
     let size = (noise_size as f32).sqrt() as u32;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    
+
+    device.create_texture(&wgpu::TextureDescriptor {
         label: Some("SSAO Noise Texture"),
         size: wgpu::Extent3d {
             width: size,
@@ -768,9 +770,7 @@ fn create_ssao_noise_texture(device: &wgpu::Device) -> wgpu::Texture {
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
-    });
-
-    texture
+    })
 }
 
 fn create_ssao_kernel_buffer(device: &wgpu::Device) -> wgpu::Buffer {

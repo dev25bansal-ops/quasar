@@ -104,12 +104,10 @@ impl AssetServer {
     }
 
     /// Convenience: get an asset by typed handle from the unified manager.
-    pub fn get_asset<T: crate::asset::Asset>(
+    pub fn get_asset<T: crate::asset::Asset + Clone>(
         &self,
         handle: &crate::asset::AssetHandle<T>,
     ) -> Option<T>
-    where
-        T: Clone,
     {
         self.manager().get(handle).cloned()
     }
@@ -199,7 +197,7 @@ impl AssetServer {
         let full_path = self.assets_dir.join(path.as_ref());
 
         let id = {
-            let mut next_id = self.next_id.lock().unwrap();
+            let mut next_id = self.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *next_id;
             *next_id += 1;
             id
@@ -230,7 +228,7 @@ impl AssetServer {
             let mut storage = self.asset_storage.write().unwrap_or_else(|e| e.into_inner());
             let type_storage = storage
                 .entry(TypeId::of::<T>())
-                .or_insert_with(HashMap::new);
+                .or_default();
             type_storage.insert(id, Box::new(asset));
         }
 
@@ -329,7 +327,7 @@ impl AssetServer {
         let handles = self.asset_handles.read().unwrap_or_else(|e| e.into_inner());
 
         for (id, meta) in handles.iter() {
-            if &meta.path == path && meta.hot_reload_enabled {
+            if meta.path == *path && meta.hot_reload_enabled {
                 if let Ok(bytes) = std::fs::read(path) {
                     for (type_id, loader) in &self.loaders {
                         if loader.can_load(path) {
@@ -573,8 +571,8 @@ pub struct DecompressedAsset {
 
 /// Decode BC7 compressed blocks into RGBA8.
 fn decompress_bc7_to_rgba(block_data: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let bw = (width + 3) / 4;
-    let bh = (height + 3) / 4;
+    let bw = width.div_ceil(4);
+    let bh = height.div_ceil(4);
     let mut rgba = vec![0u8; (width * height * 4) as usize];
 
     for by in 0..bh {
@@ -681,8 +679,8 @@ fn decode_bc7_block(block: &[u8]) -> [u8; 64] {
 
 /// Decode ASTC 4×4 blocks into RGBA8.
 fn decompress_astc4x4_to_rgba(block_data: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let bw = (width + 3) / 4;
-    let bh = (height + 3) / 4;
+    let bw = width.div_ceil(4);
+    let bh = height.div_ceil(4);
     let mut rgba = vec![0u8; (width * height * 4) as usize];
 
     for by in 0..bh {
@@ -849,7 +847,7 @@ impl crate::ecs::System for HotReloadHandlerSystem {
         // Read pending reload events from the event bus.
         let reload_events: Vec<AssetReloadedEvent> = world
             .resource::<crate::Events>()
-            .map(|events| events.read::<AssetReloadedEvent>().into_iter().cloned().collect())
+            .map(|events| events.read::<AssetReloadedEvent>().to_vec())
             .unwrap_or_default();
 
         for event in &reload_events {

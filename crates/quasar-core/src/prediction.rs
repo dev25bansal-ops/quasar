@@ -1,4 +1,4 @@
-//! Client-side prediction (GGPO-style).
+﻿//! Client-side prediction (GGPO-style).
 //!
 //! The client applies inputs immediately for responsive gameplay.  The server
 //! processes the same inputs and periodically confirms state.  On mismatch the
@@ -106,11 +106,7 @@ impl EntityInterpolator {
         current_tick: u64,
     ) -> Option<([f32; 3], [f32; 4], [f32; 3])> {
         // Find two snapshots around our target tick (accounting for delay).
-        let target_tick = if current_tick > self.delay_ticks as u64 {
-            current_tick - self.delay_ticks as u64
-        } else {
-            0
-        };
+        let target_tick = current_tick.saturating_sub(self.delay_ticks as u64);
 
         // Find snapshots around target tick.
         let snapshots: Vec<&EntityInterpolationState> = self
@@ -131,12 +127,12 @@ impl EntityInterpolator {
             (None, None) => None,
             (None, Some(_after)) => {
                 // Only future snapshots - use the earliest.
-                let earliest = snapshots.iter().min_by_key(|s| s.tick).unwrap();
+                let earliest = snapshots.iter().min_by_key(|s| s.tick).unwrap_or(&snapshots[0]);
                 Some((earliest.position, earliest.rotation, earliest.scale))
             }
             (Some(_before), None) => {
                 // Only past snapshots - use the latest.
-                let latest = snapshots.iter().max_by_key(|s| s.tick).unwrap();
+                let latest = snapshots.iter().max_by_key(|s| s.tick).unwrap_or(&snapshots[0]);
                 Some((latest.position, latest.rotation, latest.scale))
             }
             (Some(before), Some(after)) => {
@@ -175,18 +171,14 @@ impl EntityInterpolator {
 
     /// Check if we have sufficient data for interpolation at a given tick.
     pub fn can_interpolate(&self, _entity_id: u64, current_tick: u64) -> bool {
-        let target_tick = if current_tick > self.delay_ticks as u64 {
-            current_tick - self.delay_ticks as u64
-        } else {
-            0
-        };
+        let target_tick = current_tick.saturating_sub(self.delay_ticks as u64);
 
         if self.history.is_empty() {
             return false;
         }
 
-        let min_tick = self.history.front().unwrap().tick;
-        let max_tick = self.history.back().unwrap().tick;
+        let min_tick = self.history.front().map(|s| s.tick).unwrap_or(0);
+        let max_tick = self.history.back().map(|s| s.tick).unwrap_or(0);
 
         min_tick <= target_tick && target_tick <= max_tick
     }
@@ -238,10 +230,10 @@ fn slerp_quat(a: &[f32; 4], b: &[f32; 4], t: f32) -> [f32; 4] {
 
 /// Client-side prediction manager.
 ///
-/// Generic over `S` — the physics snapshot type — so it works with any engine
+/// Generic over `S` â€” the physics snapshot type â€” so it works with any engine
 /// that can serialize its physics state.
 pub struct PredictionManager<S: PredictionSnapshot> {
-    /// Ring of `(tick, snapshot, inputs)` — unconfirmed frames.
+    /// Ring of `(tick, snapshot, inputs)` â€” unconfirmed frames.
     history: VecDeque<(u64, S, Vec<InputData>)>,
     /// Input sequence counter.
     next_sequence: u64,
@@ -316,7 +308,7 @@ impl<S: PredictionSnapshot> PredictionManager<S> {
         while self
             .history
             .front()
-            .map_or(false, |(t, _, _)| *t < server_tick)
+            .is_some_and(|(t, _, _)| *t < server_tick)
         {
             self.history.pop_front();
         }
@@ -328,7 +320,7 @@ impl<S: PredictionSnapshot> PredictionManager<S> {
             local_positions
                 .iter()
                 .find(|(lid, _)| *lid == *eid)
-                .map_or(true, |(_, local_pos)| {
+                .is_none_or(|(_, local_pos)| {
                     let dx = server_pos[0] - local_pos[0];
                     let dy = server_pos[1] - local_pos[1];
                     let dz = server_pos[2] - local_pos[2];
@@ -345,7 +337,7 @@ impl<S: PredictionSnapshot> PredictionManager<S> {
 
         let snapshot = match entry {
             Some((_, snap, _)) => snap.clone(),
-            None => return None, // Snapshot lost — can't rollback
+            None => return None, // Snapshot lost â€” can't rollback
         };
 
         // Gather inputs for all frames after server_tick that need replaying.
@@ -375,7 +367,7 @@ impl<S: PredictionSnapshot> PredictionManager<S> {
             return 0;
         }
 
-        let latest_tick = self.history.back().unwrap().0;
+        let latest_tick = self.history.back().map(|s| s.0).unwrap_or(0);
         i32::try_from(latest_tick.saturating_sub(self.confirmed_tick)).unwrap_or(0)
     }
 

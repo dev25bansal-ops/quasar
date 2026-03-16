@@ -172,7 +172,7 @@ impl System for LodSystem {
             if let Some(desired_mesh) = lod.select(distance) {
                 if let Some(current) = world.get_mut::<MeshShape>(entity) {
                     if std::mem::discriminant(current) != std::mem::discriminant(desired_mesh) {
-                        *current = desired_mesh.clone();
+                        *current = *desired_mesh;
                     }
                 }
             }

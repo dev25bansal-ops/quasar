@@ -4,7 +4,6 @@ use crate::{
     JoinInfo, LobbyError, Session, SessionConfig, SessionFilters, SessionId, PlayerId,
     protocol::*,
 };
-use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
