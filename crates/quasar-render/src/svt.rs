@@ -4,12 +4,14 @@
 //! tiles, a background thread streams them from disk to a VRAM tile pool,
 //! and a page table GPU buffer maps virtual → physical tile addresses.
 
+#![allow(clippy::expect_used)]
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use wgpu;
 use bytemuck::{Pod, Zeroable};
+use wgpu;
 
 /// Tile size in texels (each axis).
 pub const SVT_TILE_SIZE: u32 = 128;
@@ -97,7 +99,10 @@ impl TilePool {
                 .iter()
                 .min_by_key(|(_, (_, last))| *last)
                 .expect("pool must have at least one entry");
-            let (evicted_slot, _) = self.resident.remove(&evict_tile).unwrap();
+            let (evicted_slot, _) = self
+                .resident
+                .remove(&evict_tile)
+                .expect("evict_tile must exist");
             evicted_slot.0
         };
 
@@ -148,7 +153,7 @@ impl TileStreamer {
 
     /// Request a tile to be loaded in the background.
     pub fn request(&self, tile: VirtualTileId) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         if pending.contains(&tile) {
             return;
         }
@@ -165,18 +170,21 @@ impl TileStreamer {
                 vec![128u8; (SVT_TILE_SIZE * SVT_TILE_SIZE * 4) as usize]
             });
 
-            completed.lock().unwrap().push(TileLoadResult { tile, data });
-            pending_clone.lock().unwrap().remove(&tile);
+            completed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(TileLoadResult { tile, data });
+            pending_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&tile);
         });
     }
 
     /// Drain completed tile loads.
     pub fn drain_completed(&self) -> Vec<(VirtualTileId, Vec<u8>)> {
-        let mut completed = self.completed.lock().unwrap();
-        completed
-            .drain(..)
-            .map(|r| (r.tile, r.data))
-            .collect()
+        let mut completed = self.completed.lock().unwrap_or_else(|e| e.into_inner());
+        completed.drain(..).map(|r| (r.tile, r.data)).collect()
     }
 }
 
@@ -426,10 +434,7 @@ impl VirtualTexture2D {
     pub fn tiles_at_mip(&self, mip: u32) -> (u32, u32) {
         let w = (self.width >> mip).max(1);
         let h = (self.height >> mip).max(1);
-        (
-            w.div_ceil(SVT_TILE_SIZE),
-            h.div_ceil(SVT_TILE_SIZE),
-        )
+        (w.div_ceil(SVT_TILE_SIZE), h.div_ceil(SVT_TILE_SIZE))
     }
 }
 
@@ -455,7 +460,11 @@ mod tests {
         }
         assert!(pool.free_slots.is_empty());
         // Allocate one more — should evict the oldest (frame 0).
-        let new_tile = VirtualTileId { mip: 0, x: 999, y: 0 };
+        let new_tile = VirtualTileId {
+            mip: 0,
+            x: 999,
+            y: 0,
+        };
         pool.allocate(new_tile, total as u64);
         assert!(pool.lookup(&new_tile).is_some());
         // The tile at frame 0 should be evicted.

@@ -55,7 +55,9 @@ pub type SlotIndex = u32;
 pub enum ShaderNodeKind {
     // â”€â”€â”€ Inputs â”€â”€â”€
     /// Mesh UV coordinate set (index).
-    TexCoord { set: u32 },
+    TexCoord {
+        set: u32,
+    },
     /// Camera-space position of the fragment.
     WorldPosition,
     /// World-space normal.
@@ -74,7 +76,9 @@ pub enum ShaderNodeKind {
 
     // â”€â”€â”€ Texture â”€â”€â”€
     /// Sample a 2D texture. Input 0 = UV (vec2).
-    TextureSample { binding_slot: u32 },
+    TextureSample {
+        binding_slot: u32,
+    },
 
     // â”€â”€â”€ Math â”€â”€â”€
     Add,
@@ -333,15 +337,13 @@ impl ShaderGraphCompiler {
                 "@group(2) @binding({}) var tex_{}: texture_2d<f32>;",
                 i * 2,
                 slot
-            )
-            ;
+            );
             let _ = writeln!(
                 wgsl,
                 "@group(2) @binding({}) var samp_{}: sampler;",
                 i * 2 + 1,
                 slot
-            )
-            ;
+            );
         }
         let _ = writeln!(wgsl);
 
@@ -363,13 +365,19 @@ impl ShaderGraphCompiler {
         let _ = writeln!(wgsl);
 
         // Inline helper functions.
-        let _ = writeln!(wgsl, "fn fresnel_schlick(cos_theta: f32, exp: f32) -> f32 {{");
+        let _ = writeln!(
+            wgsl,
+            "fn fresnel_schlick(cos_theta: f32, exp: f32) -> f32 {{"
+        );
         let _ = writeln!(wgsl, "    return pow(1.0 - cos_theta, exp);");
         let _ = writeln!(wgsl, "}}");
         let _ = writeln!(wgsl);
 
         // Main function â€” evaluate nodes in topological order.
-        let _ = writeln!(wgsl, "fn evaluate_material(input: MaterialInput) -> PbrOutput {{");
+        let _ = writeln!(
+            wgsl,
+            "fn evaluate_material(input: MaterialInput) -> PbrOutput {{"
+        );
 
         let order = Self::topological_order(graph)?;
 
@@ -377,7 +385,9 @@ impl ShaderGraphCompiler {
         let mut emitted: HashMap<NodeId, bool> = HashMap::new();
 
         for node_id in &order {
-            let Some(node) = graph.node(*node_id) else { continue };
+            let Some(node) = graph.node(*node_id) else {
+                continue;
+            };
             Self::emit_node(&mut wgsl, graph, node, &emitted)?;
             emitted.insert(*node_id, true);
         }
@@ -403,7 +413,10 @@ impl ShaderGraphCompiler {
 
         // Emit the @fragment entry point that calls evaluate_material.
         let _ = writeln!(wgsl, "@fragment");
-        let _ = writeln!(wgsl, "fn fs_main(input: MaterialInput) -> @location(0) vec4<f32> {{");
+        let _ = writeln!(
+            wgsl,
+            "fn fs_main(input: MaterialInput) -> @location(0) vec4<f32> {{"
+        );
         let _ = writeln!(wgsl, "    let mat = evaluate_material(input);");
         let _ = writeln!(wgsl, "    return mat.base_color;");
         let _ = writeln!(wgsl, "}}");
@@ -432,12 +445,8 @@ impl ShaderGraphCompiler {
 
         match &node.kind {
             // Inputs
-            ShaderNodeKind::TexCoord { set } => {
-                if *set == 0 {
-                    let _ = writeln!(wgsl, "    let {} = input.uv;", out(0));
-                } else {
-                    let _ = writeln!(wgsl, "    let {} = input.uv;", out(0));
-                }
+            ShaderNodeKind::TexCoord { set: _ } => {
+                let _ = writeln!(wgsl, " let {} = input.uv;", out(0));
             }
             ShaderNodeKind::WorldPosition => {
                 let _ = writeln!(wgsl, "    let {} = input.world_pos;", out(0));
@@ -457,24 +466,34 @@ impl ShaderGraphCompiler {
                 let _ = writeln!(wgsl, "    let {} = {:.6};", out(0), v);
             }
             ShaderNodeKind::ConstVec2(v) => {
-                let _ = writeln!(wgsl, "    let {} = vec2<f32>({:.6}, {:.6});", out(0), v[0], v[1])
-                    ;
+                let _ = writeln!(
+                    wgsl,
+                    "    let {} = vec2<f32>({:.6}, {:.6});",
+                    out(0),
+                    v[0],
+                    v[1]
+                );
             }
             ShaderNodeKind::ConstVec3(v) => {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = vec3<f32>({:.6}, {:.6}, {:.6});",
-                    out(0), v[0], v[1], v[2]
-                )
-                ;
+                    out(0),
+                    v[0],
+                    v[1],
+                    v[2]
+                );
             }
             ShaderNodeKind::ConstVec4(v) | ShaderNodeKind::ConstColor(v) => {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = vec4<f32>({:.6}, {:.6}, {:.6}, {:.6});",
-                    out(0), v[0], v[1], v[2], v[3]
-                )
-                ;
+                    out(0),
+                    v[0],
+                    v[1],
+                    v[2],
+                    v[3]
+                );
             }
 
             // Texture sample
@@ -483,9 +502,11 @@ impl ShaderGraphCompiler {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = textureSample(tex_{}, samp_{}, {});",
-                    out(0), binding_slot, binding_slot, uv
-                )
-                ;
+                    out(0),
+                    binding_slot,
+                    binding_slot,
+                    uv
+                );
             }
 
             // Binary math
@@ -572,8 +593,14 @@ impl ShaderGraphCompiler {
                 let e0 = Self::input_var(graph, id, 0, "0.0");
                 let e1 = Self::input_var(graph, id, 1, "1.0");
                 let x = Self::input_var(graph, id, 2, "0.5");
-                let _ = writeln!(wgsl, "    let {} = smoothstep({}, {}, {});", out(0), e0, e1, x)
-                    ;
+                let _ = writeln!(
+                    wgsl,
+                    "    let {} = smoothstep({}, {}, {});",
+                    out(0),
+                    e0,
+                    e1,
+                    x
+                );
             }
 
             // Fresnel
@@ -584,9 +611,11 @@ impl ShaderGraphCompiler {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = fresnel_schlick(max(dot({}, {}), 0.0), {});",
-                    out(0), n, v, exp
-                )
-                ;
+                    out(0),
+                    n,
+                    v,
+                    exp
+                );
             }
 
             // If
@@ -598,19 +627,21 @@ impl ShaderGraphCompiler {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = select({}, {}, {} > {});",
-                    out(0), b, a, cond, thresh
-                )
-                ;
+                    out(0),
+                    b,
+                    a,
+                    cond,
+                    thresh
+                );
             }
 
             // Split / Combine
             ShaderNodeKind::SplitVec4 => {
                 let v = Self::input_var(graph, id, 0, "vec4<f32>(0.0)");
-                let _ = writeln!(wgsl, "    let {}_v = {};", out(0), v);
-                let _ = writeln!(wgsl, "    let {} = {}_v.x;", out(0), out(0));
-                let _ = writeln!(wgsl, "    let {} = {}_v.y;", format!("node_{}_{}", id, 1), out(0));
-                let _ = writeln!(wgsl, "    let {} = {}_v.z;", format!("node_{}_{}", id, 2), out(0));
-                let _ = writeln!(wgsl, "    let {} = {}_v.w;", format!("node_{}_{}", id, 3), out(0));
+                let _ = writeln!(wgsl, " let {} = {}_v.x;", out(0), v);
+                let _ = writeln!(wgsl, " let node_{}_1 = {}_v.y;", id, out(0));
+                let _ = writeln!(wgsl, " let node_{}_2 = {}_v.z;", id, out(0));
+                let _ = writeln!(wgsl, " let node_{}_3 = {}_v.w;", id, out(0));
             }
             ShaderNodeKind::CombineVec4 => {
                 let x = Self::input_var(graph, id, 0, "0.0");
@@ -620,9 +651,12 @@ impl ShaderGraphCompiler {
                 let _ = writeln!(
                     wgsl,
                     "    let {} = vec4<f32>({}, {}, {}, {});",
-                    out(0), x, y, z, w
-                )
-                ;
+                    out(0),
+                    x,
+                    y,
+                    z,
+                    w
+                );
             }
 
             // PBR output handled in the caller
@@ -723,7 +757,9 @@ impl ShaderGraphCompiler {
                         severity: DiagnosticSeverity::Error,
                         message: format!(
                             "Output slot {} exceeds node {:?} output count ({}).",
-                            conn.from_slot, src.kind, src.output_count()
+                            conn.from_slot,
+                            src.kind,
+                            src.output_count()
                         ),
                     });
                 }
@@ -735,7 +771,9 @@ impl ShaderGraphCompiler {
                         severity: DiagnosticSeverity::Error,
                         message: format!(
                             "Input slot {} exceeds node {:?} input count ({}).",
-                            conn.to_slot, dst.kind, dst.input_count()
+                            conn.to_slot,
+                            dst.kind,
+                            dst.input_count()
                         ),
                     });
                 }
@@ -753,7 +791,14 @@ impl ShaderGraphCompiler {
 
         // 5. Warn about unconnected PBR inputs.
         if let Some(out) = graph.output_node() {
-            let slot_names = ["base_color", "normal", "roughness", "metallic", "emissive", "alpha"];
+            let slot_names = [
+                "base_color",
+                "normal",
+                "roughness",
+                "metallic",
+                "emissive",
+                "alpha",
+            ];
             for (i, name) in slot_names.iter().enumerate() {
                 if graph.find_input(out.id, i as u32).is_none() {
                     diags.push(ShaderGraphDiagnostic {
@@ -876,7 +921,14 @@ impl MaterialDomain {
     /// Names of the output slots for this domain.
     pub fn output_slot_names(&self) -> &'static [&'static str] {
         match self {
-            Self::Surface => &["base_color", "normal", "roughness", "metallic", "emissive", "alpha"],
+            Self::Surface => &[
+                "base_color",
+                "normal",
+                "roughness",
+                "metallic",
+                "emissive",
+                "alpha",
+            ],
             Self::PostProcess => &["color"],
             Self::Decal => &["base_color", "normal", "roughness"],
             Self::UI => &["color", "alpha"],

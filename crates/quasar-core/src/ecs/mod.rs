@@ -20,24 +20,25 @@ pub mod sparse_set;
 mod system;
 mod world;
 
-pub use archetype::{
-    Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature, ComponentTicks,
-};
+pub use archetype::{Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature, ComponentTicks};
 pub use commands::{Command, Commands, EntitySpawnBuilder};
-pub use component::Component;
+pub use component::{Component, Mut};
 pub use entity::Entity;
 pub use parallel::{
-    AccessMode, ComponentAccess, DeclareAccess, ParallelSchedule, ReadWriteSet, SystemAccess,
-    SystemGraph, SystemNode, read_set, system_node_with_access, write_set,
+    read_set, system_node_with_access, write_set, AccessMode, ComponentAccess, DeclareAccess,
+    ParallelSchedule, ReadWriteSet, SystemAccess, SystemGraph, SystemNode,
 };
 pub use query::{
-    FilterAdded, FilterChanged, FilterRemoved, FilterWith, FilterWithout, Query, QueryFilter,
-    QueryIter, QueryState, WorldQuery,
+    FilterAdded, FilterChanged, FilterRemoved, FilterWith, FilterWithout, Query, Query2Iter,
+    QueryFilter, QueryIter, QueryIterSingle, QueryState, QueryStateCache, WorldQuery,
 };
-pub use system::{Schedule, System, SystemStage};
-pub use sparse_set::{SparseSet, SparseSetStorage};
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
-pub use world::{Bundle, Children, EntityBuilder, Parent, Prototype, World, ObserverKind, OnAdd, OnRemove, ObserverEvent};
+pub use sparse_set::{SparseSet, SparseSetStorage};
+pub use system::{Schedule, System, SystemStage};
+pub use world::{
+    Bundle, Children, EntityBuilder, ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent,
+    Prototype, World,
+};
 
 /// Marker type for change-detection queries.
 /// Use with `World::query_changed::<T>(since_tick)` to find entities whose

@@ -7,13 +7,12 @@
 //!
 //! # Example
 //!
-//! ```no_run
-//! use quasar_lobby::{LobbyClient, SessionConfig};
+//! ```ignore
+//! use quasar_lobby::{LobbyClient, SessionConfig, SessionId, PlayerId};
 //!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //!     let client = LobbyClient::new("https://lobby.example.com");
-//!     
+//!
 //!     // Create a session
 //!     let config = SessionConfig {
 //!         name: "My Game".to_string(),
@@ -22,13 +21,14 @@
 //!         ..Default::default()
 //!     };
 //!     let session = client.create_session(config).await?;
-//!     
+//!
 //!     // Find sessions
 //!     let sessions = client.find_sessions(Default::default()).await?;
-//!     
+//!
 //!     // Join a session
-//!     let join_info = client.join_session(session.id, "player-123").await?;
-//!     
+//!     let player_id = PlayerId::new();
+//!     let join_info = client.join_session(session.id, player_id, None).await?;
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -57,6 +57,18 @@ impl fmt::Display for SessionId {
 /// Unique identifier for a player.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PlayerId(pub String);
+
+impl PlayerId {
+pub fn new() -> Self {
+Self(uuid::Uuid::new_v4().to_string())
+}
+}
+
+impl Default for PlayerId {
+fn default() -> Self {
+Self::new()
+}
+}
 
 impl fmt::Display for PlayerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

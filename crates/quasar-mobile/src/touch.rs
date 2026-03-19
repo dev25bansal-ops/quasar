@@ -42,12 +42,10 @@ impl Default for TouchPointer {
 }
 
 /// Aggregated touch state, updated once per frame.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TouchInput {
     pointers: Vec<TouchPointer>,
 }
-
 
 impl TouchInput {
     pub fn new() -> Self {

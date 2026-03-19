@@ -226,7 +226,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let n = normalize(in.world_normal);
     let pcss_shadow = calculate_shadow(in.shadow_position);
     let csm_shadow = calculate_cascade_shadow(in.world_position, in.view_depth);
-    let shadow = min(pcss_shadow, csm_shadow);
+    // Use CSM for pixels inside cascade frustums, fall back to PCSS for distant pixels
+    // is_in_cascade is true when view_depth is within any cascade split depth
+    let is_in_cascade = in.view_depth < cascades[CASCADE_COUNT - 1u].split_depth;
+    let shadow = select(pcss_shadow, csm_shadow, is_in_cascade);
     let ambient = lights.ambient.rgb * lights.ambient.a;
 
     var diffuse_total = vec3<f32>(0.0);

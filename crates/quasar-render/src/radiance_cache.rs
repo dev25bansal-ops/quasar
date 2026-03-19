@@ -118,7 +118,10 @@ impl RadianceCache {
         for i in 0..3 {
             let local = pos[i] - (self.center[i] - he[i]);
             let cell_size = (2.0 * he[i]) / res[i] as f32;
-            let g = (local / cell_size).floor().max(0.0).min((res[i] - 1) as f32) as u32;
+            let g = (local / cell_size)
+                .floor()
+                .max(0.0)
+                .min((res[i] - 1) as f32) as u32;
             idx[i] = g;
         }
         idx
@@ -157,6 +160,7 @@ impl RadianceCache {
         let sh = sh_l2_basis(direction);
 
         let blend = self.settings.temporal_blend;
+        #[allow(clippy::needless_range_loop)]
         for c in 0..SH_COEFF_COUNT {
             probe.sh_r[c] = probe.sh_r[c] * (1.0 - blend) + radiance[0] * sh[c] * blend;
             probe.sh_g[c] = probe.sh_g[c] * (1.0 - blend) + radiance[1] * sh[c] * blend;
@@ -205,6 +209,7 @@ impl RadianceCache {
                     let wz = if dz == 0 { 1.0 - tz } else { tz };
                     let w = wx * wy * wz;
 
+                    #[allow(clippy::needless_range_loop)]
                     for c in 0..SH_COEFF_COUNT {
                         result[0] += probe.sh_r[c] * sh_basis[c] * w;
                         result[1] += probe.sh_g[c] * sh_basis[c] * w;

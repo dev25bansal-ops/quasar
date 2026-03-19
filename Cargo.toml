@@ -67,6 +67,7 @@ objc2-foundation = { version = "0.2", features = ["NSString"] }
 objc2-ui-kit = { version = "0.2", features = ["UIFeedbackGenerator", "UIImpactFeedbackGenerator", "UINotificationFeedbackGenerator"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+anyhow = "1"
 
 # Parallel execution
 rayon = "1.10"

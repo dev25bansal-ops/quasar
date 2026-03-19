@@ -7,9 +7,9 @@
 /// Ambisonics order (1 through 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AmbisonicsOrder {
-    First  = 1,
+    First = 1,
     Second = 2,
-    Third  = 3,
+    Third = 3,
 }
 
 impl AmbisonicsOrder {
@@ -163,8 +163,8 @@ impl SpeakerLayout {
                 (deg(30.0), 0.0),  // R
             ],
             Self::Quad => vec![
-                (deg(-45.0), 0.0), // FL
-                (deg(45.0), 0.0),  // FR
+                (deg(-45.0), 0.0),  // FL
+                (deg(45.0), 0.0),   // FR
                 (deg(-135.0), 0.0), // RL
                 (deg(135.0), 0.0),  // RR
             ],

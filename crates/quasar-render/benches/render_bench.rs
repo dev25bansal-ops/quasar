@@ -3,14 +3,14 @@
 //! These measure the CPU cost of shader-graph compilation, radiance-cache
 //! injection/sampling, and other hot paths that don't require a live GPU.
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use quasar_render::{RadianceCache, RadianceCacheSettings};
 
 // ── Radiance Cache benchmarks ────────────────────────────────────
 
 fn bench_radiance_inject(c: &mut Criterion) {
     let settings = RadianceCacheSettings::default();
-    let mut cache = RadianceCache::new(&settings);
+    let mut cache = RadianceCache::new(settings);
 
     c.bench_function("radiance_inject_1k", |b| {
         b.iter(|| {
@@ -31,7 +31,7 @@ fn bench_radiance_inject(c: &mut Criterion) {
 
 fn bench_radiance_sample(c: &mut Criterion) {
     let settings = RadianceCacheSettings::default();
-    let mut cache = RadianceCache::new(&settings);
+    let mut cache = RadianceCache::new(settings);
 
     // Seed some data.
     for i in 0..5_000u32 {
@@ -70,12 +70,9 @@ fn bench_shader_compile(c: &mut Criterion) {
             &node_count,
             |b, &n| {
                 b.iter(|| {
-                    let mut mg = MaterialGraph::new(
-                        format!("bench_{n}"),
-                        MaterialDomain::Surface,
-                    );
+                    let mg = MaterialGraph::new(format!("bench_{n}"), MaterialDomain::Surface);
                     // The graph starts minimal; we just benchmark the compile path.
-                    let code = mg.compile();
+                    let code = mg.compile().unwrap();
                     black_box(code);
                 });
             },

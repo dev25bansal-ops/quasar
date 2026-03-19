@@ -174,12 +174,7 @@ impl HapticEngine {
                     HapticStyle::Heavy => 80,
                     HapticStyle::Success | HapticStyle::Warning | HapticStyle::Error => 60,
                 };
-                let _ = env.call_method(
-                    &vibrator,
-                    "vibrate",
-                    "(J)V",
-                    &[JValue::Long(duration_ms)],
-                );
+                let _ = env.call_method(&vibrator, "vibrate", "(J)V", &[JValue::Long(duration_ms)]);
                 return;
             }
         };
@@ -196,8 +191,8 @@ impl HapticEngine {
     #[cfg(target_os = "ios")]
     fn trigger_ios(&self, style: HapticStyle) {
         use objc2_ui_kit::{
-            UIImpactFeedbackGenerator, UIImpactFeedbackStyle,
-            UINotificationFeedbackGenerator, UINotificationFeedbackType,
+            UIImpactFeedbackGenerator, UIImpactFeedbackStyle, UINotificationFeedbackGenerator,
+            UINotificationFeedbackType,
         };
 
         match style {

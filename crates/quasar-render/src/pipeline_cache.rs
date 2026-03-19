@@ -4,6 +4,8 @@
 //! the pipelines whose shader source changed, rather than recreating every
 //! pipeline in the engine.
 
+#![allow(clippy::too_many_arguments)]
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

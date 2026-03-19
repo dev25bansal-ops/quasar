@@ -33,9 +33,5 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-@fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Output depth as grayscale for debug visualization
-    // In actual shadow mapping, we only need depth
-    return vec4<f32>(in.depth, in.depth, in.depth, 1.0);
-}
+// No fragment shader needed - depth-only pass
+// Depth is written by the rasterizer, no color output required

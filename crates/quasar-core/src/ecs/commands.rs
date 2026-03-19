@@ -4,6 +4,8 @@
 //! but doing so directly would cause borrow checker issues when iterating.
 //! Commands queue these operations and flush them between stages.
 
+#![allow(clippy::type_complexity)]
+
 use std::any::TypeId;
 
 use super::archetype::{ColumnStorage, TypedColumn};

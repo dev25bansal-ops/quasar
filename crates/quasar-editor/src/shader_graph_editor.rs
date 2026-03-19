@@ -327,7 +327,6 @@ impl ShaderGraphEditor {
     }
 
     fn input_slot_pos(&self, node: &ShaderNode, slot: u32, origin: Vec2) -> Pos2 {
-        
         Pos2::new(
             node.editor_pos[0] * self.zoom + origin.x,
             node.editor_pos[1] * self.zoom

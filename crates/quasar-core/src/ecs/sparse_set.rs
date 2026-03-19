@@ -106,7 +106,9 @@ pub trait ErasedSparseSet: Any + Send + Sync {
     fn remove_entity(&mut self, entity: Entity);
     fn contains_entity(&self, entity: Entity) -> bool;
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl<T: 'static + Send + Sync> ErasedSparseSet for SparseSet<T> {
@@ -142,7 +144,8 @@ impl SparseSetStorage {
     /// Get or create a typed sparse set for component T.
     pub fn get_or_create<T: 'static + Send + Sync>(&mut self) -> &mut SparseSet<T> {
         let type_id = TypeId::of::<T>();
-        match self.sets
+        match self
+            .sets
             .entry(type_id)
             .or_insert_with(|| Box::new(SparseSet::<T>::new()))
             .as_any_mut()
@@ -254,7 +257,9 @@ mod tests {
         let e = Entity::new(1, 0);
 
         storage.get_or_create::<f32>().insert(e, 3.14);
-        storage.get_or_create::<String>().insert(e, "hello".to_string());
+        storage
+            .get_or_create::<String>()
+            .insert(e, "hello".to_string());
 
         assert_eq!(storage.get::<f32>().unwrap().get(e), Some(&3.14));
         assert!(storage.contains::<String>(e));

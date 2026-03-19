@@ -8,6 +8,8 @@
 //! - [`LightmapMaterial`]: extension of the material system with a second UV
 //!   channel referencing the lightmap.
 
+#![allow(clippy::type_complexity)]
+
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
 use rayon::prelude::*;
@@ -67,11 +69,7 @@ impl Lightmap {
         let bytes: Vec<u8> = self
             .pixels
             .iter()
-            .flat_map(|p| {
-                p.iter()
-                    .flat_map(|v| v.to_le_bytes())
-                    .collect::<Vec<u8>>()
-            })
+            .flat_map(|p| p.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<u8>>())
             .collect();
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -212,11 +210,7 @@ impl LightmapBaker {
     }
 
     /// Compute barycentric coords and world-space position/normal for a UV point.
-    fn barycentric_sample(
-        tri: &BakerTriangle,
-        u: f32,
-        v: f32,
-    ) -> Option<(Vec3, Vec3, Vec3)> {
+    fn barycentric_sample(tri: &BakerTriangle, u: f32, v: f32) -> Option<(Vec3, Vec3, Vec3)> {
         let (u0, v0) = (tri.lightmap_uvs[0][0], tri.lightmap_uvs[0][1]);
         let (u1, v1) = (tri.lightmap_uvs[1][0], tri.lightmap_uvs[1][1]);
         let (u2, v2) = (tri.lightmap_uvs[2][0], tri.lightmap_uvs[2][1]);
@@ -235,8 +229,7 @@ impl LightmapBaker {
         }
 
         let pos = tri.positions[0] * w0 + tri.positions[1] * w1 + tri.positions[2] * w2;
-        let norm =
-            (tri.normals[0] * w0 + tri.normals[1] * w1 + tri.normals[2] * w2).normalize();
+        let norm = (tri.normals[0] * w0 + tri.normals[1] * w1 + tri.normals[2] * w2).normalize();
 
         Some((Vec3::new(w0, w1, w2), pos, norm))
     }
@@ -365,7 +358,12 @@ impl SHProbe {
     /// Pack into GPU-ready data.
     pub fn to_gpu(&self) -> SHProbeData {
         let mut data = SHProbeData::zeroed();
-        data.position_radius = [self.position.x, self.position.y, self.position.z, self.radius];
+        data.position_radius = [
+            self.position.x,
+            self.position.y,
+            self.position.z,
+            self.radius,
+        ];
         for (i, c) in self.coefficients.iter().enumerate() {
             data.coefficients[i] = [c[0], c[1], c[2], 0.0];
         }
@@ -638,8 +636,14 @@ pub fn build_lbvh(tris: &[GpuBakerTriangle]) -> Vec<GpuBvhNode> {
         }
 
         // Find highest differing bit between first and last Morton code.
-        let first_code = match sorted.first() { Some(f) => f.1, None => return node_idx };
-        let last_code = match sorted.last() { Some(l) => l.1, None => return node_idx };
+        let first_code = match sorted.first() {
+            Some(f) => f.1,
+            None => return node_idx,
+        };
+        let last_code = match sorted.last() {
+            Some(l) => l.1,
+            None => return node_idx,
+        };
         let diff = first_code ^ last_code;
 
         let split = if diff == 0 {
@@ -648,7 +652,8 @@ pub fn build_lbvh(tris: &[GpuBakerTriangle]) -> Vec<GpuBvhNode> {
             let highest_bit = 31 - diff.leading_zeros();
             // Find the split point where the highest bit changes.
             let mask = 1u32 << highest_bit;
-            sorted.partition_point(|&(_, m)| m & mask == 0)
+            sorted
+                .partition_point(|&(_, m)| m & mask == 0)
                 .max(1)
                 .min(sorted.len() - 1)
         };
@@ -702,57 +707,59 @@ impl GpuLightmapBaker {
     pub fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("GPU Lightmap Bake Compute"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../assets/shaders/lightmap_bake.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../assets/shaders/lightmap_bake.wgsl").into(),
+            ),
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("GPU Lightmap Bake BGL"),
-                entries: &[
-                    // 0: uniforms
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("GPU Lightmap Bake BGL"),
+            entries: &[
+                // 0: uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // 1: triangle buffer (read-only storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // 1: triangle buffer (read-only storage)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // 2: output lightmap (storage texture, rgba16float)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
-                    },                    // 3: BVH node buffer (read-only storage)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },                ],
-            });
+                    count: None,
+                },
+                // 2: output lightmap (storage texture, rgba16float)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                }, // 3: BVH node buffer (read-only storage)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GPU Lightmap Bake Layout"),
@@ -959,45 +966,46 @@ impl GpuPathTraceBaker {
     pub fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("GPU PathTrace Lightmap Compute"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../../../assets/shaders/lightmap_pathtrace.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(
+                include_str!("../../../assets/shaders/lightmap_pathtrace.wgsl").into(),
+            ),
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("GPU PathTrace Bake BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("GPU PathTrace Bake BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba16Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
                     },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("GPU PathTrace Bake Layout"),
@@ -1052,9 +1060,24 @@ impl GpuPathTraceBaker {
             height: config.height,
             samples_per_texel: config.samples_per_texel,
             max_bounces: config.max_bounces,
-            light_dir: [config.light_dir.x, config.light_dir.y, config.light_dir.z, 0.0],
-            light_color: [config.light_color.x, config.light_color.y, config.light_color.z, 0.0],
-            sky_color: [config.sky_color.x, config.sky_color.y, config.sky_color.z, 0.0],
+            light_dir: [
+                config.light_dir.x,
+                config.light_dir.y,
+                config.light_dir.z,
+                0.0,
+            ],
+            light_color: [
+                config.light_color.x,
+                config.light_color.y,
+                config.light_color.z,
+                0.0,
+            ],
+            sky_color: [
+                config.sky_color.x,
+                config.sky_color.y,
+                config.sky_color.z,
+                0.0,
+            ],
             triangle_count: triangles.len() as u32,
             _pad: [0; 3],
         };

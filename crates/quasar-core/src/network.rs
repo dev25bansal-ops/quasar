@@ -1,4 +1,4 @@
-﻿//! Networking â€” QUIC/UDP integration for game networking.
+//! Networking â€” QUIC/UDP integration for game networking.
 //!
 //! Provides:
 //! - NetworkPlugin with client/server roles
@@ -1004,9 +1004,9 @@ impl DeltaCompressor {
             } else {
                 // XOR delta mode.
                 let mut pos = [0.0f32; 3];
-                for i in 0..3 {
+                for (i, p) in pos.iter_mut().enumerate() {
                     let xor_bits = read_u32(&delta.data, &mut offset);
-                    pos[i] = f32::from_bits(b.position[i].to_bits() ^ xor_bits);
+                    *p = f32::from_bits(b.position[i].to_bits() ^ xor_bits);
                 }
                 pos
             }
@@ -1024,9 +1024,9 @@ impl DeltaCompressor {
                 ]
             } else {
                 let mut rot = [0.0f32; 4];
-                for i in 0..4 {
+                for (i, r) in rot.iter_mut().enumerate() {
                     let xor_bits = read_u32(&delta.data, &mut offset);
-                    rot[i] = f32::from_bits(b.rotation[i].to_bits() ^ xor_bits);
+                    *r = f32::from_bits(b.rotation[i].to_bits() ^ xor_bits);
                 }
                 rot
             }
@@ -1043,9 +1043,9 @@ impl DeltaCompressor {
                 ]
             } else {
                 let mut s = [0.0f32; 3];
-                for i in 0..3 {
+                for (i, sc) in s.iter_mut().enumerate() {
                     let xor_bits = read_u32(&delta.data, &mut offset);
-                    s[i] = f32::from_bits(b.scale[i].to_bits() ^ xor_bits);
+                    *sc = f32::from_bits(b.scale[i].to_bits() ^ xor_bits);
                 }
                 s
             }
@@ -1314,7 +1314,8 @@ fn network_system(world: &mut crate::World) {
     };
 
     // Decode messages and collect connection-level updates vs entity updates.
-    let mut transform_updates: Vec<(NetworkEntityId, [f32; 3], [f32; 4], [f32; 3])> = Vec::new();
+    type TransformUpdate = (NetworkEntityId, [f32; 3], [f32; 4], [f32; 3]);
+    let mut transform_updates: Vec<TransformUpdate> = Vec::new();
     let mut snapshot_updates: Vec<(u64, Vec<EntitySnapshot>)> = Vec::new();
 
     {
@@ -1484,9 +1485,15 @@ impl crate::Plugin for NetworkPlugin {
     fn build(&self, app: &mut crate::App) {
         let bind_addr: SocketAddr = match &self.config.role {
             NetworkRole::Server | NetworkRole::ListenServer => {
-                format!("0.0.0.0:{}", self.config.port).parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], self.config.port)))
+                format!("0.0.0.0:{}", self.config.port)
+                    .parse()
+                    .unwrap_or_else(|_| {
+                        std::net::SocketAddr::from(([0, 0, 0, 0], self.config.port))
+                    })
             }
-            NetworkRole::Client { server_addr: _ } => "0.0.0.0:0".parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], 0))),
+            NetworkRole::Client { server_addr: _ } => "0.0.0.0:0"
+                .parse()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
         };
 
         let replication = NetworkReplication::new(self.config.clone());
@@ -2134,7 +2141,12 @@ pub fn replication_system(world: &mut crate::World) {
     // Phase 1: read-only gather â€” collect all data we need before mutating.
     let is_server = world
         .resource::<NetworkReplication>()
-        .map(|r| r.state.read().unwrap_or_else(|e| e.into_inner()).is_server())
+        .map(|r| {
+            r.state
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_server()
+        })
         .unwrap_or(false);
 
     if is_server {
@@ -2341,7 +2353,12 @@ pub fn rollback_system(world: &mut crate::World) {
     // Only clients use rollback prediction.
     let is_client = world
         .resource::<NetworkReplication>()
-        .map(|r| !r.state.read().unwrap_or_else(|e| e.into_inner()).is_server())
+        .map(|r| {
+            !r.state
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_server()
+        })
         .unwrap_or(false);
 
     if !is_client {
@@ -2696,7 +2713,9 @@ pub struct RelayServerConfig {
 impl Default for RelayServerConfig {
     fn default() -> Self {
         Self {
-            bind_addr: "0.0.0.0:7878".parse().unwrap_or_else(|_| std::net::SocketAddr::from(([0,0,0,0], 7878))),
+            bind_addr: "0.0.0.0:7878"
+                .parse()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 7878))),
             max_sessions: 256,
             session_timeout_secs: 300,
         }

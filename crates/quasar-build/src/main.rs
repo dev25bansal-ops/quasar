@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 fn main() {
     env_logger::init();
@@ -171,8 +171,8 @@ fn load_manifest(project_dir: &Path) -> Result<ProjectManifest, String> {
             project_dir.display()
         ));
     }
-    let text = fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("Failed to read manifest: {e}"))?;
+    let text =
+        fs::read_to_string(&manifest_path).map_err(|e| format!("Failed to read manifest: {e}"))?;
     serde_json::from_str(&text).map_err(|e| format!("Invalid manifest JSON: {e}"))
 }
 
@@ -201,12 +201,12 @@ impl BuildCache {
 
     /// Hash a file with blake3. Returns the hex digest.
     fn hash_file(path: &Path) -> Result<String, String> {
-        let mut file = fs::File::open(path)
-            .map_err(|e| format!("open {}: {e}", path.display()))?;
+        let mut file = fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
         let mut hasher = blake3::Hasher::new();
         let mut buf = [0u8; 16384];
         loop {
-            let n = file.read(&mut buf)
+            let n = file
+                .read(&mut buf)
                 .map_err(|e| format!("read {}: {e}", path.display()))?;
             if n == 0 {
                 break;
@@ -273,12 +273,13 @@ impl ContentAddressableStore {
 
     /// Compute a SHA-256 digest of a file on disk.
     fn hash_file(path: &Path) -> Result<String, String> {
-        let mut file = fs::File::open(path)
-            .map_err(|e| format!("CAS: open {}: {e}", path.display()))?;
+        let mut file =
+            fs::File::open(path).map_err(|e| format!("CAS: open {}: {e}", path.display()))?;
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 16384];
         loop {
-            let n = file.read(&mut buf)
+            let n = file
+                .read(&mut buf)
                 .map_err(|e| format!("CAS: read {}: {e}", path.display()))?;
             if n == 0 {
                 break;
@@ -313,8 +314,9 @@ impl ContentAddressableStore {
             if fs::hard_link(cached, dest).is_ok() {
                 log::debug!("CAS: hard-linked {} → {}", cached.display(), dest.display());
             } else {
-                fs::copy(cached, dest)
-                    .map_err(|e| format!("CAS: copy {} → {}: {e}", cached.display(), dest.display()))?;
+                fs::copy(cached, dest).map_err(|e| {
+                    format!("CAS: copy {} → {}: {e}", cached.display(), dest.display())
+                })?;
                 log::debug!("CAS: copied {} → {}", cached.display(), dest.display());
             }
             Ok(true)
@@ -364,21 +366,25 @@ impl ContentAddressableStore {
 #[allow(dead_code)]
 mod hex {
     pub fn encode(bytes: impl AsRef<[u8]>) -> String {
-        bytes
-            .as_ref()
-            .iter()
-            .fold(String::with_capacity(bytes.as_ref().len() * 2), |mut s, b| {
+        bytes.as_ref().iter().fold(
+            String::with_capacity(bytes.as_ref().len() * 2),
+            |mut s, b| {
                 use std::fmt::Write;
                 let _ = write!(s, "{b:02x}");
                 s
-            })
+            },
+        )
     }
 }
 
 // ── pipeline ────────────────────────────────────────────────────
 
 fn run(args: BuildArgs) -> Result<(), String> {
-    log::info!("quasar-build starting: target={:?} release={}", args.target, args.release);
+    log::info!(
+        "quasar-build starting: target={:?} release={}",
+        args.target,
+        args.release
+    );
 
     let manifest = load_manifest(&args.project_dir)?;
     log::info!("Project: {} v{}", manifest.name, manifest.version);
@@ -386,8 +392,7 @@ fn run(args: BuildArgs) -> Result<(), String> {
     let out_dir = args
         .output_dir
         .unwrap_or_else(|| args.project_dir.join("build_output"));
-    fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("Cannot create output directory: {e}"))?;
+    fs::create_dir_all(&out_dir).map_err(|e| format!("Cannot create output directory: {e}"))?;
 
     // 1. Process assets.
     let assets_src = if manifest.assets_dir.is_empty() {
@@ -400,7 +405,14 @@ fn run(args: BuildArgs) -> Result<(), String> {
     let mut cache = BuildCache::load(&cache_path);
     let mut cas = ContentAddressableStore::new(out_dir.join(".cas"));
     if assets_src.exists() {
-        copy_assets(&assets_src, &assets_dst, args.compress_textures, args.gpu_texture_format, &mut cache, &mut cas)?;
+        copy_assets(
+            &assets_src,
+            &assets_dst,
+            args.compress_textures,
+            args.gpu_texture_format,
+            &mut cache,
+            &mut cas,
+        )?;
         cache.save(&cache_path)?;
         log::info!("Assets copied to {}", assets_dst.display());
     }
@@ -411,10 +423,22 @@ fn run(args: BuildArgs) -> Result<(), String> {
     } else {
         manifest.entry_crate.clone()
     };
-    cargo_build(&args.project_dir, &entry_crate, args.target, args.release, &manifest.features)?;
+    cargo_build(
+        &args.project_dir,
+        &entry_crate,
+        args.target,
+        args.release,
+        &manifest.features,
+    )?;
 
     // 3. Copy binary into output.
-    copy_binary(&args.project_dir, &out_dir, &entry_crate, args.target, args.release)?;
+    copy_binary(
+        &args.project_dir,
+        &out_dir,
+        &entry_crate,
+        args.target,
+        args.release,
+    )?;
 
     // 4. Platform-specific packaging.
     match args.target {
@@ -436,12 +460,27 @@ fn run(args: BuildArgs) -> Result<(), String> {
 
 // ── asset processing ────────────────────────────────────────────
 
-fn copy_assets(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, cache: &mut BuildCache, cas: &mut ContentAddressableStore) -> Result<(), String> {
+fn copy_assets(
+    src: &Path,
+    dst: &Path,
+    compress_textures: bool,
+    gpu_fmt: GpuTextureFormat,
+    cache: &mut BuildCache,
+    cas: &mut ContentAddressableStore,
+) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("create assets dir: {e}"))?;
     copy_dir_recursive(src, dst, compress_textures, gpu_fmt, src, cache, cas)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: GpuTextureFormat, assets_root: &Path, cache: &mut BuildCache, _cas: &mut ContentAddressableStore) -> Result<(), String> {
+fn copy_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    compress_textures: bool,
+    gpu_fmt: GpuTextureFormat,
+    assets_root: &Path,
+    cache: &mut BuildCache,
+    _cas: &mut ContentAddressableStore,
+) -> Result<(), String> {
     use rayon::prelude::*;
 
     // Phase 1: Recursively collect every leaf file with its source and destination paths.
@@ -451,7 +490,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: 
         rel_path: String,
     }
 
-    fn collect_files(src: &Path, dst: &Path, assets_root: &Path, out: &mut Vec<FileEntry>) -> Result<Vec<PathBuf>, String> {
+    fn collect_files(
+        src: &Path,
+        dst: &Path,
+        assets_root: &Path,
+        out: &mut Vec<FileEntry>,
+    ) -> Result<Vec<PathBuf>, String> {
         let mut dirs = Vec::new();
         let entries = fs::read_dir(src).map_err(|e| format!("readdir {}: {e}", src.display()))?;
         for entry in entries {
@@ -467,11 +511,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: 
                 if name_str.starts_with(".editor") || name_str.ends_with(".editor.json") {
                     continue;
                 }
-                let rel_path = path.strip_prefix(assets_root)
+                let rel_path = path
+                    .strip_prefix(assets_root)
                     .unwrap_or(&path)
                     .to_string_lossy()
                     .replace('\\', "/");
-                out.push(FileEntry { src_path: path, dest_path, rel_path });
+                out.push(FileEntry {
+                    src_path: path,
+                    dest_path,
+                    rel_path,
+                });
             }
         }
         Ok(dirs)
@@ -485,45 +534,82 @@ fn copy_dir_recursive(src: &Path, dst: &Path, compress_textures: bool, gpu_fmt: 
     }
 
     // Phase 2: Filter unchanged files (this part needs &mut cache, so keep sequential).
-    let to_process: Vec<FileEntry> = entries.into_iter().filter(|fe| {
-        if fe.dest_path.exists() && cache.is_unchanged(&fe.rel_path, &fe.src_path) {
-            log::debug!("Unchanged, skipping: {}", fe.rel_path);
-            false
-        } else {
-            true
-        }
-    }).collect();
+    let to_process: Vec<FileEntry> = entries
+        .into_iter()
+        .filter(|fe| {
+            if fe.dest_path.exists() && cache.is_unchanged(&fe.rel_path, &fe.src_path) {
+                log::debug!("Unchanged, skipping: {}", fe.rel_path);
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
 
     // Phase 3: Process files in parallel.
-    let results: Vec<Result<String, String>> = to_process.par_iter().map(|fe| {
-        let name_str = fe.src_path.file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+    let results: Vec<Result<String, String>> = to_process
+        .par_iter()
+        .map(|fe| {
+            let name_str = fe
+                .src_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
 
-        if compress_textures && is_texture_file(&name_str) {
-            if let Err(e) = compress_texture(&fe.src_path, &fe.dest_path, gpu_fmt) {
-                log::warn!("Texture compression failed for {}: {e}, copying as-is", fe.src_path.display());
-                fs::copy(&fe.src_path, &fe.dest_path)
-                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
+            if compress_textures && is_texture_file(&name_str) {
+                if let Err(e) = compress_texture(&fe.src_path, &fe.dest_path, gpu_fmt) {
+                    log::warn!(
+                        "Texture compression failed for {}: {e}, copying as-is",
+                        fe.src_path.display()
+                    );
+                    fs::copy(&fe.src_path, &fe.dest_path).map_err(|e| {
+                        format!(
+                            "copy {} → {}: {e}",
+                            fe.src_path.display(),
+                            fe.dest_path.display()
+                        )
+                    })?;
+                }
+            } else if is_mesh_file(&name_str) {
+                if let Err(e) = optimize_mesh(&fe.src_path, &fe.dest_path) {
+                    log::warn!(
+                        "Mesh optimization failed for {}: {e}, copying as-is",
+                        fe.src_path.display()
+                    );
+                    fs::copy(&fe.src_path, &fe.dest_path).map_err(|e| {
+                        format!(
+                            "copy {} → {}: {e}",
+                            fe.src_path.display(),
+                            fe.dest_path.display()
+                        )
+                    })?;
+                }
+            } else if is_audio_file(&name_str) {
+                if let Err(e) = transcode_audio(&fe.src_path, &fe.dest_path) {
+                    log::warn!(
+                        "Audio transcode failed for {}: {e}, copying as-is",
+                        fe.src_path.display()
+                    );
+                    fs::copy(&fe.src_path, &fe.dest_path).map_err(|e| {
+                        format!(
+                            "copy {} → {}: {e}",
+                            fe.src_path.display(),
+                            fe.dest_path.display()
+                        )
+                    })?;
+                }
+            } else {
+                fs::copy(&fe.src_path, &fe.dest_path).map_err(|e| {
+                    format!(
+                        "copy {} → {}: {e}",
+                        fe.src_path.display(),
+                        fe.dest_path.display()
+                    )
+                })?;
             }
-        } else if is_mesh_file(&name_str) {
-            if let Err(e) = optimize_mesh(&fe.src_path, &fe.dest_path) {
-                log::warn!("Mesh optimization failed for {}: {e}, copying as-is", fe.src_path.display());
-                fs::copy(&fe.src_path, &fe.dest_path)
-                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
-            }
-        } else if is_audio_file(&name_str) {
-            if let Err(e) = transcode_audio(&fe.src_path, &fe.dest_path) {
-                log::warn!("Audio transcode failed for {}: {e}, copying as-is", fe.src_path.display());
-                fs::copy(&fe.src_path, &fe.dest_path)
-                    .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
-            }
-        } else {
-            fs::copy(&fe.src_path, &fe.dest_path)
-                .map_err(|e| format!("copy {} → {}: {e}", fe.src_path.display(), fe.dest_path.display()))?;
-        }
-        Ok(fe.rel_path.clone())
-    }).collect();
+            Ok(fe.rel_path.clone())
+        })
+        .collect();
 
     // Phase 4: Record cache entries (sequential, needs &mut).
     for result in results {
@@ -555,18 +641,15 @@ fn compress_texture(src: &Path, dst: &Path, gpu_fmt: GpuTextureFormat) -> Result
     };
 
     match gpu_fmt {
-        GpuTextureFormat::Bc7 => {
-            compress_texture_bc7(&img, dst)
-        }
-        GpuTextureFormat::Astc4x4 => {
-            compress_texture_astc(&img, dst)
-        }
+        GpuTextureFormat::Bc7 => compress_texture_bc7(&img, dst),
+        GpuTextureFormat::Astc4x4 => compress_texture_astc(&img, dst),
         GpuTextureFormat::None => {
             // Fallback: JPEG 80%.
             let dest_path = dst.with_extension("jpg");
             let mut file = fs::File::create(&dest_path).map_err(|e| format!("{e}"))?;
             let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut file, 80);
-            img.write_with_encoder(encoder).map_err(|e| format!("{e}"))?;
+            img.write_with_encoder(encoder)
+                .map_err(|e| format!("{e}"))?;
             log::debug!("Compressed {} → {}", src.display(), dest_path.display());
             Ok(())
         }
@@ -642,8 +725,8 @@ fn compress_texture_astc(img: &image::DynamicImage, dst: &Path) -> Result<(), St
                     let sx = (bx * 4 + px).min(w - 1);
                     let sy = (by * 4 + py).min(h - 1);
                     let pixel = rgba.get_pixel(sx, sy);
-                    for c in 0..4 {
-                        sum[c] += pixel.0[c] as u32;
+                    for (sc, pc) in sum.iter_mut().zip(pixel.0.iter()) {
+                        *sc += *pc as u32;
                     }
                     count += 1;
                 }
@@ -654,10 +737,10 @@ fn compress_texture_astc(img: &image::DynamicImage, dst: &Path) -> Result<(), St
             block_data[1] = 0x01;
             // Void extent coords = all zeros (skip bytes 2..7).
             // RGBA16 colour in bytes 8..15.
-            for c in 0..4 {
-                let avg = (sum[c] / count) as u16;
+            for (c_idx, sc) in sum.iter().enumerate() {
+                let avg = (sc / count) as u16;
                 let avg16 = avg | (avg << 8); // expand to 16-bit
-                let off = 8 + c * 2;
+                let off = 8 + c_idx * 2;
                 block_data[off] = (avg16 & 0xFF) as u8;
                 block_data[off + 1] = ((avg16 >> 8) & 0xFF) as u8;
             }
@@ -729,8 +812,7 @@ fn copy_binary(
     let src_bin = target_base.join(&bin_name);
     if src_bin.exists() {
         let dst_bin = out_dir.join(&bin_name);
-        fs::copy(&src_bin, &dst_bin)
-            .map_err(|e| format!("copy binary: {e}"))?;
+        fs::copy(&src_bin, &dst_bin).map_err(|e| format!("copy binary: {e}"))?;
         log::info!("Binary copied to {}", dst_bin.display());
     } else {
         log::warn!("Binary not found at {} — skipping copy", src_bin.display());
@@ -741,7 +823,11 @@ fn copy_binary(
 
 // ── Android APK packaging ───────────────────────────────────────
 
-fn package_android(out_dir: &Path, manifest: &ProjectManifest, release: bool) -> Result<(), String> {
+fn package_android(
+    out_dir: &Path,
+    manifest: &ProjectManifest,
+    release: bool,
+) -> Result<(), String> {
     let apk_dir = out_dir.join("apk");
     fs::create_dir_all(apk_dir.join("lib/arm64-v8a"))
         .map_err(|e| format!("create APK lib dir: {e}"))?;
@@ -761,7 +847,15 @@ fn package_android(out_dir: &Path, manifest: &ProjectManifest, release: bool) ->
     if assets_src.exists() {
         let mut dummy_cache = BuildCache::default();
         let mut dummy_cas = ContentAddressableStore::new(out_dir.join(".cas"));
-        copy_dir_recursive(&assets_src, &apk_dir.join("assets"), false, GpuTextureFormat::None, &assets_src, &mut dummy_cache, &mut dummy_cas)?;
+        copy_dir_recursive(
+            &assets_src,
+            &apk_dir.join("assets"),
+            false,
+            GpuTextureFormat::None,
+            &assets_src,
+            &mut dummy_cache,
+            &mut dummy_cas,
+        )?;
     }
 
     // Generate AndroidManifest.xml.
@@ -867,8 +961,7 @@ fn build_apk_with_aapt2(
 fn package_ios(out_dir: &Path, manifest: &ProjectManifest, _release: bool) -> Result<(), String> {
     let bundle_name = format!("{}.app", manifest.name);
     let app_dir = out_dir.join(&bundle_name);
-    fs::create_dir_all(&app_dir)
-        .map_err(|e| format!("create app bundle dir: {e}"))?;
+    fs::create_dir_all(&app_dir).map_err(|e| format!("create app bundle dir: {e}"))?;
 
     // Copy binary into bundle.
     let src_bin = out_dir.join(&manifest.name);
@@ -957,8 +1050,7 @@ fn generate_info_plist(app_name: &str, version: &str, bundle_id: &str) -> String
 
 fn generate_xcodeproj(out_dir: &Path, manifest: &ProjectManifest) -> Result<(), String> {
     let proj_dir = out_dir.join(format!("{}.xcodeproj", manifest.name));
-    fs::create_dir_all(&proj_dir)
-        .map_err(|e| format!("create xcodeproj dir: {e}"))?;
+    fs::create_dir_all(&proj_dir).map_err(|e| format!("create xcodeproj dir: {e}"))?;
 
     // Minimal pbxproj that references the pre-built binary.
     let pbxproj = format!(
@@ -1023,7 +1115,10 @@ fn is_mesh_file(name: &str) -> bool {
 
 fn is_audio_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".wav") || lower.ends_with(".ogg") || lower.ends_with(".mp3") || lower.ends_with(".flac")
+    lower.ends_with(".wav")
+        || lower.ends_with(".ogg")
+        || lower.ends_with(".mp3")
+        || lower.ends_with(".flac")
 }
 
 /// Optimise a mesh file for GPU performance.
@@ -1085,11 +1180,7 @@ fn optimize_mesh(src: &Path, dst: &Path) -> Result<(), String> {
                 let mut opt_indices = meshopt::optimize_vertex_cache(&indices, vertex_count);
 
                 // Step 2: Overdraw optimisation.
-                meshopt::optimize_overdraw_in_place_decoder(
-                    &mut opt_indices,
-                    &positions,
-                    1.05,
-                );
+                meshopt::optimize_overdraw_in_place_decoder(&mut opt_indices, &positions, 1.05);
 
                 // Step 3: Vertex fetch remap.
                 let _remap = meshopt::optimize_vertex_fetch_remap(&opt_indices, vertex_count);
@@ -1113,7 +1204,11 @@ fn optimize_mesh(src: &Path, dst: &Path) -> Result<(), String> {
             header.extend_from_slice(&prim_count.to_le_bytes());
             header.extend_from_slice(&optimised_data);
             fs::write(&sidecar, &header).map_err(|e| format!("{e}"))?;
-            log::debug!("Mesh optimised (meshopt, {} primitives) → {}", prim_count, sidecar.display());
+            log::debug!(
+                "Mesh optimised (meshopt, {} primitives) → {}",
+                prim_count,
+                sidecar.display()
+            );
         }
 
         Ok(())
@@ -1159,7 +1254,12 @@ fn forsyth_reorder(indices: &[u32], vertex_count: usize) -> Vec<u32> {
     let mut result = Vec::with_capacity(indices.len());
 
     // Greedy: pick the next best triangle from the cache neighbourhood.
-    fn vertex_score(live_valence: &[u32], v: u32, cache_pos: Option<usize>, cache_size: usize) -> f32 {
+    fn vertex_score(
+        live_valence: &[u32],
+        v: u32,
+        cache_pos: Option<usize>,
+        cache_size: usize,
+    ) -> f32 {
         let lv = live_valence.get(v as usize).copied().unwrap_or(0);
         if lv == 0 {
             return -1.0;

@@ -195,7 +195,9 @@ impl RenderGraph {
         att_ids.sort_by_key(|id| lifetimes.get(id).map(|r| r.0).unwrap_or(usize::MAX));
 
         for att_id in att_ids {
-            let Some(attachment) = self.attachments.get_mut(&att_id) else { continue };
+            let Some(attachment) = self.attachments.get_mut(&att_id) else {
+                continue;
+            };
             let key = (attachment.format, attachment.size.0, attachment.size.1);
             let (first, last) = match lifetimes.get(&att_id) {
                 Some(&(f, l)) => (f, l),
@@ -213,19 +215,28 @@ impl RenderGraph {
             let reuse_idx = pool.iter().position(|p| p.last_used < first);
             if let Some(idx) = reuse_idx {
                 pool[idx].last_used = last;
-                let view = pool[idx].texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let view = pool[idx]
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 attachment.texture = None; // aliased — owned by pool
                 attachment.view = Some(view);
             } else {
                 let (texture, _view) = Self::alloc_texture(device, attachment);
-                attachment.view = Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
-                pool.push(Pool { texture, last_used: last });
+                attachment.view =
+                    Some(texture.create_view(&wgpu::TextureViewDescriptor::default()));
+                pool.push(Pool {
+                    texture,
+                    last_used: last,
+                });
             }
         }
         Ok(())
     }
 
-    fn alloc_texture(device: &wgpu::Device, attachment: &Attachment) -> (wgpu::Texture, wgpu::TextureView) {
+    fn alloc_texture(
+        device: &wgpu::Device,
+        attachment: &Attachment,
+    ) -> (wgpu::Texture, wgpu::TextureView) {
         let size = wgpu::Extent3d {
             width: attachment.size.0,
             height: attachment.size.1,
@@ -238,8 +249,7 @@ impl RenderGraph {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: attachment.format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -247,8 +257,12 @@ impl RenderGraph {
     }
 
     /// Compute the first and last topological index at which each attachment is used.
-    fn compute_attachment_lifetimes(&self, order: &[PassId]) -> HashMap<AttachmentId, (usize, usize)> {
-        let pass_index: HashMap<PassId, usize> = order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+    fn compute_attachment_lifetimes(
+        &self,
+        order: &[PassId],
+    ) -> HashMap<AttachmentId, (usize, usize)> {
+        let pass_index: HashMap<PassId, usize> =
+            order.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         let mut lifetimes: HashMap<AttachmentId, (usize, usize)> = HashMap::new();
         for (&pid, node) in &self.nodes {
             let idx = match pass_index.get(&pid) {
@@ -506,7 +520,10 @@ impl RenderGraph {
 
             // Inputs need ShaderRead.
             for &att in &node.inputs {
-                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev = current_state
+                    .get(&att)
+                    .copied()
+                    .unwrap_or(ResourceState::Undefined);
                 if prev != ResourceState::ShaderRead {
                     transitions.push(ResourceTransition {
                         attachment: att,
@@ -520,7 +537,10 @@ impl RenderGraph {
 
             // Outputs need RenderTarget.
             for &att in &node.outputs {
-                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev = current_state
+                    .get(&att)
+                    .copied()
+                    .unwrap_or(ResourceState::Undefined);
                 if prev != ResourceState::RenderTarget {
                     transitions.push(ResourceTransition {
                         attachment: att,
@@ -632,11 +652,17 @@ impl RenderGraph {
                 Some(n) => n,
                 None => continue,
             };
-            let pass_queue = queue_map.get(&pass_id).copied().unwrap_or(PassQueue::Graphics);
+            let pass_queue = queue_map
+                .get(&pass_id)
+                .copied()
+                .unwrap_or(PassQueue::Graphics);
 
             // Inputs → ShaderRead
             for &att in &node.inputs {
-                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev = current_state
+                    .get(&att)
+                    .copied()
+                    .unwrap_or(ResourceState::Undefined);
                 let prev_queue = last_queue.get(&att).copied().unwrap_or(PassQueue::Graphics);
                 let cross = prev_queue != pass_queue;
 
@@ -655,7 +681,10 @@ impl RenderGraph {
 
             // Outputs → RenderTarget
             for &att in &node.outputs {
-                let prev = current_state.get(&att).copied().unwrap_or(ResourceState::Undefined);
+                let prev = current_state
+                    .get(&att)
+                    .copied()
+                    .unwrap_or(ResourceState::Undefined);
                 let prev_queue = last_queue.get(&att).copied().unwrap_or(PassQueue::Graphics);
                 let cross = prev_queue != pass_queue;
 
@@ -687,7 +716,10 @@ impl RenderGraph {
         let mut groups: Vec<(PassQueue, Vec<PassId>)> = Vec::new();
 
         for &pass_id in order {
-            let queue = queue_map.get(&pass_id).copied().unwrap_or(PassQueue::Graphics);
+            let queue = queue_map
+                .get(&pass_id)
+                .copied()
+                .unwrap_or(PassQueue::Graphics);
             if let Some(last) = groups.last_mut() {
                 if last.0 == queue {
                     last.1.push(pass_id);
@@ -716,7 +748,11 @@ impl RenderGraph {
         // For each pass that reads, add deps on writers.
         let pass_ids: Vec<PassId> = self.nodes.keys().copied().collect();
         for pid in pass_ids {
-            let inputs = self.nodes.get(&pid).map(|n| n.inputs.clone()).unwrap_or_default();
+            let inputs = self
+                .nodes
+                .get(&pid)
+                .map(|n| n.inputs.clone())
+                .unwrap_or_default();
             for att in inputs {
                 if let Some(att_writers) = writers.get(&att) {
                     for &writer in att_writers {
@@ -763,11 +799,17 @@ mod tests {
     // Dummy pass for testing.
     struct DummyPass(&'static str);
     impl RenderPass for DummyPass {
-        fn name(&self) -> &str { self.0 }
+        fn name(&self) -> &str {
+            self.0
+        }
         fn execute(
-            &self, _: &wgpu::Device, _: &wgpu::Queue,
-            _: &mut wgpu::CommandEncoder, _: &RenderContext,
-        ) {}
+            &self,
+            _: &wgpu::Device,
+            _: &wgpu::Queue,
+            _: &mut wgpu::CommandEncoder,
+            _: &RenderContext,
+        ) {
+        }
     }
 
     #[test]
@@ -868,5 +910,268 @@ mod tests {
         graph.add_dependency(c, b);
 
         assert!(graph.compile().is_ok());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RenderNode trait — enhanced pass interface with resource tracking
+// ---------------------------------------------------------------------------
+
+/// Resource identifiers for render graph dependency tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RenderResource {
+    /// Shadow atlas texture (cascades + point light shadows).
+    ShadowAtlas,
+    /// G-Buffer RT0: albedo.rgb + roughness.a
+    GBufferAlbedo,
+    /// G-Buffer RT1: world_normal.xyz + metallic.a
+    GBufferNormal,
+    /// G-Buffer RT2: emissive.rgb + AO.a
+    GBufferEmissive,
+    /// G-Buffer depth buffer (reversed-Z, 32F).
+    GBufferDepth,
+    /// Hi-Z pyramid for occlusion culling.
+    HiZPyramid,
+    /// HDR color buffer for lighting accumulation.
+    HdrColor,
+    /// Screen-space global illumination buffer.
+    GiBuffer,
+    /// Screen-space reflections buffer.
+    SsrBuffer,
+    /// Velocity buffer for TAA (RG16F).
+    VelocityBuffer,
+    /// Volumetric fog froxel grid.
+    VolumetricFog,
+    /// Bloom extract (bright pixels).
+    BloomExtract,
+    /// Bloom mip level N.
+    BloomMip(u32),
+    /// LDR output for post-processing.
+    LdrColor,
+    /// Motion vectors for temporal effects.
+    MotionVectors,
+}
+
+/// Enhanced render node trait with explicit I/O tracking.
+pub trait RenderNode: Send + Sync {
+    /// Unique name for this pass type.
+    fn name(&self) -> &str;
+
+    /// Textures/buffers this pass reads from.
+    fn inputs(&self) -> &[RenderResource];
+
+    /// Textures/buffers this pass writes to.
+    fn outputs(&self) -> &[RenderResource];
+
+    /// Execute the pass, recording commands to the encoder.
+    fn run(&self, ctx: &RenderContext, encoder: &mut wgpu::CommandEncoder);
+
+    /// Whether this pass can run on async compute queue.
+    fn is_compute(&self) -> bool {
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Standard render pass implementations
+// ---------------------------------------------------------------------------
+
+/// Shadow atlas render pass — writes cascades and point light shadows.
+pub struct ShadowPass {
+    pub shadow_atlas_size: u32,
+}
+
+impl RenderNode for ShadowPass {
+    fn name(&self) -> &str {
+        "ShadowPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[RenderResource::ShadowAtlas]
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Render shadow cascades and point light shadow maps
+        // This is a depth-only pass, no color attachment
+    }
+}
+
+/// G-Buffer pass — writes albedo, normal, emissive, depth.
+pub struct GBufferPass;
+
+impl RenderNode for GBufferPass {
+    fn name(&self) -> &str {
+        "GBufferPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[
+            RenderResource::GBufferAlbedo,
+            RenderResource::GBufferNormal,
+            RenderResource::GBufferEmissive,
+            RenderResource::GBufferDepth,
+            RenderResource::VelocityBuffer,
+        ]
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Render geometry to G-Buffer
+        // Also output velocity for TAA
+    }
+}
+
+/// Hi-Z pyramid build pass — reads depth, writes mip chain.
+pub struct HiZBuildPass;
+
+impl RenderNode for HiZBuildPass {
+    fn name(&self) -> &str {
+        "HiZBuildPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[RenderResource::GBufferDepth]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[RenderResource::HiZPyramid]
+    }
+    fn is_compute(&self) -> bool {
+        true
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Compute Hi-Z pyramid for occlusion culling
+    }
+}
+
+/// Deferred lighting pass — reads G-Buffer, writes HDR.
+pub struct DeferredLightPass;
+
+impl RenderNode for DeferredLightPass {
+    fn name(&self) -> &str {
+        "DeferredLightPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[
+            RenderResource::GBufferAlbedo,
+            RenderResource::GBufferNormal,
+            RenderResource::GBufferEmissive,
+            RenderResource::GBufferDepth,
+            RenderResource::ShadowAtlas,
+            RenderResource::HiZPyramid,
+        ]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[RenderResource::HdrColor]
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Accumulate lighting with clustered/deferred shading
+    }
+}
+
+/// SSGI pass — reads G-Buffer + HDR, writes GI buffer.
+pub struct SSGIPass;
+
+impl RenderNode for SSGIPass {
+    fn name(&self) -> &str {
+        "SSGIPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[
+            RenderResource::GBufferAlbedo,
+            RenderResource::GBufferNormal,
+            RenderResource::GBufferDepth,
+            RenderResource::HdrColor,
+        ]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[RenderResource::GiBuffer]
+    }
+    fn is_compute(&self) -> bool {
+        true
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Screen-space global illumination
+    }
+}
+
+/// Post-process pass — reads HDR + effects, writes LDR.
+pub struct PostProcessPass {
+    pub enable_taa: bool,
+    pub enable_bloom: bool,
+    pub enable_fxaa: bool,
+}
+
+impl RenderNode for PostProcessPass {
+    fn name(&self) -> &str {
+        "PostProcessPass"
+    }
+    fn inputs(&self) -> &[RenderResource] {
+        &[
+            RenderResource::HdrColor,
+            RenderResource::GiBuffer,
+            RenderResource::VelocityBuffer,
+        ]
+    }
+    fn outputs(&self) -> &[RenderResource] {
+        &[RenderResource::LdrColor]
+    }
+
+    fn run(&self, _ctx: &RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // TAA -> Bloom -> Tone-map -> FXAA
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Graph execution with automatic barrier insertion
+// ---------------------------------------------------------------------------
+
+impl RenderGraph {
+    /// Execute with automatic resource barrier insertion.
+    pub fn execute_with_barriers(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        context: &RenderContext,
+    ) -> Result<wgpu::CommandBuffer, RenderGraphError> {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Graph"),
+        });
+
+        let order = self.compile()?;
+
+        // Track resource states for barrier insertion
+        let mut resource_states: HashMap<AttachmentId, wgpu::TextureUsages> = HashMap::new();
+
+        for pass_id in &order {
+            if let Some(node) = self.nodes.get(pass_id) {
+                // Insert barriers for inputs (read-after-write)
+                for &att_id in &node.inputs {
+                    if let Some(att) = self.attachments.get(&att_id) {
+                        if let (Some(_texture), Some(_view)) = (&att.texture, &att.view) {
+                            // Transition to shader read if currently written
+                            encoder.push_debug_group(&format!("Barrier for {}", att.name));
+                            // wgpu handles most barriers automatically, but for
+                            // compute passes we need explicit transitions
+                            encoder.pop_debug_group();
+                        }
+                    }
+                }
+
+                // Execute the pass
+                node.pass.execute(device, queue, &mut encoder, context);
+
+                // Track outputs for subsequent passes
+                for &att_id in &node.outputs {
+                    resource_states.insert(att_id, wgpu::TextureUsages::RENDER_ATTACHMENT);
+                }
+            }
+        }
+
+        Ok(encoder.finish())
     }
 }

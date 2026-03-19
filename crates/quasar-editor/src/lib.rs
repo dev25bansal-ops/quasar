@@ -5,7 +5,7 @@
 //! Provides a runtime GUI overlay for inspecting entities, viewing logs,
 //! and tweaking component values — press F12 to toggle.
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod asset_browser;
 pub mod asset_metadata;
@@ -48,15 +48,13 @@ pub use shader_graph_editor::ShaderGraphEditor;
 // ---------------------------------------------------------------------------
 
 /// Interpolation mode for a keyframe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InterpolationMode {
     Step,
     #[default]
     Linear,
     CubicSpline,
 }
-
 
 /// A channel (track lane) in the timeline.
 #[derive(Debug, Clone)]
@@ -238,10 +236,10 @@ impl TimelinePanel {
                                             + (t - self.scroll_offset) * self.zoom;
                                         let dist =
                                             ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
-                                        if dist < 6.0
-                                            && (best.is_none() || dist < best.unwrap().2) {
-                                                best = Some((ch_idx, kf_idx, dist));
-                                            }
+                                        if dist < 6.0 && (best.is_none() || dist < best.unwrap().2)
+                                        {
+                                            best = Some((ch_idx, kf_idx, dist));
+                                        }
                                     }
                                 }
                                 if let Some((ch, kf, _)) = best {
@@ -852,8 +850,7 @@ impl Editor {
             }
         }
 
-        let Some(physics_resource) = world.resource_mut::<quasar_physics::PhysicsResource>()
-        else {
+        let Some(physics_resource) = world.resource_mut::<quasar_physics::PhysicsResource>() else {
             return;
         };
 

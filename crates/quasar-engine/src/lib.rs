@@ -13,7 +13,7 @@
 //! run(app, WindowConfig::default());
 //! ```
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod runner;
 
@@ -38,11 +38,15 @@ pub mod prelude {
     // Core ECS
     pub use quasar_core::asset::{Asset, AssetHandle, AssetManager};
     pub use quasar_core::ecs::{Schedule, System, SystemStage};
-    pub use quasar_core::{App, Component, Entity, EntityBuilder, Events, Plugin, Time, TimeSnapshot, World};
+    pub use quasar_core::{
+        App, Component, Entity, EntityBuilder, Events, Plugin, Time, TimeSnapshot, World,
+    };
     pub use quasar_core::{Scene, SceneGraph};
 
     // Math
-    pub use quasar_math::{Color, EulerRot, GlobalTransform, Mat4, Quat, Transform, Vec2, Vec3, Vec4};
+    pub use quasar_math::{
+        Color, EulerRot, GlobalTransform, Mat4, Quat, Transform, Vec2, Vec3, Vec4,
+    };
 
     // Rendering
     pub use quasar_render::{

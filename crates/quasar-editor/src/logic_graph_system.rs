@@ -8,6 +8,8 @@
 //!
 //! ## Physics Integration (ApplyForce)
 //! The `ApplyForce` node requires access to `quasar_physics::PhysicsWorld`.
+
+#![allow(clippy::too_many_arguments)]
 //! To integrate:
 //! 1. Pass `PhysicsWorld` reference to `LogicGraphSystem::update()`
 //! 2. For each `ApplyForce` node, call `physics.apply_force(rigid_body_handle, [fx, fy, fz])`

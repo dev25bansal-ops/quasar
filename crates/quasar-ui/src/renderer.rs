@@ -1,6 +1,8 @@
 //! GPU renderer for the retained-mode UI — draws textured/colored quads
 //! using wgpu.
 
+#![allow(clippy::too_many_arguments)]
+
 use crate::layout::LayoutSolver;
 use crate::style::Color;
 use crate::widget::{UiTree, WidgetId};
@@ -198,10 +200,26 @@ impl UiRenderPass {
             let y1 = 1.0 - (rect.y + rect.height) / vh * 2.0;
 
             let base = vertices.len() as u32;
-            vertices.push(UiVertex { position: [x0, y0], uv: [0.0, 0.0], color });
-            vertices.push(UiVertex { position: [x1, y0], uv: [1.0, 0.0], color });
-            vertices.push(UiVertex { position: [x1, y1], uv: [1.0, 1.0], color });
-            vertices.push(UiVertex { position: [x0, y1], uv: [0.0, 1.0], color });
+            vertices.push(UiVertex {
+                position: [x0, y0],
+                uv: [0.0, 0.0],
+                color,
+            });
+            vertices.push(UiVertex {
+                position: [x1, y0],
+                uv: [1.0, 0.0],
+                color,
+            });
+            vertices.push(UiVertex {
+                position: [x1, y1],
+                uv: [1.0, 1.0],
+                color,
+            });
+            vertices.push(UiVertex {
+                position: [x0, y1],
+                uv: [0.0, 1.0],
+                color,
+            });
             indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         }
 

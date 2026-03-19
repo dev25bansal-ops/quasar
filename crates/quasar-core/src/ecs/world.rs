@@ -1,11 +1,15 @@
 //! World — the central data store for all entities and components.
 
+#![allow(clippy::type_complexity)]
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
 use rustc_hash::FxHashMap;
 
-use super::archetype::{ArchetypeGraph, ArchetypeId, ArchetypeSignature, ColumnStorage, TypedColumn};
+use super::archetype::{
+    ArchetypeGraph, ArchetypeId, ArchetypeSignature, ColumnStorage, TypedColumn,
+};
 use super::component::Component;
 use super::entity::{Entity, EntityAllocator};
 use super::relation::{ChildOf, Relation, RelationGraph};
@@ -50,13 +54,21 @@ pub trait ObserverEvent {
 }
 
 impl<T: 'static> ObserverEvent for OnAdd<T> {
-    fn kind() -> ObserverKind { ObserverKind::OnAdd }
-    fn component_type_id() -> TypeId { TypeId::of::<T>() }
+    fn kind() -> ObserverKind {
+        ObserverKind::OnAdd
+    }
+    fn component_type_id() -> TypeId {
+        TypeId::of::<T>()
+    }
 }
 
 impl<T: 'static> ObserverEvent for OnRemove<T> {
-    fn kind() -> ObserverKind { ObserverKind::OnRemove }
-    fn component_type_id() -> TypeId { TypeId::of::<T>() }
+    fn kind() -> ObserverKind {
+        ObserverKind::OnRemove
+    }
+    fn component_type_id() -> TypeId {
+        TypeId::of::<T>()
+    }
 }
 
 // ── Bundle trait ─────────────────────────────────────────────────
@@ -268,7 +280,10 @@ impl World {
         // Log removals for all components this entity had
         if let Some(components) = self.entity_components.get(&entity.index()) {
             for &type_id in components.iter() {
-                self.removal_log.entry(type_id).or_default().push(entity.index());
+                self.removal_log
+                    .entry(type_id)
+                    .or_default()
+                    .push(entity.index());
             }
         }
 
@@ -337,7 +352,9 @@ impl World {
         let type_id = TypeId::of::<T>();
 
         // Register column factory for this type (for insert_raw support)
-        self.column_factories.entry(type_id).or_insert(create_typed_column::<T>);
+        self.column_factories
+            .entry(type_id)
+            .or_insert(create_typed_column::<T>);
 
         // Track component for this entity
         let components = self.entity_components.entry(entity.index()).or_default();
@@ -360,16 +377,15 @@ impl World {
 
         // Check if entity needs to migrate to new archetype
         let old_arch_id = self.entity_archetype.get(&entity.index()).copied();
-        let needs_migration =
-            if let Some(current_arch_id) = old_arch_id {
-                if let Some(current_arch) = self.archetype_graph.get(current_arch_id) {
-                    !current_arch.signature.contains(&type_id)
-                } else {
-                    true
-                }
+        let needs_migration = if let Some(current_arch_id) = old_arch_id {
+            if let Some(current_arch) = self.archetype_graph.get(current_arch_id) {
+                !current_arch.signature.contains(&type_id)
             } else {
                 true
-            };
+            }
+        } else {
+            true
+        };
 
         if needs_migration {
             let new_arch_id = self.archetype_graph.get_or_create(&sig);
@@ -377,9 +393,7 @@ impl World {
             // ── Phase 1: extract SoA data from old archetype (if any) ──
             let extracted = if let Some(old_id) = old_arch_id {
                 if let Some(old_arch) = self.archetype_graph.get_mut(old_id) {
-                    if let Some((_freed_row, data)) =
-                        old_arch.remove_entity_extract_soa(entity)
-                    {
+                    if let Some((_freed_row, data)) = old_arch.remove_entity_extract_soa(entity) {
                         // Update entity_row for the entity that was swapped
                         // into the freed row (if any).
                         if _freed_row < old_arch.entities.len() {
@@ -411,19 +425,21 @@ impl World {
                         new_arch.columns.push(empty_col);
                         new_arch.type_to_column.insert(tid, idx);
                     }
-                    let Some(&ci) = new_arch.type_to_column.get(&tid) else { continue };
+                    let Some(&ci) = new_arch.type_to_column.get(&tid) else {
+                        continue;
+                    };
                     (*new_arch.columns[ci]).push_raw(value);
                 }
 
                 // Push the NEW component T into its SoA column
                 new_arch.ensure_column::<T>();
                 if let Some(&ci) = new_arch.type_to_column.get(&type_id) {
-                if let Some(col) = (*new_arch.columns[ci])
-                    .as_any_mut()
-                    .downcast_mut::<TypedColumn<T>>()
-                {
-                    col.push(component);
-                }
+                    if let Some(col) = (*new_arch.columns[ci])
+                        .as_any_mut()
+                        .downcast_mut::<TypedColumn<T>>()
+                    {
+                        col.push(component);
+                    }
                 }
             } else {
                 // Fallback: just record the archetype mapping
@@ -461,23 +477,27 @@ impl World {
         let type_id = TypeId::of::<T>();
 
         // Check if entity has the component
-        let had_component = if let Some(components) = self.entity_components.get_mut(&entity.index()) {
-            if let Ok(pos) = components.binary_search(&type_id) {
-                components.remove(pos);
-                true
+        let had_component =
+            if let Some(components) = self.entity_components.get_mut(&entity.index()) {
+                if let Ok(pos) = components.binary_search(&type_id) {
+                    components.remove(pos);
+                    true
+                } else {
+                    false
+                }
             } else {
                 false
-            }
-        } else {
-            false
-        };
+            };
 
         if !had_component {
             return false;
         }
 
         // Log removal for Removed<T> query filter
-        self.removal_log.entry(type_id).or_default().push(entity.index());
+        self.removal_log
+            .entry(type_id)
+            .or_default()
+            .push(entity.index());
 
         // Clean up change tick
         if let Some(ticks) = self.change_ticks.get_mut(&type_id) {
@@ -525,7 +545,9 @@ impl World {
                         new_arch.columns.push(empty_col);
                         new_arch.type_to_column.insert(tid, idx);
                     }
-                    let Some(&ci) = new_arch.type_to_column.get(&tid) else { continue };
+                    let Some(&ci) = new_arch.type_to_column.get(&tid) else {
+                        continue;
+                    };
                     (*new_arch.columns[ci]).push_raw(value);
                 }
             }
@@ -552,7 +574,9 @@ impl World {
         let &arch_id = self.entity_archetype.get(&entity.index())?;
         let arch = self.archetype_graph.get(arch_id)?;
         let &col_idx = arch.type_to_column.get(&type_id)?;
-        let col = arch.columns[col_idx].as_any().downcast_ref::<TypedColumn<T>>()?;
+        let col = arch.columns[col_idx]
+            .as_any()
+            .downcast_ref::<TypedColumn<T>>()?;
         let &row = arch.entity_to_row.get(&entity.index())?;
         col.data.get(row)
     }
@@ -605,7 +629,9 @@ impl World {
     /// Insert a component into sparse-set storage (bypasses archetype migration).
     pub fn insert_sparse<T: Component>(&mut self, entity: Entity, component: T) {
         debug_assert!(self.is_alive(entity), "inserting sparse on a dead entity");
-        self.sparse_storage.get_or_create::<T>().insert(entity, component);
+        self.sparse_storage
+            .get_or_create::<T>()
+            .insert(entity, component);
     }
 
     /// Get a shared reference to a sparse-set component.
@@ -799,11 +825,7 @@ impl World {
     /// so that `FilterChanged<T>` can determine what changed since this
     /// system last ran.
     pub fn begin_system(&mut self, name: &str) {
-        self.active_system_last_run = self
-            .system_last_run
-            .get(name)
-            .copied()
-            .unwrap_or(0);
+        self.active_system_last_run = self.system_last_run.get(name).copied().unwrap_or(0);
     }
 
     /// Finalize after running a system: record the current tick as the
@@ -867,10 +889,11 @@ impl World {
                     .as_any_mut()
                     .downcast_mut::<TypedColumn<T>>()
                 {
-                    let count = entities.len().min(col.data.len());
-                    for i in 0..count {
-                        col.set_changed(i, tick);
-                        f(entities[i], &mut col.data[i]);
+                    for (i, entity) in entities.iter().enumerate() {
+                        if i < col.data.len() {
+                            col.set_changed(i, tick);
+                            f(*entity, &mut col.data[i]);
+                        }
                     }
                 }
             }
@@ -896,7 +919,11 @@ impl World {
             ) else {
                 continue;
             };
-            let n = col_a.data.len().min(col_b.data.len()).min(arch.entities.len());
+            let n = col_a
+                .data
+                .len()
+                .min(col_b.data.len())
+                .min(arch.entities.len());
             for i in 0..n {
                 results.push((arch.entities[i], &col_a.data[i], &col_b.data[i]));
             }
@@ -905,13 +932,13 @@ impl World {
     }
 
     /// Query entities that have components `A`, `B`, **and** `C` via archetype SoA.
-    pub fn query3<A: Component, B: Component, C: Component>(
-        &self,
-    ) -> Vec<(Entity, &A, &B, &C)> {
+    pub fn query3<A: Component, B: Component, C: Component>(&self) -> Vec<(Entity, &A, &B, &C)> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
         let type_c = TypeId::of::<C>();
-        let matching = self.archetype_graph.find_with_components(&[type_a, type_b, type_c]);
+        let matching = self
+            .archetype_graph
+            .find_with_components(&[type_a, type_b, type_c]);
         let mut results = Vec::new();
         for arch in &matching {
             let (Some(&ca), Some(&cb), Some(&cc)) = (
@@ -928,12 +955,22 @@ impl World {
             ) else {
                 continue;
             };
-            let n = [col_a.data.len(), col_b.data.len(), col_c.data.len(), arch.entities.len()]
-                .into_iter()
-                .min()
-                .unwrap_or(0);
+            let n = [
+                col_a.data.len(),
+                col_b.data.len(),
+                col_c.data.len(),
+                arch.entities.len(),
+            ]
+            .into_iter()
+            .min()
+            .unwrap_or(0);
             for i in 0..n {
-                results.push((arch.entities[i], &col_a.data[i], &col_b.data[i], &col_c.data[i]));
+                results.push((
+                    arch.entities[i],
+                    &col_a.data[i],
+                    &col_b.data[i],
+                    &col_c.data[i],
+                ));
             }
         }
         results
@@ -968,12 +1005,24 @@ impl World {
             ) else {
                 continue;
             };
-            let n = [a.data.len(), b.data.len(), c.data.len(), d.data.len(), arch.entities.len()]
-                .into_iter()
-                .min()
-                .unwrap_or(0);
+            let n = [
+                a.data.len(),
+                b.data.len(),
+                c.data.len(),
+                d.data.len(),
+                arch.entities.len(),
+            ]
+            .into_iter()
+            .min()
+            .unwrap_or(0);
             for i in 0..n {
-                results.push((arch.entities[i], &a.data[i], &b.data[i], &c.data[i], &d.data[i]));
+                results.push((
+                    arch.entities[i],
+                    &a.data[i],
+                    &b.data[i],
+                    &c.data[i],
+                    &d.data[i],
+                ));
             }
         }
         results
@@ -1011,12 +1060,26 @@ impl World {
             ) else {
                 continue;
             };
-            let n = [a.data.len(), b.data.len(), c.data.len(), d.data.len(), e.data.len(), arch.entities.len()]
-                .into_iter()
-                .min()
-                .unwrap_or(0);
+            let n = [
+                a.data.len(),
+                b.data.len(),
+                c.data.len(),
+                d.data.len(),
+                e.data.len(),
+                arch.entities.len(),
+            ]
+            .into_iter()
+            .min()
+            .unwrap_or(0);
             for i in 0..n {
-                results.push((arch.entities[i], &a.data[i], &b.data[i], &c.data[i], &d.data[i], &e.data[i]));
+                results.push((
+                    arch.entities[i],
+                    &a.data[i],
+                    &b.data[i],
+                    &c.data[i],
+                    &d.data[i],
+                    &e.data[i],
+                ));
             }
         }
         results
@@ -1123,9 +1186,7 @@ impl World {
 
     /// Query entities for component `T`, returning `Option<&U>` for an
     /// optional second component.
-    pub fn query_optional<T: Component, U: Component>(
-        &self,
-    ) -> Vec<(Entity, &T, Option<&U>)> {
+    pub fn query_optional<T: Component, U: Component>(&self) -> Vec<(Entity, &T, Option<&U>)> {
         let type_t = TypeId::of::<T>();
         let type_u = TypeId::of::<U>();
         let matching = self.archetype_graph.find_with_components(&[type_t]);
@@ -1237,7 +1298,9 @@ impl World {
         debug_assert!(self.is_alive(entity), "inserting on a dead entity");
 
         // Register column factory for this type
-        self.column_factories.entry(type_id).or_insert(column_factory);
+        self.column_factories
+            .entry(type_id)
+            .or_insert(column_factory);
 
         // Track component for this entity
         let components = self.entity_components.entry(entity.index()).or_default();
@@ -1340,7 +1403,10 @@ impl World {
         if let Some(components) = self.entity_components.get_mut(&entity.index()) {
             if let Ok(pos) = components.binary_search(&type_id) {
                 components.remove(pos);
-                self.removal_log.entry(type_id).or_default().push(entity.index());
+                self.removal_log
+                    .entry(type_id)
+                    .or_default()
+                    .push(entity.index());
             } else {
                 return false;
             }
@@ -1349,7 +1415,11 @@ impl World {
         }
 
         // Migrate entity to new archetype without the removed component
-        let comp_list = self.entity_components.get(&entity.index()).cloned().unwrap_or_default();
+        let comp_list = self
+            .entity_components
+            .get(&entity.index())
+            .cloned()
+            .unwrap_or_default();
         let mut new_sig = ArchetypeSignature::new();
         for &tid in &comp_list {
             new_sig.add(tid);
@@ -1431,8 +1501,7 @@ impl World {
         }
 
         // Phase 2: BFS children
-        let mut queue: std::collections::VecDeque<Entity> =
-            roots.into_iter().collect();
+        let mut queue: std::collections::VecDeque<Entity> = roots.into_iter().collect();
 
         while let Some(parent) = queue.pop_front() {
             let parent_matrix = self
@@ -1465,7 +1534,10 @@ impl World {
     /// ```
     pub fn observe<E: ObserverEvent>(&mut self, callback: impl Fn(Entity) + Send + Sync + 'static) {
         let key = (E::kind(), E::component_type_id());
-        self.observers.entry(key).or_default().push(Box::new(callback));
+        self.observers
+            .entry(key)
+            .or_default()
+            .push(Box::new(callback));
     }
 
     /// Fire observer callbacks for a specific event kind and component type.
@@ -1525,7 +1597,11 @@ impl World {
                                 .get(&type_id)
                                 .copied()
                                 .unwrap_or(|| Box::new(TypedColumn::<()>::new()));
-                            cloned.push(ClonedComponent { type_id, bytes, factory });
+                            cloned.push(ClonedComponent {
+                                type_id,
+                                bytes,
+                                factory,
+                            });
                         }
                     }
                 }
@@ -1552,10 +1628,38 @@ impl World {
         }
 
         // Update entity bookkeeping.
-        self.entity_archetype.insert(new_entity.index(), dest_arch_id);
-        self.entity_components.insert(new_entity.index(), components);
+        self.entity_archetype
+            .insert(new_entity.index(), dest_arch_id);
+        self.entity_components
+            .insert(new_entity.index(), components);
 
         Some(new_entity)
+    }
+
+    // -- Batch Operations --------------------------------------------
+
+    /// Spawn multiple entities in a batch.
+    /// Much faster than calling spawn() + insert() in a loop.
+    pub fn spawn_batch<I, B>(&mut self, iter: I) -> Vec<Entity>
+    where
+        I: Iterator<Item = B> + ExactSizeIterator,
+        B: Bundle,
+    {
+        let n = iter.len();
+        if n == 0 {
+            return Vec::new();
+        }
+
+        let mut entities = Vec::with_capacity(n);
+        for _ in 0..n {
+            entities.push(self.allocator.allocate());
+        }
+
+        for (entity, bundle) in entities.iter().copied().zip(iter) {
+            bundle.insert_into(self, entity);
+        }
+
+        entities
     }
 }
 
@@ -1742,7 +1846,9 @@ mod tests {
         world.insert(e1, Velocity { dx: 3.0, dy: 4.0 });
         world.insert(e1, Health(100));
 
-        let results: Vec<_> = query!(world, Position, Velocity, Health).into_iter().collect();
+        let results: Vec<_> = query!(world, Position, Velocity, Health)
+            .into_iter()
+            .collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].3, &Health(100));
     }
@@ -1954,7 +2060,13 @@ mod tests {
         let mut world = World::new();
         for i in 0..3 {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: 0.0 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                },
+            );
         }
         let qs = QueryState::<&Position>::new();
         let results: Vec<_> = qs.iter(&world).collect();

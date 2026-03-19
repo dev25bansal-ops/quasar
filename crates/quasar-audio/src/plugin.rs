@@ -33,8 +33,12 @@ impl System for AudioPlaybackSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        if !quasar_core::simulation_active(world) { return; }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("audio_playback"); }
+        if !quasar_core::simulation_active(world) {
+            return;
+        }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.begin_scope("audio_playback");
+        }
         // Pass 1: collect audio sources that need to start playing.
         let sources_to_play: Vec<(u32, String, bool, AudioBus)> = world
             .query::<AudioSource>()
@@ -69,7 +73,9 @@ impl System for AudioPlaybackSystem {
                 }
             });
         }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("audio_playback"); }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.end_scope("audio_playback");
+        }
     }
 }
 
@@ -94,8 +100,12 @@ impl System for SpatialAudioSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        if !quasar_core::simulation_active(world) { return; }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.begin_scope("spatial_audio"); }
+        if !quasar_core::simulation_active(world) {
+            return;
+        }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.begin_scope("spatial_audio");
+        }
         // 1. Find the listener position and orientation.
         let listener: Option<(Vec3, Quat)> = world
             .query::<AudioListener>()
@@ -174,7 +184,9 @@ impl System for SpatialAudioSystem {
                     .update_spatial(*sound_id, &tmp, distance, panning);
             }
         }
-        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() { p.end_scope("spatial_audio"); }
+        if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
+            p.end_scope("spatial_audio");
+        }
     }
 }
 

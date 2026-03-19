@@ -152,7 +152,8 @@ impl Schedule {
         for (stage, systems) in &mut self.stages {
             if *stage == SystemStage::FixedUpdate {
                 // Accumulate frame delta and run fixed-rate substeps.
-                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>()
+                {
                     fua.acc += frame_delta;
                     (fua.acc, fua.step)
                 } else {
@@ -235,8 +236,8 @@ fn topo_sort_systems(
 
     // Kahn's algorithm.
     let mut queue: VecDeque<usize> = VecDeque::new();
-    for i in 0..n {
-        if in_degree[i] == 0 {
+    for (i, &deg) in in_degree.iter().enumerate() {
+        if deg == 0 {
             queue.push_back(i);
         }
     }

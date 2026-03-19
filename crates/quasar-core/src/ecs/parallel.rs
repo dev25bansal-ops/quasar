@@ -229,9 +229,8 @@ impl SystemGraph {
         R: ReadWriteSet,
         W: ReadWriteSet,
     {
-        let node = system_node_with_access::<_, R, W>(
-            crate::ecs::system::FnSystem::new(name, system),
-        );
+        let node =
+            system_node_with_access::<_, R, W>(crate::ecs::system::FnSystem::new(name, system));
         self.add_system(node)
     }
 
@@ -456,7 +455,8 @@ impl ParallelSchedule {
 
         for stage in STAGE_ORDER {
             if stage == SystemStage::FixedUpdate {
-                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>() {
+                let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>()
+                {
                     fua.acc += frame_delta;
                     (fua.acc, fua.step)
                 } else {

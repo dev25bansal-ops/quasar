@@ -41,13 +41,20 @@ impl HotReloadSystem {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         pipeline_cache: &mut PipelineCache,
-        textures: &mut Vec<Texture>,
+        textures: &mut [Texture],
         texture_paths: &HashMap<PathBuf, usize>,
     ) -> bool {
         match event.kind {
             ReloadKind::Shader => self.reload_shader(event, device, pipeline_cache),
-            ReloadKind::Texture => self.reload_texture(event, device, queue, textures, texture_paths),
-            ReloadKind::Hdr | ReloadKind::Other | ReloadKind::Lua | ReloadKind::Scene | ReloadKind::Prefab | ReloadKind::Audio => false,
+            ReloadKind::Texture => {
+                self.reload_texture(event, device, queue, textures, texture_paths)
+            }
+            ReloadKind::Hdr
+            | ReloadKind::Other
+            | ReloadKind::Lua
+            | ReloadKind::Scene
+            | ReloadKind::Prefab
+            | ReloadKind::Audio => false,
         }
     }
 
@@ -95,7 +102,7 @@ impl HotReloadSystem {
         event: &AssetReloadedEvent,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        textures: &mut Vec<Texture>,
+        textures: &mut [Texture],
         texture_paths: &HashMap<PathBuf, usize>,
     ) -> bool {
         let path = &event.path;

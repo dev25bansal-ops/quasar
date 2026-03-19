@@ -4,6 +4,8 @@
 //! loads assets in background threads, and notifies dependent systems
 //! when an asset changes (shader hot-reload, texture hot-reload).
 
+#![allow(clippy::type_complexity)]
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -65,7 +67,7 @@ pub struct AssetServer {
     assets_dir: PathBuf,
     loaders: HashMap<TypeId, Box<dyn AnyAssetLoader>>,
     asset_handles: RwLock<HashMap<AssetId, AssetMeta>>,
-    asset_storage: RwLock<HashMap<TypeId, HashMap<AssetId, Box<dyn Any + Send + Sync>>>>,
+    asset_storage: RwLock<HashMap<TypeId, HashMap<AssetId, Arc<dyn Any + Send + Sync>>>>,
     next_id: Mutex<AssetId>,
     watcher: Option<RecommendedWatcher>,
     event_receiver: Receiver<AssetEvent>,
@@ -107,8 +109,7 @@ impl AssetServer {
     pub fn get_asset<T: crate::asset::Asset + Clone>(
         &self,
         handle: &crate::asset::AssetHandle<T>,
-    ) -> Option<T>
-    {
+    ) -> Option<T> {
         self.manager().get(handle).cloned()
     }
 
@@ -225,17 +226,21 @@ impl AssetServer {
         let asset = loader.load(&full_path, &bytes)?;
 
         {
-            let mut storage = self.asset_storage.write().unwrap_or_else(|e| e.into_inner());
-            let type_storage = storage
-                .entry(TypeId::of::<T>())
-                .or_default();
-            type_storage.insert(id, Box::new(asset));
+            let mut storage = self
+                .asset_storage
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
+            let type_storage = storage.entry(TypeId::of::<T>()).or_default();
+            type_storage.insert(id, Arc::new(asset));
         }
 
         let handle = AssetHandle { id, generation: 0 };
 
         {
-            let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
+            let mut handles = self
+                .asset_handles
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             handles.insert(
                 id,
                 AssetMeta {
@@ -260,8 +265,7 @@ impl AssetServer {
         let storage = self.asset_storage.read().unwrap_or_else(|e| e.into_inner());
         let type_storage = storage.get(&TypeId::of::<T>())?;
         let asset = type_storage.get(&handle.id)?;
-        let typed = asset.downcast_ref::<T>()?;
-        Some(Arc::new(typed.clone()))
+        asset.clone().downcast::<T>().ok()
     }
 
     pub fn start_watching(&mut self) -> Result<(), AssetError> {
@@ -276,7 +280,12 @@ impl AssetServer {
                 if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                     for path in &event.paths {
                         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            if ["png", "jpg", "jpeg", "glsl", "wgsl", "hdr", "exr"].contains(&ext) {
+                            if [
+                                "png", "jpg", "jpeg", "glsl", "wgsl", "hdr", "exr", "lua", "luau",
+                                "scene", "scn", "prefab", "ogg", "wav", "flac", "mp3",
+                            ]
+                            .contains(&ext)
+                            {
                                 let _ = sender.send(AssetEvent::Reloaded {
                                     handle: AssetHandle {
                                         id: 0,
@@ -332,7 +341,10 @@ impl AssetServer {
                     for (type_id, loader) in &self.loaders {
                         if loader.can_load(path) {
                             // Try to reload the asset in-place
-                            let mut storage = self.asset_storage.write().unwrap_or_else(|e| e.into_inner());
+                            let mut storage = self
+                                .asset_storage
+                                .write()
+                                .unwrap_or_else(|e| e.into_inner());
                             if let Some(type_storage) = storage.get_mut(type_id) {
                                 if let Some(existing) = type_storage.get_mut(id) {
                                     match loader.reload_raw(path, &bytes, existing) {
@@ -365,7 +377,10 @@ impl AssetServer {
     }
 
     pub fn set_hot_reload(&self, handle: AssetHandle, enabled: bool) {
-        let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
+        let mut handles = self
+            .asset_handles
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(meta) = handles.get_mut(&handle.id) {
             meta.hot_reload_enabled = enabled;
         }
@@ -376,7 +391,10 @@ impl AssetServer {
     /// Used by the hot-reload handler to flag textures, audio, etc. for
     /// re-upload on the next frame.
     pub fn mark_dirty(&self, path: &Path) {
-        let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
+        let mut handles = self
+            .asset_handles
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         for meta in handles.values_mut() {
             if meta.path == path {
                 meta.dirty = true;
@@ -386,7 +404,10 @@ impl AssetServer {
 
     /// Check and clear the dirty flag for an asset.
     pub fn take_dirty(&self, handle: AssetHandle) -> bool {
-        let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
+        let mut handles = self
+            .asset_handles
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         if let Some(meta) = handles.get_mut(&handle.id) {
             let was_dirty = meta.dirty;
             meta.dirty = false;
@@ -444,7 +465,10 @@ impl AssetServer {
         let handle = AssetHandle { id, generation: 0 };
 
         {
-            let mut handles = self.asset_handles.write().unwrap_or_else(|e| e.into_inner());
+            let mut handles = self
+                .asset_handles
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             handles.insert(
                 id,
                 AssetMeta {
@@ -460,20 +484,15 @@ impl AssetServer {
         let sender = self.event_sender.clone();
         let fp = full_path.clone();
 
-        std::thread::spawn(move || {
-            match std::fs::read(&fp) {
-                Ok(_bytes) => {
-                    let _ = sender.send(AssetEvent::Loaded {
-                        handle,
-                        path: fp,
-                    });
-                }
-                Err(e) => {
-                    let _ = sender.send(AssetEvent::Failed {
-                        path: fp,
-                        error: format!("{}", e),
-                    });
-                }
+        std::thread::spawn(move || match std::fs::read(&fp) {
+            Ok(_bytes) => {
+                let _ = sender.send(AssetEvent::Loaded { handle, path: fp });
+            }
+            Err(e) => {
+                let _ = sender.send(AssetEvent::Failed {
+                    path: fp,
+                    error: format!("{}", e),
+                });
             }
         });
 
@@ -492,10 +511,7 @@ impl AssetServer {
     ///
     /// Returns a `Vec<DecompressedAsset>` suitable for upload via a GPU
     /// staging belt.
-    pub fn decompress_batch_parallel(
-        &self,
-        entries: &[BatchEntry],
-    ) -> Vec<DecompressedAsset> {
+    pub fn decompress_batch_parallel(&self, entries: &[BatchEntry]) -> Vec<DecompressedAsset> {
         let assets_dir = &self.assets_dir;
         entries
             .par_iter()
@@ -623,9 +639,8 @@ fn decode_bc7_block(block: &[u8]) -> [u8; 64] {
             block[8], block[9], block[10], block[11], block[12], block[13], block[14], block[15],
         ]);
 
-        let extract = |start: u32, len: u32| -> u32 {
-            ((bits >> start) & ((1u128 << len) - 1)) as u32
-        };
+        let extract =
+            |start: u32, len: u32| -> u32 { ((bits >> start) & ((1u128 << len) - 1)) as u32 };
 
         let r0 = extract(7, 7);
         let r1 = extract(14, 7);
@@ -867,7 +882,9 @@ impl crate::ecs::System for HotReloadHandlerSystem {
                 }
                 ReloadKind::Scene => {
                     if let Ok(json) = std::fs::read_to_string(&event.path) {
-                        if let Ok(scene_data) = serde_json::from_str::<crate::scene_serde::SceneData>(&json) {
+                        if let Ok(scene_data) =
+                            serde_json::from_str::<crate::scene_serde::SceneData>(&json)
+                        {
                             log::info!("[hot-reload] scene reloaded: {}", scene_data.name);
                             // Downstream systems can read the event and diff-apply.
                         }

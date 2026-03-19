@@ -230,12 +230,7 @@ impl ShadowMap {
                 buffers: &vertex_buffers,
                 compilation_options: Default::default(),
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[],
-                compilation_options: Default::default(),
-            }),
+            fragment: None, // depth-only pass, no color output
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,

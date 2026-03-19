@@ -3,6 +3,8 @@
 //! Allocates wgpu staging (MAP_WRITE) buffers, copies decompressed RGBA
 //! data into them, then records `copy_buffer_to_texture` commands.
 
+#![allow(clippy::expect_used)]
+
 use quasar_core::asset_server::DecompressedAsset;
 
 /// Staging belt that batches CPU→GPU texture uploads via mapped staging
@@ -187,6 +189,6 @@ impl StagingBelt {
             offset: 0,
         });
 
-        self.active_buffers.last_mut().unwrap()
+        self.active_buffers.last_mut().expect("buffer just pushed")
     }
 }

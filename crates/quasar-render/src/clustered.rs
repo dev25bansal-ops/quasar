@@ -167,6 +167,7 @@ impl LightClusterGrid {
 }
 
 /// Test sphere vs AABB intersection.
+#[allow(clippy::needless_range_loop)]
 fn sphere_aabb_intersect(center: &[f32; 3], radius: f32, aabb: &ClusterAabb) -> bool {
     let mut dist_sq: f32 = 0.0;
     for i in 0..3 {

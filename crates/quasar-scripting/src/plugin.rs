@@ -108,7 +108,7 @@ impl ScriptingSystem {
             return;
         };
 
-        for (entity, t) in world.query::<Transform>().into_iter() {
+        for (entity, t) in world.query::<Transform>() {
             if let Ok(entry) = lua.create_table() {
                 let _ = entry.set("px", t.position.x);
                 let _ = entry.set("py", t.position.y);
@@ -355,9 +355,7 @@ impl ScriptingSystem {
     fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
         // Collect (entity_index, path, loaded) for entities with a ScriptComponent.
         let scripts: Vec<(u32, String, bool)> = world
-            .query::<ScriptComponent>()
-            .into_iter()
-            .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
+            .query::<ScriptComponent>().into_iter().map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
             .collect();
 
         if scripts.is_empty() {
@@ -474,10 +472,8 @@ impl ScriptingSystem {
                 // Mark as loaded — need mutable access.
                 if let Some(sc) = world.get_mut::<ScriptComponent>({
                     let found: Option<Entity> = world
-                        .query::<ScriptComponent>()
-                        .iter()
-                        .find(|(e, _)| e.index() == *eid)
-                        .map(|(e, _)| *e);
+                        .query::<ScriptComponent>().into_iter().find(|(e, _)| e.index() == *eid)
+                        .map(|(e, _)| e);
                     match found {
                         Some(e) => e,
                         None => continue,
@@ -531,9 +527,7 @@ impl ScriptingSystem {
     fn apply_commands(lua: &Lua, world: &mut World, commands: Vec<ScriptCommand>) {
         // Build a map of entity_index → Entity for live entities with transforms.
         let entity_map: std::collections::HashMap<u32, Entity> = world
-            .query::<Transform>()
-            .into_iter()
-            .map(|(e, _)| (e.index(), e))
+            .query::<Transform>().into_iter().map(|(e, _)| (e.index(), e))
             .collect();
 
         for cmd in commands {

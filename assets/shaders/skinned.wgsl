@@ -181,6 +181,134 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, in: VertexInput) -> VertexO
     return out;
 }
 
+
+
+// Dual-Quaternion Skinning (DQS) - eliminates candy-wrapper artifact
+// 
+// A dual quaternion encodes rotation (real part) and translation (dual part)
+// q = q_r + epsilon * q_d where epsilon^2 = 0
+//
+// Blending DQs: normalize(sum(weights[i] * q[i])) avoids collapse at joints
+
+struct DualQuat {
+    real: vec4<f32>,  // Rotation quaternion (xyzw)
+    dual: vec4<f32>,  // Translation quaternion (xyzw)
+};
+
+fn quat_mul(q1: vec4<f32>, q2: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(
+        q1.w * q2.xyz + q2.w * q1.xyz + cross(q1.xyz, q2.xyz),
+        q1.w * q2.w - dot(q1.xyz, q2.xyz)
+    );
+}
+
+fn quat_conjugate(q: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(-q.xyz, q.w);
+}
+
+// Convert dual quaternion to rotation matrix
+fn dq_to_matrix(dq: DualQuat) -> mat3x3<f32> {
+    let q = dq.real;
+    let q2 = q * q;
+    let xy = 2.0 * q.x * q.y;
+    let xz = 2.0 * q.x * q.z;
+    let yz = 2.0 * q.y * q.z;
+    let wx = 2.0 * q.w * q.x;
+    let wy = 2.0 * q.w * q.y;
+    let wz = 2.0 * q.w * q.z;
+    
+    return mat3x3<f32>(
+        vec3<f32>(1.0 - 2.0 * (q2.y + q2.z), xy + wz, xz - wy),
+        vec3<f32>(xy - wz, 1.0 - 2.0 * (q2.x + q2.z), yz + wx),
+        vec3<f32>(xz + wy, yz - wx, 1.0 - 2.0 * (q2.x + q2.y))
+    );
+}
+
+// Get translation from dual quaternion
+fn dq_get_translation(dq: DualQuat) -> vec3<f32> {
+    let q = dq.real;
+    let d = dq.dual;
+    return 2.0 * (d.w * q.xyz - q.w * d.xyz + cross(q.xyz, d.xyz));
+}
+
+// Apply DQS blending to position
+fn skin_position_dq(
+    position: vec3<f32>,
+    joint_indices: vec4<u32>,
+    joint_weights: vec4<f32>,
+    bone_dqs: array<DualQuat, 256>
+) -> vec3<f32> {
+    var blended = DualQuat(vec4<f32>(0.0), vec4<f32>(0.0));
+    var sum_weight = 0.0;
+    
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let joint_index = joint_indices[i];
+        let weight = joint_weights[i];
+        if (weight > 0.0) {
+            blended.real += weight * bone_dqs[joint_index].real;
+            blended.dual += weight * bone_dqs[joint_index].dual;
+            sum_weight += weight;
+        }
+    }
+    
+    if (sum_weight > 0.0) {
+        let inv_weight = 1.0 / sum_weight;
+        blended.real *= inv_weight;
+        blended.dual *= inv_weight;
+        
+        // Normalize the real part (rotation quaternion)
+        let len_sq = dot(blended.real, blended.real);
+        if (len_sq > 0.0) {
+            let inv_len = 1.0 / sqrt(len_sq);
+            blended.real *= inv_len;
+            blended.dual *= inv_len;
+        }
+    }
+    
+    // Transform position
+    let rotation = dq_to_matrix(blended);
+    let translation = dq_get_translation(blended);
+    return rotation * position + translation;
+}
+
+// Apply DQS to normal (no translation)
+fn skin_normal_dq(
+    normal: vec3<f32>,
+    joint_indices: vec4<u32>,
+    joint_weights: vec4<f32>,
+    bone_dqs: array<DualQuat, 256>
+) -> vec3<f32> {
+    var blended_real = vec4<f32>(0.0);
+    var sum_weight = 0.0;
+    
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        let joint_index = joint_indices[i];
+        let weight = joint_weights[i];
+        if (weight > 0.0) {
+            blended_real += weight * bone_dqs[joint_index].real;
+            sum_weight += weight;
+        }
+    }
+    
+    if (sum_weight > 0.0) {
+        blended_real /= sum_weight;
+        let len_sq = dot(blended_real, blended_real);
+        if (len_sq > 0.0) {
+            blended_real /= sqrt(len_sq);
+        }
+    }
+    
+    // Convert quaternion to rotation matrix
+    let q = blended_real;
+    let q2 = q * q;
+    return normalize(vec3<f32>(
+        normal.x * (1.0 - 2.0 * (q2.y + q2.z)) + normal.y * (2.0 * q.x * q.y + 2.0 * q.w * q.z) + normal.z * (2.0 * q.x * q.z - 2.0 * q.w * q.y),
+        normal.x * (2.0 * q.x * q.y - 2.0 * q.w * q.z) + normal.y * (1.0 - 2.0 * (q2.x + q2.z)) + normal.z * (2.0 * q.y * q.z + 2.0 * q.w * q.x),
+        normal.x * (2.0 * q.x * q.z + 2.0 * q.w * q.y) + normal.y * (2.0 * q.y * q.z - 2.0 * q.w * q.x) + normal.z * (1.0 - 2.0 * (q2.x + q2.y))
+    ));
+}
+
+
 fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     let ndc = shadow_pos.xyz / shadow_pos.w;
     let uv = ndc.xy * 0.5 + 0.5;

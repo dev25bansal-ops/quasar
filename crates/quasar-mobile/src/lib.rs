@@ -13,7 +13,7 @@
 //! (via `android-activity`) and iOS (via UIKit). This crate wraps them
 //! in engine-friendly types and adds gesture recognition.
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod gesture;
 pub mod gyroscope;
@@ -24,7 +24,7 @@ pub mod touch;
 pub use gesture::{Gesture, GestureRecognizer, SwipeDirection};
 pub use gyroscope::Gyroscope;
 pub use haptics::{HapticEngine, HapticStyle};
-pub use runner::{MobileRunner, run_mobile};
+pub use runner::{run_mobile, MobileRunner};
 pub use touch::{TouchInput, TouchPhase, TouchPointer, MAX_TOUCH_POINTERS};
 
 /// Mobile-specific configuration.

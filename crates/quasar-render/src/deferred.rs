@@ -1,9 +1,11 @@
 //! Deferred rendering pipeline — G-Buffer + lighting pass.
 //!
 //! The geometry pass writes per-pixel data (albedo, normal, roughness/metallic,
-//! depth) into a set of render targets called the G-Buffer.  The lighting pass
+//! depth) into a set of render targets called the G-Buffer. The lighting pass
 //! reads these textures and accumulates contributions from an arbitrary number
 //! of lights at constant per-pixel cost, enabling 100+ dynamic lights.
+
+#![allow(clippy::too_many_arguments)]
 
 use crate::light::LightsUniform;
 
@@ -666,20 +668,18 @@ impl StencilLightVolumePass {
 
         // Generate a low-poly unit sphere for point-light volumes
         let (vertices, indices) = generate_unit_sphere(12, 8);
-        let sphere_vertex_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Light Volume Sphere VB"),
-                size: (vertices.len() * 12) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        let sphere_index_buffer =
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("Light Volume Sphere IB"),
-                size: (indices.len() * 4) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+        let sphere_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Light Volume Sphere VB"),
+            size: (vertices.len() * 12) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let sphere_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Light Volume Sphere IB"),
+            size: (indices.len() * 4) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let sphere_index_count = indices.len() as u32;
 
         Self {
@@ -762,7 +762,10 @@ impl StencilLightVolumePass {
                 pass.set_pipeline(&self.stencil_mark_pipeline);
                 pass.set_bind_group(0, &volume_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.sphere_vertex_buffer.slice(..));
-                pass.set_index_buffer(self.sphere_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_index_buffer(
+                    self.sphere_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
                 pass.draw_indexed(0..self.sphere_index_count, 0, 0..1);
             }
 
@@ -796,7 +799,10 @@ impl StencilLightVolumePass {
                 pass.set_bind_group(0, &gbuffer.read_bind_group, &[]);
                 pass.set_bind_group(1, &volume_bind_group, &[]);
                 pass.set_vertex_buffer(0, self.sphere_vertex_buffer.slice(..));
-                pass.set_index_buffer(self.sphere_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_index_buffer(
+                    self.sphere_index_buffer.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
                 pass.draw_indexed(0..self.sphere_index_count, 0, 0..1);
             }
         }

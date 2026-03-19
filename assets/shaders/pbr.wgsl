@@ -20,7 +20,12 @@ struct MaterialUniform {
     base_color: vec4<f32>,
     roughness_metallic: vec2<f32>,
     emissive: f32,
-    _pad: f32,
+    // Clearcoat layer (car paint, carbon fiber)
+    clearcoat_weight: f32,      // 0.0 = none, 1.0 = full clearcoat
+    clearcoat_roughness: f32,   // Roughness of clearcoat layer
+    // Anisotropy (brushed metal, hair)
+    anisotropy_strength: f32,   // 0.0 = isotropic, 1.0 = full anisotropy
+    anisotropy_angle: f32,      // Rotation angle in radians
 };
 
 struct LightData {
@@ -70,6 +75,10 @@ struct IblUniform {
 @group(3) @binding(3) var s_normal: sampler;
 @group(3) @binding(4) var t_metallic_roughness: texture_2d<f32>;
 @group(3) @binding(5) var s_metallic_roughness: sampler;
+@group(3) @binding(6) var t_clearcoat: texture_2d<f32>;
+@group(3) @binding(7) var s_clearcoat: sampler;
+@group(3) @binding(8) var t_anisotropy: texture_2d<f32>;
+@group(3) @binding(9) var s_anisotropy: sampler;
 
 @group(4) @binding(0) var<uniform> shadow_uniform: ShadowUniform;
 @group(4) @binding(1) var t_shadow: texture_depth_2d;
@@ -295,6 +304,50 @@ fn fresnel_schlick(cosTheta: f32, F0: vec3<f32>) -> vec3<f32> {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+
+
+// Clearcoat BRDF (simplified GGX on top layer)
+fn distribution_ggx_clearcoat(N: vec3<f32>, H: vec3<f32>, roughness: f32) -> f32 {
+    let a = roughness * roughness;
+    let a2 = a * a;
+    let NdotH = max(dot(N, H), 0.0);
+    let NdotH2 = NdotH * NdotH;
+    let num = a2;
+    var denom = (NdotH2 * (a2 - 1.0) + 1.0);
+    denom = PI * denom * denom;
+    return num / denom;
+}
+
+// Anisotropic GGX distribution
+fn distribution_ggx_aniso(
+    N: vec3<f32>, H: vec3<f32>, 
+    T: vec3<f32>, B: vec3<f32>,
+    ax: f32, ay: f32
+) -> f32 {
+    let NdotH = max(dot(N, H), 0.0);
+    let TdotH = dot(T, H);
+    let BdotH = dot(B, H);
+    
+    let a2 = ax * ay;
+    let NdotH2 = NdotH * NdotH;
+    
+    let term1 = TdotH * TdotH / (ax * ax);
+    let term2 = BdotH * BdotH / (ay * ay);
+    let term3 = NdotH2;
+    
+    let denom = PI * a2 * (term1 + term2 + term3) * (term1 + term2 + term3);
+    return 1.0 / denom;
+}
+
+// Get anisotropic tangent frame rotated by anisotropy_angle
+fn get_aniso_frame(T: vec3<f32>, B: vec3<f32>, angle: f32) -> (vec3<f32>, vec3<f32>) {
+    let c = cos(angle);
+    let s = sin(angle);
+    let Tp = c * T + s * B;
+    let Bp = -s * T + c * B;
+    return (Tp, Bp);
+}
+
 fn fresnel_schlick_roughness(cosTheta: f32, F0: vec3<f32>, roughness: f32) -> vec3<f32> {
     return F0 + (max(vec3<f32>(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
@@ -409,10 +462,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var T = normalize(in.world_tangent);
     var B = normalize(in.world_bitangent);
 
+    // Orthogonalize tangent frame against normal to handle degenerate cases
+    // This ensures T and B are perpendicular to N
     let NdotT = dot(N, T);
-    if (abs(NdotT) > 0.001) {
-        N = get_normal_from_map(in.uv, N, T, B);
-    }
+    T = normalize(T - NdotT * N); // Gram-Schmidt orthogonalization
+    B = normalize(cross(N, T));   // Reconstruct bitangent to ensure right-handed frame
+    
+    N = get_normal_from_map(in.uv, N, T, B);
 
     let V = normalize(camera.view_position - in.world_position);
 
@@ -420,7 +476,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     let pcss_shadow = calculate_shadow(in.shadow_position);
     let csm_shadow = calculate_cascade_shadow(in.world_position, in.view_depth);
-    let shadow = min(pcss_shadow, csm_shadow);
+    // Use CSM for pixels inside cascade frustums, fall back to PCSS for distant pixels
+    // is_in_cascade is true when view_depth is within any cascade split depth
+    let is_in_cascade = in.view_depth < cascades[CASCADE_COUNT - 1u].split_depth;
+    let shadow = select(pcss_shadow, csm_shadow, is_in_cascade);
 
     var Lo = vec3<f32>(0.0);
 

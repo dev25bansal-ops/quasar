@@ -5,6 +5,7 @@
 //! optional components via `Option<&T>`, and filter markers `With<T>` /
 //! `Without<T>` / `Changed<T>` / `Added<T>` / `Removed<T>`.
 
+use super::archetype::TypedColumn;
 use super::component::Component;
 use super::entity::Entity;
 use super::World;
@@ -114,7 +115,13 @@ impl<A: WorldQuery, B: WorldQuery, C: WorldQuery, D: WorldQuery> WorldQuery for 
 impl<A: WorldQuery, B: WorldQuery, C: WorldQuery, D: WorldQuery, E: WorldQuery> WorldQuery
     for (A, B, C, D, E)
 {
-    type Item<'w> = (A::Item<'w>, B::Item<'w>, C::Item<'w>, D::Item<'w>, E::Item<'w>);
+    type Item<'w> = (
+        A::Item<'w>,
+        B::Item<'w>,
+        C::Item<'w>,
+        D::Item<'w>,
+        E::Item<'w>,
+    );
     fn type_ids() -> Vec<TypeId> {
         let mut ids = A::type_ids();
         ids.extend(B::type_ids());
@@ -400,7 +407,9 @@ impl<Q: WorldQuery, F: QueryFilter> QueryState<Q, F> {
         let mut matching = Vec::new();
 
         for (&idx, components) in world.entity_components_iter() {
-            let has_all = required.iter().all(|tid| components.binary_search(tid).is_ok());
+            let has_all = required
+                .iter()
+                .all(|tid| components.binary_search(tid).is_ok());
             if has_all && F::matches(world, idx) {
                 matching.push(idx);
             }
@@ -459,5 +468,408 @@ impl<T: Component> Query<T> {
     pub fn iter(world: &World) -> QueryIter<'_, &T, ()> {
         let state = QueryState::<&T, ()>::new();
         state.iter(world)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Query2Iter — two-component zero-allocation iterator
+// ---------------------------------------------------------------------------
+
+/// Lazy iterator for two-component queries (A, B).
+/// Backed by archetype columns, zero allocation.
+pub struct Query2Iter<'w, A: Component, B: Component> {
+    world: &'w World,
+    type_a: TypeId,
+    type_b: TypeId,
+    archetype_ids: Vec<super::ArchetypeId>,
+    current_arch: usize,
+    current_row: usize,
+    _marker: PhantomData<(A, B)>,
+}
+
+impl<'w, A: Component, B: Component> Query2Iter<'w, A, B> {
+    pub fn new(world: &'w World) -> Self {
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        let matching = world
+            .archetype_graph()
+            .find_with_components_ids(&[type_a, type_b]);
+        Self {
+            world,
+            type_a,
+            type_b,
+            archetype_ids: matching,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the number of entities matching this query.
+    pub fn len(&self) -> usize {
+        let mut count = 0;
+        for &arch_id in &self.archetype_ids {
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let (Some(&ca), Some(&cb)) = (
+                    arch.type_to_column.get(&self.type_a),
+                    arch.type_to_column.get(&self.type_b),
+                ) {
+                    if !arch.columns[ca].is_empty() && !arch.columns[cb].is_empty() {
+                        count += arch.entities.len();
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Returns true if the query matches no entities.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<'w, A: Component, B: Component> Iterator for Query2Iter<'w, A, B> {
+    type Item = (Entity, &'w A, &'w B);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_arch < self.archetype_ids.len() {
+            let arch_id = self.archetype_ids[self.current_arch];
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let (Some(&col_a_idx), Some(&col_b_idx)) = (
+                    arch.type_to_column.get(&self.type_a),
+                    arch.type_to_column.get(&self.type_b),
+                ) {
+                    if let (Some(col_a), Some(col_b)) = (
+                        arch.columns[col_a_idx]
+                            .as_any()
+                            .downcast_ref::<TypedColumn<A>>(),
+                        arch.columns[col_b_idx]
+                            .as_any()
+                            .downcast_ref::<TypedColumn<B>>(),
+                    ) {
+                        if self.current_row < arch.entities.len()
+                            && self.current_row < col_a.data.len()
+                            && self.current_row < col_b.data.len()
+                        {
+                            let entity = arch.entities[self.current_row];
+                            let item_a = &col_a.data[self.current_row];
+                            let item_b = &col_b.data[self.current_row];
+                            self.current_row += 1;
+                            return Some((entity, item_a, item_b));
+                        }
+                    }
+                }
+            }
+            self.current_arch += 1;
+            self.current_row = 0;
+        }
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QueryState — cached query metadata for zero-allocation queries
+// ---------------------------------------------------------------------------
+
+/// Cached query state that amortizes archetype matching across frames.
+/// Stores matching archetype IDs and column offsets, only re-checking
+/// when the archetype graph changes.
+pub struct QueryStateCache {
+    /// Last seen archetype graph generation (incremented on spawn/despawn)
+    pub archetype_generation: u64,
+    /// Cached matching archetype IDs
+    pub archetype_ids: Vec<super::ArchetypeId>,
+    /// Cached column offsets per archetype
+    pub column_offsets: Vec<Vec<(super::ArchetypeId, usize)>>,
+}
+
+impl QueryStateCache {
+    pub fn new() -> Self {
+        Self {
+            archetype_generation: 0,
+            archetype_ids: Vec::new(),
+            column_offsets: Vec::new(),
+        }
+    }
+
+    /// Check if cache is stale and needs rebuild
+    pub fn is_stale(&self, world: &World) -> bool {
+        self.archetype_generation != world.archetype_graph().generation()
+    }
+}
+
+impl Default for QueryStateCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// QueryIterSingle — single component lazy iterator
+// ---------------------------------------------------------------------------
+
+/// Lazy iterator for single-component queries.
+/// Backed by archetype columns, zero allocation.
+pub struct QueryIterSingle<'w, T: Component> {
+    world: &'w World,
+    type_id: TypeId,
+    archetype_ids: Vec<super::ArchetypeId>,
+    current_arch: usize,
+    current_row: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<'w, T: Component> QueryIterSingle<'w, T> {
+    pub fn new(world: &'w World) -> Self {
+        let type_id = TypeId::of::<T>();
+        let matching = world.archetype_graph().find_with_components_ids(&[type_id]);
+        Self {
+            world,
+            type_id,
+            archetype_ids: matching,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Returns the number of entities matching this query.
+    pub fn len(&self) -> usize {
+        let mut count = 0;
+        for &arch_id in &self.archetype_ids {
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let Some(&col_idx) = arch.type_to_column.get(&self.type_id) {
+                    if !arch.columns[col_idx].is_empty() {
+                        count += arch.entities.len();
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Returns true if the query matches no entities.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<'w, T: Component> Iterator for QueryIterSingle<'w, T> {
+    type Item = (Entity, &'w T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_arch < self.archetype_ids.len() {
+            let arch_id = self.archetype_ids[self.current_arch];
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let Some(&col_idx) = arch.type_to_column.get(&self.type_id) {
+                    if let Some(col) = arch.columns[col_idx]
+                        .as_any()
+                        .downcast_ref::<TypedColumn<T>>()
+                    {
+                        if self.current_row < arch.entities.len()
+                            && self.current_row < col.data.len()
+                        {
+                            let entity = arch.entities[self.current_row];
+                            let item = &col.data[self.current_row];
+                            self.current_row += 1;
+                            return Some((entity, item));
+                        }
+                    }
+                }
+            }
+            self.current_arch += 1;
+            self.current_row = 0;
+        }
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Mut<T> — mutable borrow guard with change tracking
+// ---------------------------------------------------------------------------
+
+/// A mutable borrow guard that tracks when a component is modified.
+/// Automatically marks the column's change tick on drop.
+#[allow(dead_code)]
+pub struct Mut<'a, T: Component> {
+    value: &'a mut T,
+    change_tick: &'a mut u64,
+    world_tick: u64,
+}
+
+impl<'a, T: Component> Mut<'a, T> {
+    #[allow(dead_code)]
+    pub fn new(value: &'a mut T, change_tick: &'a mut u64, world_tick: u64) -> Self {
+        Self {
+            value,
+            change_tick,
+            world_tick,
+        }
+    }
+
+    /// Get a reference to the component.
+    #[allow(dead_code)]
+    pub fn get(&self) -> &T {
+        self.value
+    }
+
+    /// Mark this component as changed. Called automatically on drop if modified.
+    #[allow(dead_code)]
+    pub fn set_changed(&mut self) {
+        *self.change_tick = self.world_tick;
+    }
+}
+
+impl<'a, T: Component> std::ops::Deref for Mut<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.value
+    }
+}
+
+impl<'a, T: Component> std::ops::DerefMut for Mut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.set_changed();
+        self.value
+    }
+}
+
+impl<'a, T: Component> Drop for Mut<'a, T> {
+    fn drop(&mut self) {
+        // Change tick is already updated by deref_mut
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CachedQueryState — amortized archetype matching
+// ---------------------------------------------------------------------------
+
+use std::cell::UnsafeCell;
+
+/// Cached query state that avoids re-matching archetypes every frame.
+/// Stores the matching archetype IDs and only re-checks when the
+/// archetype graph generation changes.
+#[allow(dead_code)]
+pub struct CachedQueryState<T: Component> {
+    archetype_ids: UnsafeCell<Vec<super::ArchetypeId>>,
+    cached_generation: UnsafeCell<u64>,
+    _marker: PhantomData<T>,
+}
+
+impl<T: Component> CachedQueryState<T> {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self {
+            archetype_ids: UnsafeCell::new(Vec::new()),
+            cached_generation: UnsafeCell::new(0),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get matching archetypes, rebuilding the cache if stale.
+    pub fn archetypes(&self, world: &World) -> &[super::ArchetypeId] {
+        let graph = world.archetype_graph();
+        let current_gen = graph.generation();
+
+        // SAFETY: Single-threaded access during query iteration
+        let cached_gen = unsafe { *self.cached_generation.get() };
+
+        if current_gen != cached_gen {
+            // Rebuild cache
+            let type_id = TypeId::of::<T>();
+            let matching = graph.find_with_components_ids(&[type_id]);
+
+            // SAFETY: Single-threaded access
+            unsafe {
+                *self.archetype_ids.get() = matching;
+                *self.cached_generation.get() = current_gen;
+            }
+        }
+
+        // SAFETY: Single-threaded access
+        unsafe { &*self.archetype_ids.get() }
+    }
+
+    /// Create an iterator over matching entities.
+    #[allow(dead_code)]
+    pub fn iter<'w>(&self, world: &'w World) -> QueryIterSingle<'w, T> {
+        let archetype_ids = self.archetypes(world).to_vec();
+        QueryIterSingle {
+            world,
+            type_id: TypeId::of::<T>(),
+            archetype_ids,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Component> Default for CachedQueryState<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Cached query state for two-component queries.
+#[allow(dead_code)]
+pub struct CachedQueryState2<A: Component, B: Component> {
+    archetype_ids: UnsafeCell<Vec<super::ArchetypeId>>,
+    cached_generation: UnsafeCell<u64>,
+    _marker: PhantomData<(A, B)>,
+}
+
+impl<A: Component, B: Component> CachedQueryState2<A, B> {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        Self {
+            archetype_ids: UnsafeCell::new(Vec::new()),
+            cached_generation: UnsafeCell::new(0),
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get matching archetypes, rebuilding the cache if stale.
+    #[allow(dead_code)]
+    pub fn archetypes(&self, world: &World) -> &[super::ArchetypeId] {
+        let graph = world.archetype_graph();
+        let current_gen = graph.generation();
+
+        let cached_gen = unsafe { *self.cached_generation.get() };
+
+        if current_gen != cached_gen {
+            let type_a = TypeId::of::<A>();
+            let type_b = TypeId::of::<B>();
+            let matching = graph.find_with_components_ids(&[type_a, type_b]);
+
+            unsafe {
+                *self.archetype_ids.get() = matching;
+                *self.cached_generation.get() = current_gen;
+            }
+        }
+
+        unsafe { &*self.archetype_ids.get() }
+    }
+
+    /// Create an iterator over matching entities.
+    #[allow(dead_code)]
+    pub fn iter<'w>(&self, world: &'w World) -> Query2Iter<'w, A, B> {
+        let archetype_ids = self.archetypes(world).to_vec();
+        Query2Iter {
+            world,
+            type_a: TypeId::of::<A>(),
+            type_b: TypeId::of::<B>(),
+            archetype_ids,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<A: Component, B: Component> Default for CachedQueryState2<A, B> {
+    fn default() -> Self {
+        Self::new()
     }
 }

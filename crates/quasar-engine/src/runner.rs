@@ -414,14 +414,14 @@ impl ApplicationHandler for QuasarRunner {
                     lights.count = light_count as u32;
 
                     // Collect ambient light
-                    for (_, ambient) in self.app.world.query::<AmbientLight>() {
+                    let ambient_iter = self.app.world.query::<AmbientLight>();
+                    if let Some((_, ambient)) = ambient_iter.into_iter().next() {
                         lights.ambient = [
                             ambient.color.x,
                             ambient.color.y,
                             ambient.color.z,
                             ambient.intensity,
                         ];
-                        break;
                     }
 
                     lights

@@ -22,7 +22,7 @@ use quasar_render::{
 };
 use quasar_window::{Input, QuasarWindow, WindowConfig};
 
-use crate::{MobileConfig, MobilePlatform, TouchInput, GestureRecognizer};
+use crate::{GestureRecognizer, MobileConfig, MobilePlatform, TouchInput};
 
 /// Runtime state created once the window is available on the device.
 struct MobileState {
@@ -145,10 +145,13 @@ impl ApplicationHandler for MobileRunner {
                     phase,
                     touch.location.x as f32,
                     touch.location.y as f32,
-                    touch.force.map(|f| match f {
-                        winit::event::Force::Calibrated { force, .. } => force as f32,
-                        winit::event::Force::Normalized(n) => n as f32,
-                    }).unwrap_or(1.0),
+                    touch
+                        .force
+                        .map(|f| match f {
+                            winit::event::Force::Calibrated { force, .. } => force as f32,
+                            winit::event::Force::Normalized(n) => n as f32,
+                        })
+                        .unwrap_or(1.0),
                 );
                 let _gestures = state.gestures.update(&state.touch, 0.016, state.elapsed);
             }
@@ -193,7 +196,9 @@ impl ApplicationHandler for MobileRunner {
 
                     // Ensure meshes are uploaded.
                     for (shape, _) in &shape_mats {
-                        state.mesh_cache.get_or_create(&state.renderer.device, *shape);
+                        state
+                            .mesh_cache
+                            .get_or_create(&state.renderer.device, *shape);
                     }
 
                     // Default lights.
@@ -232,7 +237,10 @@ impl ApplicationHandler for MobileRunner {
                                 &mut encoder,
                             );
 
-                            state.renderer.queue.submit(std::iter::once(encoder.finish()));
+                            state
+                                .renderer
+                                .queue
+                                .submit(std::iter::once(encoder.finish()));
                             output.present();
                         }
                         Err(wgpu::SurfaceError::Lost) => {
@@ -267,5 +275,7 @@ pub fn run_mobile(app: App, window_config: WindowConfig, mobile_config: MobileCo
     let event_loop = EventLoop::new().expect("Failed to create mobile event loop");
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut runner = MobileRunner::new(app, window_config, mobile_config);
-    event_loop.run_app(&mut runner).expect("Mobile event loop error");
+    event_loop
+        .run_app(&mut runner)
+        .expect("Mobile event loop error");
 }

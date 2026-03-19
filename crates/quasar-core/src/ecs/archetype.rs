@@ -5,6 +5,8 @@
 //! - Storing components in contiguous arrays for cache efficiency
 //! - Enabling SIMD/parallel processing within archetypes
 
+#![allow(clippy::type_complexity)]
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
@@ -122,7 +124,10 @@ impl Archetype {
     pub fn remove_entity_extract_soa(
         &mut self,
         entity: Entity,
-    ) -> Option<(usize, Vec<(TypeId, Box<dyn Any + Send + Sync>, Box<dyn ColumnStorage>)>)> {
+    ) -> Option<(
+        usize,
+        Vec<(TypeId, Box<dyn Any + Send + Sync>, Box<dyn ColumnStorage>)>,
+    )> {
         let row = *self.entity_to_row.get(&entity.index())?;
         let last_row = self.entities.len().saturating_sub(1);
 
@@ -277,7 +282,9 @@ pub trait ColumnStorage: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn swap_remove_entry(&mut self, row: usize);
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn push_raw(&mut self, value: Box<dyn Any + Send + Sync>);
     /// Raw const pointer to the underlying contiguous data buffer.
     fn raw_ptr(&self) -> *const u8;
@@ -480,6 +487,9 @@ pub struct ArchetypeGraph {
     /// Cached results: sorted query type IDs → matching archetype IDs.
     /// Uses RwLock for thread-safe concurrent access from parallel systems.
     query_cache: RwLock<HashMap<Vec<TypeId>, Vec<ArchetypeId>>>,
+    /// Generation counter incremented on each archetype creation.
+    /// Used by QueryState to detect when cached results are stale.
+    generation: std::sync::atomic::AtomicU64,
 }
 
 impl ArchetypeGraph {
@@ -490,7 +500,14 @@ impl ArchetypeGraph {
             _edges: FxHashMap::default(),
             next_id: 0,
             query_cache: RwLock::new(HashMap::new()),
+            generation: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Returns the current generation counter.
+    /// This is incremented each time a new archetype is created.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn get_or_create(&mut self, signature: &ArchetypeSignature) -> ArchetypeId {
@@ -506,6 +523,9 @@ impl ArchetypeGraph {
         self.signature_to_id.insert(signature.clone(), id);
         // New archetype may match existing cached queries — invalidate all.
         self.query_cache.write().clear();
+        // Increment generation counter for query state cache invalidation
+        self.generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         id
     }
 
@@ -524,11 +544,15 @@ impl ArchetypeGraph {
         {
             let cache = self.query_cache.read();
             if let Some(ids) = cache.get(&key) {
-                return ids.iter().filter_map(|id| self.archetypes.get(id)).collect();
+                return ids
+                    .iter()
+                    .filter_map(|id| self.archetypes.get(id))
+                    .collect();
             }
         }
 
-        let result: Vec<&Archetype> = self.archetypes
+        let result: Vec<&Archetype> = self
+            .archetypes
             .values()
             .filter(|a| a.signature.contains_all(type_ids))
             .collect();
@@ -548,7 +572,8 @@ impl ArchetypeGraph {
             }
         }
 
-        let result: Vec<ArchetypeId> = self.archetypes
+        let result: Vec<ArchetypeId> = self
+            .archetypes
             .iter()
             .filter(|(_, a)| a.signature.contains_all(type_ids))
             .map(|(&id, _)| id)

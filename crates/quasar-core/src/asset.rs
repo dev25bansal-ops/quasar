@@ -32,6 +32,8 @@
 //! assert!(assets.get(&handle).is_some());
 //! ```
 
+#![allow(clippy::type_complexity)]
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
@@ -310,7 +312,8 @@ impl AssetManager {
     }
 
     fn slab_mut<T: Asset>(&mut self) -> &mut AssetSlab<T> {
-        let boxed = self.slabs
+        let boxed = self
+            .slabs
             .entry(TypeId::of::<T>())
             .or_insert_with(|| Box::new(AssetSlab::<T>::default()));
         // SAFETY: We just inserted AssetSlab<T> for TypeId::of::<T>(), so downcast always succeeds.
@@ -395,7 +398,9 @@ impl AssetManager {
 
         std::thread::spawn(move || {
             let result = loader();
-            let Ok(mut state) = state_clone.lock() else { return };
+            let Ok(mut state) = state_clone.lock() else {
+                return;
+            };
             match result {
                 Ok(asset) => {
                     *state = LoadingState::Ready(asset);
@@ -519,10 +524,7 @@ impl AssetDepGraph {
             .entry(child.clone())
             .or_default()
             .push(parent.clone());
-        self.dependencies
-            .entry(parent)
-            .or_default()
-            .push(child);
+        self.dependencies.entry(parent).or_default().push(child);
     }
 
     /// Remove all dependencies of a parent.

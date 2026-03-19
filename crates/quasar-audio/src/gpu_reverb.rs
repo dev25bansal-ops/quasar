@@ -147,22 +147,20 @@ mod inner {
                     ],
                 });
 
-            let pipeline_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("convolution_reverb_pipeline_layout"),
-                    bind_group_layouts: &[&bind_group_layout],
-                    push_constant_ranges: &[],
-                });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("convolution_reverb_pipeline_layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
 
-            let pipeline =
-                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some("convolution_reverb_pipeline"),
-                    layout: Some(&pipeline_layout),
-                    module: &shader_module,
-                    entry_point: Some("convolve_partition"),
-                    compilation_options: Default::default(),
-                    cache: None,
-                });
+            let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("convolution_reverb_pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader_module,
+                entry_point: Some("convolve_partition"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
             Self {
                 device,
@@ -186,6 +184,10 @@ mod inner {
         /// Allocate a source slot using a given IR. Returns the source index.
         pub fn add_source(&mut self, ir_index: usize) -> Option<usize> {
             if ir_index >= self.impulse_responses.len() {
+                return None;
+            }
+            // Check if we've reached the maximum number of sources
+            if self.sources.len() >= MAX_SOURCES && self.sources.iter().all(|s| s.active) {
                 return None;
             }
             let partition_count = self.impulse_responses[ir_index].partition_count();
@@ -267,11 +269,8 @@ mod inner {
                 usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.queue.write_buffer(
-                &input_buf,
-                0,
-                bytemuck::cast_slice(&input_flat),
-            );
+            self.queue
+                .write_buffer(&input_buf, 0, bytemuck::cast_slice(&input_flat));
 
             let ir_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("conv_ir"),
@@ -358,7 +357,13 @@ mod inner {
                 usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            encoder.copy_buffer_to_buffer(&output_buf, 0, &staging_buf, 0, (output_size * 4) as u64);
+            encoder.copy_buffer_to_buffer(
+                &output_buf,
+                0,
+                &staging_buf,
+                0,
+                (output_size * 4) as u64,
+            );
 
             self.queue.submit(std::iter::once(encoder.finish()));
 

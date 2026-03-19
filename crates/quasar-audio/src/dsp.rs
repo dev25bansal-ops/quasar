@@ -7,8 +7,8 @@ use quasar_core::ecs::{Entity, System, World};
 use quasar_core::TimeSnapshot;
 use quasar_math::{Transform, Vec3};
 
-use crate::{AudioListener, AudioSource, SoundId};
 use crate::plugin::AudioResource;
+use crate::{AudioListener, AudioSource, SoundId};
 
 // ---------------------------------------------------------------------------
 // Doppler
@@ -258,7 +258,8 @@ impl AudioMixer {
     }
 
     pub fn set_channel_volume(&mut self, channel: &str, volume: f32) {
-        self.channels.insert(channel.to_string(), volume.clamp(0.0, 1.0));
+        self.channels
+            .insert(channel.to_string(), volume.clamp(0.0, 1.0));
     }
 
     pub fn channel_volume(&self, channel: &str) -> f32 {
@@ -332,7 +333,10 @@ pub struct ConvolutionImpulseResponse {
 impl ConvolutionImpulseResponse {
     /// Load a WAV impulse response from a raw PCM buffer (mono, f32).
     pub fn from_samples(samples: Vec<f32>, sample_rate: u32) -> Self {
-        Self { samples, sample_rate }
+        Self {
+            samples,
+            sample_rate,
+        }
     }
 
     /// Truncate the IR to `max_samples` length for performance.
@@ -427,7 +431,12 @@ pub struct ConvolutionReverbZone {
 }
 
 impl ConvolutionReverbZone {
-    pub fn new(center: Vec3, half_extents: Vec3, ir: &ConvolutionImpulseResponse, wet_mix: f32) -> Self {
+    pub fn new(
+        center: Vec3,
+        half_extents: Vec3,
+        ir: &ConvolutionImpulseResponse,
+        wet_mix: f32,
+    ) -> Self {
         Self {
             center,
             half_extents,
@@ -448,8 +457,7 @@ impl ConvolutionReverbZone {
 // ---------------------------------------------------------------------------
 
 /// Streaming mode for audio playback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StreamingMode {
     /// Load the entire file into memory before playing.
     #[default]
@@ -457,7 +465,6 @@ pub enum StreamingMode {
     /// Stream from disk in chunks.
     Streaming { chunk_size_bytes: usize },
 }
-
 
 /// ECS component marking an audio source for streaming playback.
 ///
@@ -612,7 +619,11 @@ impl HrtfDatabase {
     /// Create a database from pre-loaded entries.
     pub fn new(entries: Vec<HrtfEntry>, sample_rate: u32) -> Self {
         let ir_length = entries.first().map(|e| e.ir.left.len()).unwrap_or(0);
-        Self { entries, sample_rate, ir_length }
+        Self {
+            entries,
+            sample_rate,
+            ir_length,
+        }
     }
 
     /// Look up the closest HRTF IR pair for a given direction.
@@ -643,18 +654,26 @@ impl HrtfDatabase {
     /// Bilinear interpolation between the 4 nearest entries.
     pub fn lookup_interpolated(&self, elevation: f32, azimuth: f32) -> HrtfIrPair {
         if self.entries.is_empty() {
-            return HrtfIrPair { left: vec![], right: vec![] };
+            return HrtfIrPair {
+                left: vec![],
+                right: vec![],
+            };
         }
         // Find 4 nearest neighbours by angular distance.
         let az = azimuth.rem_euclid(360.0);
-        let mut dists: Vec<(usize, f32)> = self.entries.iter().enumerate().map(|(i, e)| {
-            let de = e.elevation - elevation;
-            let da = {
-                let d = (e.azimuth - az).abs();
-                d.min(360.0 - d)
-            };
-            (i, de * de + da * da)
-        }).collect();
+        let mut dists: Vec<(usize, f32)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let de = e.elevation - elevation;
+                let da = {
+                    let d = (e.azimuth - az).abs();
+                    d.min(360.0 - d)
+                };
+                (i, de * de + da * da)
+            })
+            .collect();
         dists.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let n = dists.len().min(4);
         let total_w: f32 = dists[..n].iter().map(|&(_, d)| 1.0 / (d + 1e-6)).sum();
@@ -682,7 +701,10 @@ struct EarConvolver {
 impl EarConvolver {
     fn new(ir: Vec<f32>) -> Self {
         let len = ir.len();
-        Self { ir, tail: vec![0.0; len] }
+        Self {
+            ir,
+            tail: vec![0.0; len],
+        }
     }
 
     fn set_ir(&mut self, ir: Vec<f32>) {
@@ -692,7 +714,9 @@ impl EarConvolver {
 
     fn process(&mut self, input: &[f32], output: &mut [f32]) {
         let ir_len = self.ir.len();
-        if ir_len == 0 { return; }
+        if ir_len == 0 {
+            return;
+        }
         let n = input.len();
         let mut wet = vec![0.0f32; n + ir_len - 1];
         for (i, &s) in input.iter().enumerate() {
@@ -779,7 +803,10 @@ pub struct HrtfSource {
 
 impl Default for HrtfSource {
     fn default() -> Self {
-        Self { elevation: 0.0, azimuth: 0.0 }
+        Self {
+            elevation: 0.0,
+            azimuth: 0.0,
+        }
     }
 }
 

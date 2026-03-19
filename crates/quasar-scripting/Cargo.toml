@@ -17,6 +17,7 @@ winit = { workspace = true }
 log = { workspace = true }
 notify = { workspace = true }
 wasmtime = { version = "20", optional = true }
+anyhow = { workspace = true }
 
 [features]
 default = []

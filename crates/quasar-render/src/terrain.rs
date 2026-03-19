@@ -96,9 +96,9 @@ impl TerrainMesh {
         let num_lods = lod_distances.len().min(MAX_TERRAIN_LODS);
         let mut lods = Vec::with_capacity(num_lods);
 
-        for lod_idx in 0..num_lods {
+        for (lod_idx, &dist) in lod_distances.iter().take(num_lods).enumerate() {
             let step = 1u32 << lod_idx; // 1, 2, 4, 8 …
-            let dist_sq = lod_distances[lod_idx] * lod_distances[lod_idx];
+            let dist_sq = dist * dist;
 
             let mut vertices = Vec::new();
             let mut indices = Vec::new();

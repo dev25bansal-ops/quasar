@@ -7,7 +7,7 @@
 #[cfg(feature = "wasm")]
 mod inner {
     use std::path::Path;
-    use std::sync::Arc;
+    
     use wasmtime::*;
 
     /// Host API functions exposed to WASM guest modules.

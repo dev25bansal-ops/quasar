@@ -1,38 +1,34 @@
-//! Character controller — wraps Rapier's `KinematicCharacterController`
-//! for smooth player movement with ground detection, slope handling,
-//! and step climbing.
+//! Character controller - wraps Rapier KinematicCharacterController
+//! for smooth player movement with ground detection and step climbing.
 
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
-
 use crate::world::PhysicsWorld;
 
 /// Configuration for a character controller.
 #[derive(Debug, Clone)]
 pub struct CharacterControllerConfig {
-    /// Maximum slope angle the character can walk on (radians).
-    pub max_slope_angle: f32,
-    /// Extra offset used to detect ground contact.
-    pub offset: f32,
-    /// Maximum step height the character can climb.
-    pub max_step_height: f32,
-    /// Minimum distance to maintain from obstacles.
-    pub min_distance: f32,
-    /// If true, snaps to the ground when stepping off edges.
-    pub snap_to_ground: Option<f32>,
-    /// Whether to slide against walls rather than stop.
+    pub height: f32,
+    pub radius: f32,
+    pub max_slope_climb_angle: f32,
+    pub min_slope_slide_angle: f32,
+    pub step_height: f32,
+    pub snap_to_ground_distance: f32,
     pub slide: bool,
+    pub offset: f32,
 }
 
 impl Default for CharacterControllerConfig {
     fn default() -> Self {
         Self {
-            max_slope_angle: std::f32::consts::FRAC_PI_4, // 45 degrees
-            offset: 0.01,
-            max_step_height: 0.25,
-            min_distance: 0.001,
-            snap_to_ground: Some(0.2),
+            height: 1.6,
+            radius: 0.3,
+            max_slope_climb_angle: std::f32::consts::FRAC_PI_4,
+            min_slope_slide_angle: std::f32::consts::FRAC_PI_6,
+            step_height: 0.25,
+            snap_to_ground_distance: 0.2,
             slide: true,
+            offset: 0.01,
         }
     }
 }
@@ -40,28 +36,21 @@ impl Default for CharacterControllerConfig {
 /// Result of a character movement step.
 #[derive(Debug, Clone)]
 pub struct CharacterMovementResult {
-    /// The effective translation that was applied.
     pub effective_translation: [f32; 3],
-    /// Whether the character is currently on the ground.
     pub grounded: bool,
+    pub ground_normal: Option<[f32; 3]>,
+    pub hit_wall: bool,
 }
 
 /// ECS component for a kinematic character controller.
-///
-/// Attach this to an entity that also has a `RigidBodyComponent`
-/// (KinematicPositionBased) and a `ColliderComponent`.
-///
-/// Use `move_and_slide()` via the physics resource to apply movement.
 #[derive(Debug, Clone)]
 pub struct CharacterControllerComponent {
-    /// The collider handle used for character shape-casting.
     pub collider_handle: ColliderHandle,
-    /// Configuration for the controller.
     pub config: CharacterControllerConfig,
-    /// Whether the character is currently grounded (updated each frame).
     pub grounded: bool,
-    /// The effective velocity after the last move (for game logic).
+    pub desired_velocity: [f32; 3],
     pub effective_velocity: [f32; 3],
+    pub ground_normal: Option<[f32; 3]>,
 }
 
 impl CharacterControllerComponent {
@@ -70,26 +59,27 @@ impl CharacterControllerComponent {
             collider_handle,
             config: CharacterControllerConfig::default(),
             grounded: false,
+            desired_velocity: [0.0; 3],
             effective_velocity: [0.0; 3],
+            ground_normal: None,
         }
     }
-
+    
     pub fn with_config(mut self, config: CharacterControllerConfig) -> Self {
         self.config = config;
         self
     }
-
-    /// Check whether the character is currently on the ground.
-    pub fn is_grounded(&self) -> bool {
-        self.grounded
+    
+    pub fn set_velocity(&mut self, velocity: [f32; 3]) {
+        self.desired_velocity = velocity;
     }
+    
+    pub fn is_grounded(&self) -> bool { self.grounded }
+    pub fn ground_normal(&self) -> Option<[f32; 3]> { self.ground_normal }
+    pub fn effective_velocity(&self) -> [f32; 3] { self.effective_velocity }
 }
 
 impl PhysicsWorld {
-    /// Move a character controller using shape-casting, handling
-    /// collisions, slopes, and steps automatically.
-    ///
-    /// Returns the effective translation and grounded state.
     pub fn move_character(
         &mut self,
         body_handle: RigidBodyHandle,
@@ -98,35 +88,33 @@ impl PhysicsWorld {
         config: &CharacterControllerConfig,
         dt: f32,
     ) -> CharacterMovementResult {
-        // Rebuild query pipeline if needed.
         if self.query_pipeline_dirty {
             self.query_pipeline.update(&self.colliders);
             self.query_pipeline_dirty = false;
         }
-
+        
         let controller = KinematicCharacterController {
-            max_slope_climb_angle: config.max_slope_angle,
-            min_slope_slide_angle: config.max_slope_angle,
+            max_slope_climb_angle: config.max_slope_climb_angle,
+            min_slope_slide_angle: config.min_slope_slide_angle,
             offset: CharacterLength::Absolute(config.offset),
             slide: config.slide,
-            snap_to_ground: config.snap_to_ground.map(CharacterLength::Absolute),
+            snap_to_ground: Some(CharacterLength::Absolute(config.snap_to_ground_distance)),
             autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(config.max_step_height),
-                min_width: CharacterLength::Absolute(0.1),
+                max_height: CharacterLength::Absolute(config.step_height),
+                min_width: CharacterLength::Absolute(config.radius * 0.5),
                 include_dynamic_bodies: false,
             }),
             ..Default::default()
         };
-
+        
         let desired = nalgebra::vector![
             desired_translation[0],
             desired_translation[1],
             desired_translation[2]
         ];
-
-        // Exclude the character's own collider from collision checks.
+        
         let filter = QueryFilter::default().exclude_rigid_body(body_handle);
-
+        
         let result = controller.move_shape(
             dt,
             &self.bodies,
@@ -135,7 +123,7 @@ impl PhysicsWorld {
             self.colliders
                 .get(collider_handle)
                 .map(|c| c.shape())
-                .unwrap_or(&*SharedShape::ball(0.5)),
+                .unwrap_or(&*SharedShape::capsule_y(config.height * 0.5, config.radius)),
             &self
                 .bodies
                 .get(body_handle)
@@ -144,22 +132,23 @@ impl PhysicsWorld {
                 .unwrap_or(Isometry::identity()),
             desired,
             filter,
-            |_| {},
+            |_collision| {},
         );
-
+        
         let grounded = result.grounded;
         let t = result.translation;
-
-        // Apply the effective translation to the kinematic body.
+        
         if let Some(rb) = self.bodies.get_mut(body_handle) {
             let mut pos = *rb.position();
             pos.translation.vector += t;
             rb.set_next_kinematic_translation(pos.translation.vector);
         }
-
+        
         CharacterMovementResult {
             effective_translation: [t.x, t.y, t.z],
             grounded,
+            ground_normal: None,
+            hit_wall: t.x.abs() < desired.x.abs() * 0.9 || t.z.abs() < desired.z.abs() * 0.9,
         }
     }
 }

@@ -43,9 +43,7 @@ impl AsyncPhysicsStepper {
     ///
     /// The world is moved into the physics thread.
     pub fn new(world: PhysicsWorld) -> Self {
-        let empty_snap = InterpolationSnapshot {
-            bodies: Vec::new(),
-        };
+        let empty_snap = InterpolationSnapshot { bodies: Vec::new() };
         let snapshots = Arc::new(Mutex::new((empty_snap.clone(), empty_snap)));
 
         let (cmd_tx, cmd_rx): (Sender<PhysicsCommand>, Receiver<PhysicsCommand>) =
@@ -139,19 +137,14 @@ fn physics_thread_main(
     cmd_rx: Receiver<PhysicsCommand>,
     snapshots: Arc<Mutex<(InterpolationSnapshot, InterpolationSnapshot)>>,
 ) {
-    loop {
-        match cmd_rx.recv() {
-            Ok(PhysicsCommand::Step) => {
-                world.step_with_dt(PHYSICS_DT);
+    while let Ok(PhysicsCommand::Step) = cmd_rx.recv() {
+        world.step_with_dt(PHYSICS_DT);
 
-                // Build snapshot.
-                let snap = snapshot_from_world(&world);
-                if let Ok(mut guard) = snapshots.lock() {
-                    guard.0 = guard.1.clone();
-                    guard.1 = snap;
-                }
-            }
-            Ok(PhysicsCommand::Shutdown) | Err(_) => break,
+        // Build snapshot.
+        let snap = snapshot_from_world(&world);
+        if let Ok(mut guard) = snapshots.lock() {
+            guard.0 = guard.1.clone();
+            guard.1 = snap;
         }
     }
 }

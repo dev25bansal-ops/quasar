@@ -27,15 +27,9 @@ pub enum Gesture {
     },
     /// Two-finger pinch. `scale` is the ratio of current distance to
     /// initial distance (>1 = zoom in, <1 = zoom out).
-    Pinch {
-        center: Vec2,
-        scale: f32,
-    },
+    Pinch { center: Vec2, scale: f32 },
     /// Two-finger rotation in radians (positive = counter-clockwise).
-    Rotate {
-        center: Vec2,
-        angle_rad: f32,
-    },
+    Rotate { center: Vec2, angle_rad: f32 },
 }
 
 /// Configuration thresholds for the recognizer.
@@ -57,8 +51,7 @@ impl Default for GestureConfig {
 }
 
 /// Stateful gesture recognizer. Feed it a [`TouchInput`] every frame.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct GestureRecognizer {
     pub config: GestureConfig,
     // internal bookkeeping
@@ -66,7 +59,6 @@ pub struct GestureRecognizer {
     prev_pinch_angle: Option<f32>,
     tap_start_time: Option<f32>,
 }
-
 
 impl GestureRecognizer {
     pub fn new(config: GestureConfig) -> Self {
@@ -95,13 +87,9 @@ impl GestureRecognizer {
                 }
                 TouchPhase::Ended => {
                     let dist = p.position.distance(p.start_position);
-                    let duration = self
-                        .tap_start_time
-                        .map(|t| elapsed - t)
-                        .unwrap_or(f32::MAX);
+                    let duration = self.tap_start_time.map(|t| elapsed - t).unwrap_or(f32::MAX);
 
-                    if dist < self.config.swipe_threshold
-                        && duration < self.config.tap_max_duration
+                    if dist < self.config.swipe_threshold && duration < self.config.tap_max_duration
                     {
                         out.push(Gesture::Tap(p.position));
                     } else if dist >= self.config.swipe_threshold {

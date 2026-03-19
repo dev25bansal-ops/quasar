@@ -10,6 +10,7 @@
 pub mod ambisonics;
 pub mod audio_graph;
 pub mod dsp;
+pub mod dsp_nodes;
 #[cfg(feature = "gpu-reverb")]
 pub mod gpu_reverb;
 pub mod plugin;
@@ -31,8 +32,7 @@ pub type SoundId = u64;
 // ---------------------------------------------------------------------------
 
 /// Named audio bus (sub-mix channel).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum AudioBus {
     Master,
     Music,
@@ -43,7 +43,6 @@ pub enum AudioBus {
     /// User-defined bus.
     Custom(String),
 }
-
 
 /// Manages per-bus mixer tracks routed through Kira.
 pub struct BusManager {
@@ -69,7 +68,11 @@ impl BusManager {
     }
 
     /// Get the track handle for a bus, creating it on-demand for Custom buses.
-    pub fn track_for(&mut self, bus: &AudioBus, manager: &mut AudioManager) -> Option<&TrackHandle> {
+    pub fn track_for(
+        &mut self,
+        bus: &AudioBus,
+        manager: &mut AudioManager,
+    ) -> Option<&TrackHandle> {
         if !self.tracks.contains_key(bus) {
             if let Ok(handle) = manager.add_sub_track(TrackBuilder::new()) {
                 self.tracks.insert(bus.clone(), handle);
@@ -148,8 +151,7 @@ pub struct AudioSystem {
 impl AudioSystem {
     /// Initialize the audio backend.
     pub fn new() -> Self {
-        let mut manager =
-            AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
+        let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
         if manager.is_none() {
             log::warn!("Failed to initialize audio backend \u{2014} audio will be silent");
         }
@@ -206,7 +208,11 @@ impl AudioSystem {
     }
 
     /// Play a looped sound routed through the specified audio bus.
-    pub fn play_looped_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
+    pub fn play_looped_on_bus<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        bus: &AudioBus,
+    ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
@@ -236,7 +242,11 @@ impl AudioSystem {
     }
 
     /// Stream a sound routed through the specified audio bus.
-    pub fn play_streaming_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
+    pub fn play_streaming_on_bus<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        bus: &AudioBus,
+    ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut data = StreamingSoundData::from_file(&path_str).ok()?;
@@ -258,7 +268,11 @@ impl AudioSystem {
     }
 
     /// Play a looped streaming sound routed through the specified audio bus.
-    pub fn play_streaming_looped_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
+    pub fn play_streaming_looped_on_bus<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        bus: &AudioBus,
+    ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut data = StreamingSoundData::from_file(&path_str).ok()?;
@@ -371,8 +385,10 @@ pub struct AudioSource {
     /// Volume (0.0 – 1.0).
     pub volume: f32,
     /// If Some, the sound is currently playing with this id.
-    pub playing_id: Option<SoundId>,    /// Audio bus to route this source through.
-    pub bus: AudioBus,    /// Enable spatial (3D positional) audio for this source.
+    pub playing_id: Option<SoundId>,
+    /// Audio bus to route this source through.
+    pub bus: AudioBus,
+    /// Enable spatial (3D positional) audio for this source.
     pub spatial: bool,
     /// Reference distance — distance at which volume is unattenuated (default 1.0).
     pub ref_distance: f32,
@@ -444,19 +460,19 @@ impl AudioSource {
 #[derive(Debug, Clone, Copy)]
 pub struct AudioListener;
 
-pub use plugin::{AudioPlugin, AudioResource, SpatialAudioSystem};
-pub use dsp::{
-    AudioChannel, AudioMixer, AudioMixerSystem, DopplerSystem, DopplerTracker, ReverbZone,
-    ReverbZoneSystem, ConvolutionImpulseResponse, ConvolutionReverb, ConvolutionReverbZone,
-    StreamingAudioSource, StreamingAudioSystem, StreamingBuffer, StreamingMode,
-    HrtfDatabase, HrtfEntry, HrtfIrPair, HrtfProcessor, HrtfSource, HrtfSystem,
-};
 pub use ambisonics::{AmbisonicsDecoder, AmbisonicsEncoder, AmbisonicsOrder, SpeakerLayout};
-pub use audio_graph::{
-    AudioGraph, Compressor, DspNode, Limiter, ParametricEq, ReverbSend, SidechainDucker,
+pub use dsp::{
+    AudioChannel, AudioMixer, AudioMixerSystem, ConvolutionImpulseResponse, ConvolutionReverb,
+    ConvolutionReverbZone, DopplerSystem, DopplerTracker, HrtfDatabase, HrtfEntry, HrtfIrPair,
+    HrtfProcessor, HrtfSource, HrtfSystem, ReverbZone, ReverbZoneSystem, StreamingAudioSource,
+    StreamingAudioSystem, StreamingBuffer, StreamingMode,
+};
+pub use dsp_nodes::{
+    BiquadCoeffs, BiquadState, Compressor, EQBand, HRTFProcessor, OcclusionFilter, ParametricEQ,
 };
 #[cfg(feature = "gpu-reverb")]
 pub use gpu_reverb::{GpuConvolutionReverb, PartitionedIr};
+pub use plugin::{AudioPlugin, AudioResource, SpatialAudioSystem};
 
 // ---------------------------------------------------------------------------
 // Room Acoustics
@@ -580,11 +596,7 @@ impl MusicStemSystem {
     /// Transition to a new state. Stems not in the new state will fade out.
     pub fn transition_to(&mut self, state: &str) {
         self.current_state = state.to_string();
-        let active_names: Vec<String> = self
-            .state_map
-            .get(state)
-            .cloned()
-            .unwrap_or_default();
+        let active_names: Vec<String> = self.state_map.get(state).cloned().unwrap_or_default();
 
         for stem in &mut self.stems {
             if active_names.contains(&stem.name) {
@@ -606,7 +618,11 @@ impl MusicStemSystem {
 
         for stem in &mut self.stems {
             if (stem.volume - stem.target_volume).abs() > 0.001 {
-                let dir = if stem.target_volume > stem.volume { 1.0 } else { -1.0 };
+                let dir = if stem.target_volume > stem.volume {
+                    1.0
+                } else {
+                    -1.0
+                };
                 stem.volume += dir * stem.fade_speed * dt;
                 stem.volume = stem.volume.clamp(0.0, 1.0);
             } else {
