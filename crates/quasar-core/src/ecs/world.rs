@@ -4,6 +4,8 @@
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::RwLock;
 
 use rustc_hash::FxHashMap;
 
@@ -216,11 +218,13 @@ pub struct World {
     /// Sparse-set storage for components that bypass archetype migration.
     sparse_storage: SparseSetStorage,
     /// Per-system last-run tick: system_name → tick when it last ran.
-    system_last_run: HashMap<String, u64>,
+    /// Uses RwLock for thread-safe read access during parallel execution.
+    system_last_run: RwLock<HashMap<String, u64>>,
     /// The last-run tick of the currently executing system.
     /// Used by `FilterChanged<T>` to detect changes since this system last ran.
     /// Defaults to 0 so that a never-before-run system sees all components as changed.
-    active_system_last_run: u64,
+    /// Uses AtomicU64 for thread-safe access during parallel system execution.
+    active_system_last_run: AtomicU64,
     /// Typed entity-to-entity relationship graph.
     relation_graph: RelationGraph,
     /// Observer callbacks: maps (ObserverKind, component TypeId) → list of callbacks.
@@ -242,8 +246,8 @@ impl World {
             change_ticks: FxHashMap::default(),
             column_factories: FxHashMap::default(),
             sparse_storage: SparseSetStorage::new(),
-            system_last_run: HashMap::new(),
-            active_system_last_run: 0,
+            system_last_run: RwLock::new(HashMap::new()),
+            active_system_last_run: AtomicU64::new(0),
             relation_graph: RelationGraph::new(),
             observers: HashMap::new(),
         }
@@ -470,6 +474,35 @@ impl World {
 
         // Notify observers
         self.fire_observers(ObserverKind::OnAdd, type_id, entity);
+    }
+
+    /// Register a column factory for a component type.
+    ///
+    /// This is needed when restoring entities from snapshots where the component
+    /// type may not have been seen before. The factory allows the archetype system
+    /// to create typed SoA columns on demand.
+    pub fn register_column_factory<T: Component + Clone>(&mut self) {
+        let type_id = TypeId::of::<T>();
+        self.column_factories
+            .entry(type_id)
+            .or_insert(create_typed_column::<T>);
+    }
+
+    /// Register a column factory from a TypeId and factory function.
+    ///
+    /// This is the type-erased version for use when the component type is not
+    /// statically known (e.g., during undo/redo operations).
+    pub fn register_column_factory_raw(
+        &mut self,
+        type_id: TypeId,
+        factory: fn() -> Box<dyn ColumnStorage>,
+    ) {
+        self.column_factories.entry(type_id).or_insert(factory);
+    }
+
+    /// Get the column factory for a component type, if registered.
+    pub fn get_column_factory(&self, type_id: TypeId) -> Option<fn() -> Box<dyn ColumnStorage>> {
+        self.column_factories.get(&type_id).copied()
     }
 
     /// Remove a component from an entity, returning `true` if it existed.
@@ -825,21 +858,48 @@ impl World {
     /// so that `FilterChanged<T>` can determine what changed since this
     /// system last ran.
     pub fn begin_system(&mut self, name: &str) {
-        self.active_system_last_run = self.system_last_run.get(name).copied().unwrap_or(0);
+        let last_run = self
+            .system_last_run
+            .read()
+            .unwrap()
+            .get(name)
+            .copied()
+            .unwrap_or(0);
+        self.active_system_last_run
+            .store(last_run, Ordering::SeqCst);
     }
 
     /// Finalize after running a system: record the current tick as the
     /// system's last-run tick.
     pub fn end_system(&mut self, name: &str) {
         self.system_last_run
+            .write()
+            .unwrap()
             .insert(name.to_string(), self.current_tick);
-        self.active_system_last_run = 0;
+        self.active_system_last_run.store(0, Ordering::SeqCst);
     }
 
     /// Return the last-run tick of the currently active system.
     /// Used by `FilterChanged<T>` and other change-detection filters.
     pub fn active_system_last_run(&self) -> u64 {
-        self.active_system_last_run
+        self.active_system_last_run.load(Ordering::SeqCst)
+    }
+
+    /// Set the active_system_last_run directly (used by parallel scheduler).
+    /// Thread-safe: can be called from multiple threads.
+    pub fn set_active_system_last_run(&self, tick: u64) {
+        self.active_system_last_run.store(tick, Ordering::SeqCst);
+    }
+
+    /// Get the last-run tick for a system by name.
+    /// Thread-safe: can be called from multiple threads.
+    pub fn get_system_last_run(&self, name: &str) -> u64 {
+        self.system_last_run
+            .read()
+            .unwrap()
+            .get(name)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Iterate over all `(Entity, &T)` pairs via archetype SoA columns.

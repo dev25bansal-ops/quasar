@@ -30,14 +30,28 @@ pub struct RenderConfig {
 }
 
 impl Default for RenderConfig {
-    fn default() -> Self {
-        Self {
-            msaa_sample_count: 1,
-            gpu_driven_culling: false,
-            taa_enabled: false,
-            ssgi_enabled: false,
-        }
-    }
+fn default() -> Self {
+// Desktop defaults: enable advanced features
+#[cfg(not(target_arch = "wasm32"))]
+{
+Self {
+msaa_sample_count: 1,
+gpu_driven_culling: true,
+taa_enabled: true,
+ssgi_enabled: true,
+}
+}
+// Web/WASM defaults: disable GPU-heavy features
+#[cfg(target_arch = "wasm32")]
+{
+Self {
+msaa_sample_count: 1,
+gpu_driven_culling: false,
+taa_enabled: false,
+ssgi_enabled: false,
+}
+}
+}
 }
 
 /// The main GPU renderer for Quasar Engine.

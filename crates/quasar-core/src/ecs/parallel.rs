@@ -358,24 +358,30 @@ impl SystemGraph {
                         s.spawn(move |_| {
                             // SAFETY:
                             // 1. Each node pointer is unique — no two threads
-                            //    touch the same SystemNode.
+                            // touch the same SystemNode.
                             // 2. The topological grouping guarantees that systems
-                            //    in the same group have disjoint component/resource
-                            //    access, so concurrent &mut World access is safe.
+                            // in the same group have disjoint component/resource
+                            // access, so concurrent &mut World access is safe.
                             unsafe {
                                 let node = &mut *(node_addr as *mut SystemNode);
-                                node.system.run(&mut *(w_addr as *mut World));
+                                let world = &mut *(w_addr as *mut World);
+
+                                // Set active_system_last_run before running the system
+                                // so FilterChanged<T> queries work correctly.
+                                let last_run = world.get_system_last_run(node.system.name());
+                                world.set_active_system_last_run(last_run);
+
+                                node.system.run(world);
                             }
                         });
                     }
                 });
 
                 // After the parallel group completes, record last-run ticks.
-                // NOTE: active_system_last_run is NOT set during parallel
-                // execution (data-race on a single field), so FilterChanged
-                // inside parallel systems conservatively treats everything as
-                // changed.  The tick bookkeeping here ensures subsequent
-                // sequential runs see correct last-run values.
+                // active_system_last_run is set before each parallel system runs,
+                // so FilterChanged<T> queries work correctly during parallel execution.
+                // The tick bookkeeping here ensures subsequent sequential runs see
+                // correct last-run values.
                 for idx in group_indices {
                     world.end_system(self.nodes[idx].system.name());
                 }

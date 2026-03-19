@@ -8,6 +8,8 @@ use super::vertex::Vertex;
 /// - `camera_layout` — group 0: camera uniform (view_proj + model + normal_matrix)
 /// - `material_texture_layout` — group 1: material uniform + albedo texture + sampler
 /// - `lighting_layout` — group 2: lights storage + shadow data
+/// - `instance_layout` — group 3: instance model matrices (storage buffer, optional)
+/// - `config_layout` — group 4: render config flags (optional)
 pub fn create_render_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,

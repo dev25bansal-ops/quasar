@@ -223,6 +223,12 @@ impl EditCommand for DeleteEntityCommand {
     fn undo(&self, world: &mut quasar_core::ecs::World) {
         if let Some(data) = &self.saved_data {
             let entity = world.spawn();
+
+            // Register column factories before inserting components.
+            // This ensures the archetype system can create typed columns
+            // even if no other entity has these component types.
+            world.register_column_factory::<quasar_math::Transform>();
+
             world.insert(
                 entity,
                 quasar_math::Transform {
@@ -246,6 +252,9 @@ impl EditCommand for DeleteEntityCommand {
             );
 
             if let Some(material_data) = &data.material {
+                // Register column factory for MaterialOverride
+                world.register_column_factory::<quasar_render::MaterialOverride>();
+
                 world.insert(
                     entity,
                     quasar_render::MaterialOverride {

@@ -1,49 +1,49 @@
 // Quasar Engine — Basic 3D shader with materials, textures, lighting, and shadows.
 //
-// Bind groups (4 total to fit wgpu limit):
+// Bind groups (3 total to fit wgpu limit):
 // group(0) = camera (view_proj + model + normal_matrix)
 // group(1) = material + texture (base_color, roughness, metallic, emissive, albedo texture + sampler)
 // group(2) = lighting (lights storage + shadow data)
 
 struct CameraUniform {
-    view_proj: mat4x4<f32>,
-    model: mat4x4<f32>,
-    normal_matrix: mat4x4<f32>,
+view_proj: mat4x4<f32>,
+model: mat4x4<f32>,
+normal_matrix: mat4x4<f32>,
 };
 
 struct LightData {
-    position: vec4<f32>,
-    color: vec4<f32>,
-    direction: vec4<f32>,
-    params: vec4<f32>,
+position: vec4<f32>,
+color: vec4<f32>,
+direction: vec4<f32>,
+params: vec4<f32>,
 };
 
 struct LightsUniform {
-    lights: array<LightData, 256>,
-    count: u32,
-    _pad: vec3<u32>,
-    ambient: vec4<f32>,
+lights: array<LightData, 256>,
+count: u32,
+_pad: vec3<u32>,
+ambient: vec4<f32>,
 };
 
 struct MaterialUniform {
-    base_color: vec4<f32>,
-    roughness_metallic: vec2<f32>,
-    emissive: f32,
-    _pad: f32,
+base_color: vec4<f32>,
+roughness_metallic: vec2<f32>,
+emissive: f32,
+_pad: f32,
 };
 
 struct ShadowUniform {
-    light_view_proj: mat4x4<f32>,
-    // x = light_size (world-space), y = shadow_map_size (texels), z/w = unused
-    pcss_params: vec4<f32>,
+light_view_proj: mat4x4<f32>,
+// x = light_size (world-space), y = shadow_map_size (texels), z/w = unused
+pcss_params: vec4<f32>,
 };
 
 struct CascadeUniform {
-    view_proj: mat4x4<f32>,
-    split_depth: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
+view_proj: mat4x4<f32>,
+split_depth: f32,
+_pad0: f32,
+_pad1: f32,
+_pad2: f32,
 };
 
 const CASCADE_COUNT: u32 = 4u;
