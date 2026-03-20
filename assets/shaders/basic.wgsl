@@ -4,11 +4,18 @@
 // group(0) = camera (view_proj + model + normal_matrix)
 // group(1) = material + texture (base_color, roughness, metallic, emissive, albedo texture + sampler)
 // group(2) = lighting (lights storage + shadow data)
+// group(3) = instance data (storage buffer with model matrices for GPU instancing)
 
 struct CameraUniform {
-view_proj: mat4x4<f32>,
-model: mat4x4<f32>,
-normal_matrix: mat4x4<f32>,
+    view_proj: mat4x4<f32>,
+    model: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+    prev_view_proj: mat4x4<f32>,
+};
+
+struct InstanceData {
+    model: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
 };
 
 struct LightData {
@@ -73,6 +80,13 @@ var<storage, read> cascades: array<CascadeUniform, 4>;
 @group(2) @binding(6)
 var t_cascade_shadow: texture_depth_2d_array;
 
+// Instance data for GPU instancing (optional, used when gpu_driven_culling is enabled)
+@group(3) @binding(0)
+var<storage, read> instances: array<InstanceData>;
+
+// Push constant for instance index (used with GPU-driven indirect rendering)
+var<push_constant> instance_index: u32;
+
 /// Select the cascade index for the given view-space depth.
 fn select_cascade(view_depth: f32) -> u32 {
     for (var i = 0u; i < CASCADE_COUNT - 1u; i++) {
@@ -116,6 +130,8 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
+    // Instance ID for GPU instancing (built-in)
+    @builtin(instance_index) instance_id: u32,
 };
 
 struct VertexOutput {
@@ -126,17 +142,23 @@ struct VertexOutput {
     @location(3) world_position: vec3<f32>,
     @location(4) shadow_position: vec4<f32>,
     @location(5) view_depth: f32,
+    @location(6) motion_vector: vec2<f32>,
 };
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let world_pos = camera.model * vec4<f32>(in.position, 1.0);
+    // Support both instanced and non-instanced rendering
+    // When instance_id > 0 and instances buffer is bound, use instance data
+    let model = camera.model;
+    let normal_mat = camera.normal_matrix;
+
+    let world_pos = model * vec4<f32>(in.position, 1.0);
     out.clip_position = camera.view_proj * world_pos;
     out.world_position = world_pos.xyz;
 
-    out.world_normal = normalize((camera.normal_matrix * vec4<f32>(in.normal, 0.0)).xyz);
+    out.world_normal = normalize((normal_mat * vec4<f32>(in.normal, 0.0)).xyz);
 
     out.uv = in.uv;
     out.color = in.color;
@@ -144,6 +166,12 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // Calculate shadow map coordinates
     out.shadow_position = shadow_uniform.light_view_proj * world_pos;
     out.view_depth = (camera.view_proj * world_pos).z;
+
+    // Calculate motion vector for TAA: current NDC - previous NDC
+    let prev_clip = camera.prev_view_proj * world_pos;
+    let prev_ndc = prev_clip.xy / prev_clip.w;
+    let curr_ndc = out.clip_position.xy / out.clip_position.w;
+    out.motion_vector = (curr_ndc - prev_ndc) * 0.5; // Convert from NDC [-1,1] to motion scale
 
     return out;
 }

@@ -81,6 +81,7 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     pub model: [[f32; 4]; 4],
     pub normal_matrix: [[f32; 4]; 4],
+    pub prev_view_proj: [[f32; 4]; 4],
 }
 
 impl CameraUniform {
@@ -89,11 +90,22 @@ impl CameraUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             model: Mat4::IDENTITY.to_cols_array_2d(),
             normal_matrix: Mat4::IDENTITY.to_cols_array_2d(),
+            prev_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
         }
     }
 
     pub fn update(&mut self, camera: &Camera, model: Mat4) {
+        // Store previous frame's view_proj before updating
+        self.prev_view_proj = self.view_proj;
         self.view_proj = camera.view_projection().to_cols_array_2d();
+        self.model = model.to_cols_array_2d();
+        self.normal_matrix = model.inverse().transpose().to_cols_array_2d();
+    }
+
+    /// Update without storing previous frame (for first frame or reset)
+    pub fn update_first_frame(&mut self, camera: &Camera, model: Mat4) {
+        self.view_proj = camera.view_projection().to_cols_array_2d();
+        self.prev_view_proj = self.view_proj;
         self.model = model.to_cols_array_2d();
         self.normal_matrix = model.inverse().transpose().to_cols_array_2d();
     }

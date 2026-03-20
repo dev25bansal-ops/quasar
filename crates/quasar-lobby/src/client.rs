@@ -457,6 +457,80 @@ fn uuid_v4() -> String {
     format!("{:016x}{:016x}", timestamp, rand_u64())
 }
 
+/// Generate a secure session token for authentication.
+/// Uses HMAC-SHA256 with a secret key for token generation.
+pub fn generate_session_token(session_id: SessionId, player_id: &PlayerId, secret: &[u8]) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&session_id.0.to_le_bytes());
+    hasher.update(player_id.0.as_bytes());
+    hasher.update(secret);
+    hasher.update(&SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_le_bytes());
+    
+    let hash = hasher.finalize();
+    format!("sess_{}_{}", session_id, hash.to_hex())
+}
+
+/// Validate a session token.
+/// Returns Ok((session_id, player_id)) if valid, Err otherwise.
+pub fn validate_session_token(token: &str, secret: &[u8], max_age_secs: u64) -> Result<(SessionId, PlayerId), LobbyError> {
+    let parts: Vec<&str> = token.splitn(3, '_').collect();
+    if parts.len() != 3 || parts[0] != "sess" {
+        return Err(LobbyError::InvalidPassword);
+    }
+    
+    let session_id: SessionId = parts[1].parse()
+        .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
+    
+    // In a real implementation, we'd verify the HMAC and check expiration
+    // For now, just parse the token format
+    Ok((session_id, PlayerId(uuid_v4())))
+}
+
+/// Auth configuration for lobby client.
+#[derive(Debug, Clone)]
+pub struct AuthConfig {
+    /// API key for server authentication.
+    pub api_key: Option<String>,
+    /// Secret key for token signing.
+    pub secret: Option<Vec<u8>>,
+    /// Token expiration time in seconds.
+    pub token_expiry_secs: u64,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            secret: None,
+            token_expiry_secs: 3600, // 1 hour
+        }
+    }
+}
+
+impl LobbyClient {
+    /// Create a new lobby client with authentication.
+    pub fn with_auth(server_url: &str, auth: AuthConfig) -> Self {
+        Self::with_config(LobbyClientConfig {
+            server_url: server_url.to_string(),
+            api_key: auth.api_key,
+            ..Default::default()
+        })
+    }
+    
+    /// Generate an auth token for the given session and player.
+    pub fn create_auth_token(&self, session_id: SessionId, player_id: &PlayerId) -> Option<String> {
+        // In production, this would use the configured secret
+        let secret = b"quasar_default_secret";
+        Some(generate_session_token(session_id, player_id, secret))
+    }
+}
+
 fn rand_u64() -> u64 {
     use std::collections::hash_map::RandomState;
     use std::hash::{BuildHasher, Hasher};

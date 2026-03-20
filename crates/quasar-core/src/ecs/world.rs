@@ -209,6 +209,14 @@ pub struct World {
     /// Per-type removal log: tracks entity indices that had a component removed this frame.
     /// Cleared once per frame via `clear_removal_log()`.
     removal_log: HashMap<TypeId, Vec<u32>>,
+    /// Tracks entity indices that were fully despawned this frame.
+    /// Used by network replication to broadcast EntityDespawn messages.
+    /// Cleared once per frame via `clear_despawn_log()`.
+    despawn_log: Vec<u32>,
+    /// Tracks entity indices that were spawned this frame.
+    /// Used by event systems to notify listeners of new entities.
+    /// Cleared once per frame via `clear_spawn_log()`.
+    spawn_log: Vec<u32>,
     /// Global change-detection tick, incremented once per frame.
     current_tick: u64,
     /// Per-(TypeId, entity_index) change tick for change-detection queries.
@@ -242,6 +250,8 @@ impl World {
             entity_row: FxHashMap::default(),
             entity_components: FxHashMap::default(),
             removal_log: HashMap::new(),
+            despawn_log: Vec::new(),
+            spawn_log: Vec::new(),
             current_tick: 0,
             change_ticks: FxHashMap::default(),
             column_factories: FxHashMap::default(),
@@ -259,7 +269,9 @@ impl World {
 
     /// Spawn a new entity (with no components).
     pub fn spawn(&mut self) -> Entity {
-        self.allocator.allocate()
+        let entity = self.allocator.allocate();
+        self.spawn_log.push(entity.index());
+        entity
     }
 
     /// Spawn a new entity and immediately insert a bundle of components.
@@ -280,6 +292,9 @@ impl World {
         if !self.allocator.deallocate(entity) {
             return false;
         }
+
+        // Log despawn for network replication
+        self.despawn_log.push(entity.index());
 
         // Log removals for all components this entity had
         if let Some(components) = self.entity_components.get(&entity.index()) {
@@ -1342,6 +1357,32 @@ impl World {
     /// Clear the removal log. Should be called once per frame after systems run.
     pub fn clear_removal_log(&mut self) {
         self.removal_log.clear();
+    }
+
+    /// Take and return all entity indices that were despawned this frame.
+    /// The caller should broadcast EntityDespawn messages for these.
+    pub fn take_despawn_log(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.despawn_log)
+    }
+
+    /// Clear the despawn log without returning the contents.
+    pub fn clear_despawn_log(&mut self) {
+        self.despawn_log.clear();
+    }
+
+    /// Get a reference to the spawn log (entities spawned this frame).
+    pub fn spawn_log(&self) -> &[u32] {
+        &self.spawn_log
+    }
+
+    /// Take and return all entity indices that were spawned this frame.
+    pub fn take_spawn_log(&mut self) -> Vec<u32> {
+        std::mem::take(&mut self.spawn_log)
+    }
+
+    /// Clear the spawn log without returning the contents.
+    pub fn clear_spawn_log(&mut self) {
+        self.spawn_log.clear();
     }
 
     /// Insert a component using runtime type information (for Commands).

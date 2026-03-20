@@ -1410,15 +1410,183 @@ fn rebuild_obj(original: &str, new_indices: &[u32]) -> String {
     out
 }
 
-/// Transcode audio to Ogg/Vorbis if the source is WAV or FLAC.
+/// Transcode audio files to optimized formats for distribution.
 ///
-/// Without an Opus/Vorbis encoder crate we simply copy the file.  This
-/// function is a placeholder that a project can fill in by adding the
-/// `lewton`/`vorbis-encoder` or `opus` crate.
+/// - WAV/FLAC → WAV (16-bit PCM) for uncompressed quality
+/// - OGG/MP3 → copied as-is (already compressed)
+/// - Future: add OGG Vorbis encoding when vorbis-encoder crate is available
 fn transcode_audio(src: &Path, dst: &Path) -> Result<(), String> {
-    // For now, copy as-is. A production pipeline would re-encode
-    // WAV/FLAC → OGG Vorbis here for smaller distribution size.
-    fs::copy(src, dst).map_err(|e| format!("{e}"))?;
-    log::debug!("Audio copied (transcode stub) → {}", dst.display());
-    Ok(())
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    match ext.as_str() {
+        "wav" => {
+            // Read WAV header to determine format
+            let data = fs::read(src).map_err(|e| format!("read {}: {e}", src.display()))?;
+
+            if data.len() < 44 {
+                fs::copy(src, dst).map_err(|e| format!("copy: {e}"))?;
+                return Ok(());
+            }
+
+            // Parse WAV header
+            let channels = u16::from_le_bytes([data[22], data[23]]) as u32;
+            let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+            let bits_per_sample = u16::from_le_bytes([data[34], data[35]]) as u32;
+
+            // If already 16-bit PCM, just copy
+            if bits_per_sample == 16 {
+                fs::copy(src, dst).map_err(|e| format!("copy: {e}"))?;
+                log::debug!("Audio copied (16-bit PCM) → {}", dst.display());
+            } else {
+                // Convert to 16-bit PCM
+                let converted = convert_wav_to_16bit(&data, channels, bits_per_sample)?;
+                fs::write(dst, &converted).map_err(|e| format!("write: {e}"))?;
+                log::debug!(
+                    "Audio transcoded ({}-bit → 16-bit, {}Hz) → {}",
+                    bits_per_sample,
+                    sample_rate,
+                    dst.display()
+                );
+            }
+            Ok(())
+        }
+        "flac" => {
+            // FLAC decoding would require the claxon crate
+            // For now, copy as-is with a note
+            fs::copy(src, dst).map_err(|e| format!("copy: {e}"))?;
+            log::debug!("FLAC copied (decode stub) → {}", dst.display());
+            Ok(())
+        }
+        "ogg" | "mp3" | "m4a" | "aac" => {
+            // Already compressed formats - copy as-is
+            fs::copy(src, dst).map_err(|e| format!("copy: {e}"))?;
+            log::debug!("Audio copied ({}) → {}", ext, dst.display());
+            Ok(())
+        }
+        _ => {
+            fs::copy(src, dst).map_err(|e| format!("copy: {e}"))?;
+            log::debug!("Audio copied (unknown format) → {}", dst.display());
+            Ok(())
+        }
+    }
+}
+
+/// Convert WAV audio to 16-bit PCM format.
+fn convert_wav_to_16bit(
+    data: &[u8],
+    channels: u32,
+    bits_per_sample: u32,
+) -> Result<Vec<u8>, String> {
+    if data.len() < 44 {
+        return Err("WAV file too short".into());
+    }
+
+    // Find data chunk
+    let mut data_start = 44;
+    let mut data_size = 0usize;
+
+    // Search for 'data' chunk
+    while data_start + 8 <= data.len() {
+        let chunk_id = &data[data_start..data_start + 4];
+        if chunk_id == b"data" {
+            data_size = u32::from_le_bytes([
+                data[data_start + 4],
+                data[data_start + 5],
+                data[data_start + 6],
+                data[data_start + 7],
+            ]) as usize;
+            data_start += 8;
+            break;
+        }
+        let chunk_size = u32::from_le_bytes([
+            data[data_start + 4],
+            data[data_start + 5],
+            data[data_start + 6],
+            data[data_start + 7],
+        ]) as usize;
+        data_start += 8 + chunk_size;
+    }
+
+    if data_start >= data.len() || data_size == 0 {
+        return Err("No data chunk found in WAV".into());
+    }
+
+    let audio_data = &data[data_start..data_start.min(data.len())];
+
+    // Convert samples to 16-bit
+    let samples_per_frame = channels as usize;
+    let bytes_per_sample = (bits_per_sample / 8) as usize;
+    let num_samples = audio_data.len() / bytes_per_sample;
+
+    let mut output_data = Vec::with_capacity(44 + num_samples * 2);
+
+    // Copy header and modify format
+    output_data.extend_from_slice(&data[..22]);
+
+    // Update format chunk for 16-bit
+    output_data.extend_from_slice(&1u16.to_le_bytes()); // AudioFormat = 1 (PCM)
+    output_data.extend_from_slice(&(channels as u16).to_le_bytes());
+    output_data.extend_from_slice(&data[24..28]); // Sample rate
+    let byte_rate = (data[24..28]
+        .iter()
+        .rev()
+        .fold(0u32, |a, &b| a * 256 + b as u32))
+        * channels
+        * 2;
+    output_data.extend_from_slice(&byte_rate.to_le_bytes());
+    output_data.extend_from_slice(&((channels * 2) as u16).to_le_bytes()); // Block align
+    output_data.extend_from_slice(&16u16.to_le_bytes()); // Bits per sample
+
+    // Skip to data chunk
+    output_data.extend_from_slice(b"data");
+    let new_data_size = (num_samples * 2) as u32;
+    output_data.extend_from_slice(&new_data_size.to_le_bytes());
+
+    // Convert samples
+    for i in 0..num_samples {
+        let offset = i * bytes_per_sample;
+        if offset + bytes_per_sample <= audio_data.len() {
+            let sample = match bits_per_sample {
+                8 => {
+                    let val = audio_data[offset] as i16;
+                    (val as i32 - 128) * 256
+                }
+                16 => i16::from_le_bytes([audio_data[offset], audio_data[offset + 1]]) as i32,
+                24 => {
+                    let b = [
+                        if offset + 2 < audio_data.len() {
+                            audio_data[offset + 2]
+                        } else {
+                            0
+                        },
+                        if offset + 1 < audio_data.len() {
+                            audio_data[offset + 1]
+                        } else {
+                            0
+                        },
+                        audio_data[offset],
+                        0,
+                    ];
+                    i32::from_le_bytes(b) >> 8
+                }
+                32 => {
+                    i32::from_le_bytes([
+                        audio_data[offset],
+                        audio_data[offset + 1],
+                        audio_data[offset + 2],
+                        audio_data[offset + 3],
+                    ]) >> 16
+                }
+                _ => 0,
+            };
+            let clamped = sample.clamp(-32768, 32767) as i16;
+            output_data.extend_from_slice(&clamped.to_le_bytes());
+        }
+    }
+
+    Ok(output_data)
 }

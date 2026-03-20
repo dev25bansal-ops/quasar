@@ -80,6 +80,36 @@ impl System for AudioPlaybackSystem {
 }
 
 // ---------------------------------------------------------------------------
+// DSP Processing System
+// ---------------------------------------------------------------------------
+
+/// System that processes DSP effects each frame.
+///
+/// Note: Kira handles mixing internally, so DSP processing is done via
+/// custom callbacks. This system manages DSP state reset on scene changes.
+pub struct DspProcessSystem;
+
+impl System for DspProcessSystem {
+    fn name(&self) -> &str {
+        "dsp_process"
+    }
+
+    fn run(&mut self, world: &mut World) {
+        // Check for scene reset signal
+        let should_reset = world
+            .resource::<quasar_core::SimulationState>()
+            .map(|s| !s.should_tick)
+            .unwrap_or(false);
+
+        if should_reset {
+            if let Some(resource) = world.resource_mut::<AudioResource>() {
+                resource.audio.reset_dsp();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Spatial audio
 // ---------------------------------------------------------------------------
 
@@ -211,6 +241,11 @@ impl quasar_core::Plugin for AudioPlugin {
             Box::new(SpatialAudioSystem),
         );
 
-        log::info!("AudioPlugin loaded — Kira audio system active (spatial enabled)");
+        app.schedule.add_system(
+            quasar_core::ecs::SystemStage::PostUpdate,
+            Box::new(DspProcessSystem),
+        );
+
+        log::info!("AudioPlugin loaded — Kira audio system active (spatial + DSP enabled)");
     }
 }

@@ -89,3 +89,47 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --bench ecs_bench -p quasar-core
+
+  android:
+    name: Android Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Android NDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y android-ndk
+      - name: Build for Android
+        run: |
+          cargo build -p quasar-mobile --target aarch64-linux-android --no-default-features
+        env:
+          ANDROID_NDK_HOME: /usr/lib/android-ndk
+
+  ios:
+    name: iOS Build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - name: Build for iOS
+        run: |
+          cargo build -p quasar-mobile --target aarch64-apple-ios --no-default-features
+          cargo build -p quasar-mobile --target aarch64-apple-ios-sim --no-default-features
+
+  lobby-load-test:
+    name: Lobby Load Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run Lobby Load Test
+        run: cargo test -p quasar-lobby --test load_test --release -- --nocapture
+        continue-on-error: true

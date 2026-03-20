@@ -11,6 +11,8 @@ use super::pipeline;
 use super::taa::TaaPass;
 use super::ssgi::SsgiPass;
 use super::texture::Texture;
+#[cfg(feature = "meshlet")]
+use super::meshlet::{MeshletGpuBuffers, MeshletMesh, MESHLET_CULL_WGSL};
 
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
@@ -27,31 +29,35 @@ pub struct RenderConfig {
     pub taa_enabled: bool,
     /// Enable Screen-Space Global Illumination (SSGI).
     pub ssgi_enabled: bool,
+    /// Use deferred rendering path instead of forward.
+    pub deferred_enabled: bool,
 }
 
 impl Default for RenderConfig {
-fn default() -> Self {
-// Desktop defaults: enable advanced features
-#[cfg(not(target_arch = "wasm32"))]
-{
-Self {
-msaa_sample_count: 1,
-gpu_driven_culling: true,
-taa_enabled: true,
-ssgi_enabled: true,
-}
-}
-// Web/WASM defaults: disable GPU-heavy features
-#[cfg(target_arch = "wasm32")]
-{
-Self {
-msaa_sample_count: 1,
-gpu_driven_culling: false,
-taa_enabled: false,
-ssgi_enabled: false,
-}
-}
-}
+    fn default() -> Self {
+        // Desktop defaults: enable advanced features
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self {
+                msaa_sample_count: 1,
+                gpu_driven_culling: true,
+                taa_enabled: true,
+                ssgi_enabled: true,
+                deferred_enabled: false,
+            }
+        }
+        // Web/WASM defaults: disable GPU-heavy features
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self {
+                msaa_sample_count: 1,
+                gpu_driven_culling: false,
+                taa_enabled: false,
+                ssgi_enabled: false,
+                deferred_enabled: false,
+            }
+        }
+    }
 }
 
 /// The main GPU renderer for Quasar Engine.
@@ -714,6 +720,117 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[self.camera_uniform]),
         );
+    }
+
+    /// Update the lighting bind group to use the given shadow map resources.
+    ///
+    /// Call this each frame after rendering the shadow pass to bind the actual
+    /// shadow depth texture and shadow uniform buffer for sampling in the main pass.
+    pub fn update_shadow_bindings(
+        &mut self,
+        shadow_view: &wgpu::TextureView,
+        shadow_uniform_buffer: &wgpu::Buffer,
+        shadow_sampler: &wgpu::Sampler,
+        shadow_depth_sampler: &wgpu::Sampler,
+    ) {
+        let lighting_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lighting Bind Group"),
+            layout: &self.lighting_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.light_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: shadow_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(shadow_depth_sampler),
+                },
+            ],
+        });
+        self.lighting_bind_group = lighting_bind_group;
+    }
+
+    /// Update the lighting bind group to include CSM (Cascade Shadow Map) resources.
+    ///
+    /// Call this after rendering cascade shadow maps to bind the cascade texture array
+    /// and cascade uniform buffer for CSM sampling in the main pass.
+    pub fn update_csm_bindings(
+        &mut self,
+        cascade_buffer: &wgpu::Buffer,
+        cascade_shadow_view: &wgpu::TextureView,
+        cascade_sampler: &wgpu::Sampler,
+        shadow_view: &wgpu::TextureView,
+        shadow_uniform_buffer: &wgpu::Buffer,
+        shadow_sampler: &wgpu::Sampler,
+        shadow_depth_sampler: &wgpu::Sampler,
+    ) {
+        let lighting_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Lighting Bind Group (CSM)"),
+            layout: &self.lighting_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.light_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: shadow_uniform_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(shadow_depth_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: cascade_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(cascade_shadow_view),
+                },
+            ],
+        });
+        self.lighting_bind_group = lighting_bind_group;
     }
 
     /// Add a texture to the renderer and return its index.
@@ -1510,5 +1627,314 @@ texture: &'static wgpu::BindGroup,
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         (texture, view)
+    }
+
+    /// Render using a RenderGraph for pass composition.
+    ///
+    /// This method builds a RenderGraph with the standard passes:
+    /// 1. Shadow pass (if shadow maps are present)
+    /// 2. Opaque geometry pass
+    /// 3. Post-process pass (TAA, tonemapping)
+    ///
+    /// The graph handles pass ordering, dependency tracking, and resource
+    /// transitions automatically.
+    pub fn render_with_graph(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
+        hdr_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+    ) -> Result<wgpu::CommandBuffer, wgpu::SurfaceError> {
+        use super::render_graph::{RenderGraph, RenderContext, PassId, AttachmentId, Attachment};
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _, _)) in objects.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, *model);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
+        let mut graph = RenderGraph::new();
+
+        let hdr_att = AttachmentId(0);
+        graph.add_attachment(hdr_att, Attachment {
+            name: "HDR Color".into(),
+            format: wgpu::TextureFormat::Rgba16Float,
+            size: (self.config.width, self.config.height),
+            texture: None,
+            view: None,
+        });
+
+        let context = RenderContext {
+            screen_size: (self.config.width, self.config.height),
+            hdr_texture: Some(hdr_view.clone()),
+            depth_view: output_view.clone(),
+            camera_bind_group: self.camera_bind_group.clone(),
+            light_bind_group: self.lighting_bind_group.clone(),
+            resources: Default::default(),
+        };
+
+        let opaque_pass = PassId(1);
+        let draw_data: Vec<OpaqueDrawData> = objects.iter().map(|(m, _, _, _)| OpaqueDrawData {
+            vertex_buffer: m.vertex_buffer.clone(),
+            index_buffer: m.index_buffer.clone(),
+            index_count: m.index_count,
+        }).collect();
+        
+        graph.add_pass(opaque_pass, Box::new(OpaqueGraphPass {
+            objects: draw_data,
+            camera_bind_group: self.camera_bind_group.clone(),
+            material_bind_group: self.default_material_texture_bind_group.clone(),
+            lighting_bind_group: self.lighting_bind_group.clone(),
+            pipeline: self.render_pipeline.clone(),
+            uniform_alignment: self.uniform_alignment,
+        }));
+        graph.add_output(opaque_pass, hdr_att);
+
+        graph.compile().map_err(|_e| wgpu::SurfaceError::Lost)?;
+
+        graph.execute(&self.device, &self.queue, &context)
+            .map_err(|_| wgpu::SurfaceError::Lost)
+    }
+
+    #[cfg(feature = "meshlet")]
+    pub fn render_meshlets(
+        &mut self,
+        camera: &Camera,
+        meshlet_buffers: &MeshletGpuBuffers,
+        encoder: &mut wgpu::CommandEncoder,
+        output_view: &wgpu::TextureView,
+    ) {
+        use super::meshlet::{MAX_MESHLETS, MeshletData, MeshletBounds};
+
+        let visibility_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Meshlet Visibility"),
+            size: MAX_MESHLETS as u64 * 4,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
+        let cull_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Meshlet Cull"),
+            source: wgpu::ShaderSource::Wgsl(MESHLET_CULL_WGSL.into()),
+        });
+
+        let cull_bind_group_layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Meshlet Cull BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let cull_uniforms = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Meshlet Cull Uniforms"),
+            size: std::mem::size_of::<MeshletCullUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let vp = camera.view_projection();
+        let cull_data = MeshletCullUniforms {
+            view_proj: vp.to_cols_array_2d(),
+            camera_pos: [camera.position.x, camera.position.y, camera.position.z],
+            meshlet_count: meshlet_buffers.meshlet_count,
+        };
+        self.queue.write_buffer(&cull_uniforms, 0, bytemuck::bytes_of(&cull_data));
+
+        let cull_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Meshlet Cull BG"),
+            layout: &cull_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: cull_uniforms.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: meshlet_buffers.meshlet_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 2, resource: meshlet_buffers.bounds_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 3, resource: visibility_buffer.as_entire_binding() },
+            ],
+        });
+
+        let cull_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Meshlet Cull Pipeline Layout"),
+            bind_group_layouts: &[&cull_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let cull_pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Meshlet Cull Pipeline"),
+            layout: Some(&cull_pipeline_layout),
+            module: &cull_shader,
+            entry_point: Some("cs_meshlet_cull"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        {
+            let mut cull_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Meshlet Cull"),
+                timestamp_writes: None,
+            });
+            cull_pass.set_pipeline(&cull_pipeline);
+            cull_pass.set_bind_group(0, &cull_bind_group, &[]);
+            let workgroups = (meshlet_buffers.meshlet_count + 63) / 64;
+            cull_pass.dispatch_workgroups(workgroups, 1, 1);
+        }
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Meshlet Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: output_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.render_pipeline);
+            pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+        }
+    }
+}
+
+#[cfg(feature = "meshlet")]
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct MeshletCullUniforms {
+    view_proj: [[f32; 4]; 4],
+    camera_pos: [f32; 3],
+    meshlet_count: u32,
+}
+
+/// Draw data for a single mesh in the opaque pass.
+struct OpaqueDrawData {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+}
+
+/// Internal opaque pass for RenderGraph integration.
+struct OpaqueGraphPass {
+    objects: Vec<OpaqueDrawData>,
+    camera_bind_group: wgpu::BindGroup,
+    material_bind_group: wgpu::BindGroup,
+    lighting_bind_group: wgpu::BindGroup,
+    pipeline: wgpu::RenderPipeline,
+    uniform_alignment: u32,
+}
+
+impl super::render_graph::RenderPass for OpaqueGraphPass {
+    fn name(&self) -> &str {
+        "OpaquePass"
+    }
+
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        context: &super::render_graph::RenderContext,
+    ) {
+        let hdr_view = match &context.hdr_texture {
+            Some(v) => v,
+            None => return,
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Opaque Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: hdr_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.08, a: 1.0 }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &context.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let align = self.uniform_alignment as usize;
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        for (i, mesh) in self.objects.iter().enumerate() {
+            let dyn_offset = (i * aligned_size) as u32;
+            pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+            pass.set_bind_group(1, &self.material_bind_group, &[]);
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+        }
     }
 }

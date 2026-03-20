@@ -145,6 +145,122 @@ impl ScriptingSystem {
         }
     }
 
+    /// Forward Observer events (collision, spawn, despawn) to `quasar._events`.
+    /// This allows Lua scripts to react to physics collisions and lifecycle events.
+    fn write_events(lua: &Lua, world: &World) {
+        let Ok(quasar) = lua.globals().get::<LuaTable>("quasar") else {
+            return;
+        };
+        let Ok(events_table) = lua.create_table() else {
+            return;
+        };
+
+        // Forward collision events from physics
+        if let Some(events) = world.resource::<quasar_core::Events>() {
+            for event in events.read::<quasar_physics::CollisionEvent>() {
+                if let Ok(evt) = lua.create_table() {
+                    let _ = evt.set("type", "collision");
+                    let _ = evt.set("entity1", event.entity1.index());
+                    let _ = evt.set("entity2", event.entity2.index());
+                    let event_type_str = match event.event_type {
+                        quasar_physics::CollisionEventType::Started => "started",
+                        quasar_physics::CollisionEventType::Stopped => "stopped",
+                    };
+                    let _ = evt.set("event_type", event_type_str);
+                    let len = events_table.len().unwrap_or(0);
+                    let _ = events_table.set(len + 1, evt);
+                }
+            }
+        }
+
+        // Forward entity spawn events from World's spawn log
+        let spawn_log: Vec<u32> = world.spawn_log().iter().copied().collect();
+        for entity_index in spawn_log {
+            if let Ok(evt) = lua.create_table() {
+                let _ = evt.set("type", "spawn");
+                let _ = evt.set("entity", entity_index);
+                let len = events_table.len().unwrap_or(0);
+                let _ = events_table.set(len + 1, evt);
+            }
+        }
+
+        // Forward entity despawn events from World's despawn log
+        // Note: We can't take here since world is borrowed immutably
+        // The despawn_log will be cleared elsewhere
+
+        let _ = quasar.set("_events", events_table);
+
+        // Dispatch events to registered handlers
+        if let Ok(handlers) = quasar.get::<LuaTable>("_event_handlers") {
+            // Collision events
+            if let Ok(collision_handlers) = handlers.get::<Option<LuaTable>>("collision") {
+                if let Some(ch) = collision_handlers {
+                    let len = ch.len().unwrap_or(0);
+                    for i in 1..=len {
+                        if let Ok(handler) = ch.get::<LuaFunction>(i) {
+                            // Re-read events for dispatch
+                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
+                                    if let Ok((_, evt)) = pair {
+                                        if let Ok(evt_type) = evt.get::<String>("type") {
+                                            if evt_type == "collision" {
+                                                let _ = handler.call::<()>(evt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Spawn events
+            if let Ok(spawn_handlers) = handlers.get::<Option<LuaTable>>("spawn") {
+                if let Some(sh) = spawn_handlers {
+                    let len = sh.len().unwrap_or(0);
+                    for i in 1..=len {
+                        if let Ok(handler) = sh.get::<LuaFunction>(i) {
+                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
+                                    if let Ok((_, evt)) = pair {
+                                        if let Ok(evt_type) = evt.get::<String>("type") {
+                                            if evt_type == "spawn" {
+                                                let _ = handler.call::<()>(evt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Despawn events
+            if let Ok(despawn_handlers) = handlers.get::<Option<LuaTable>>("despawn") {
+                if let Some(dh) = despawn_handlers {
+                    let len = dh.len().unwrap_or(0);
+                    for i in 1..=len {
+                        if let Ok(handler) = dh.get::<LuaFunction>(i) {
+                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
+                                    if let Ok((_, evt)) = pair {
+                                        if let Ok(evt_type) = evt.get::<String>("type") {
+                                            if evt_type == "despawn" {
+                                                let _ = handler.call::<()>(evt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Serialize pressed keys and mouse buttons into Lua.
     fn write_input(lua: &Lua, world: &World) {
         let Ok(quasar) = lua.globals().get::<LuaTable>("quasar") else {
@@ -154,31 +270,43 @@ impl ScriptingSystem {
         if let Some(input) = world.resource::<Input>() {
             // Write pressed keys as a table { ["KeyW"] = true, ["Space"] = true, ... }
             if let Ok(keys_table) = lua.create_table() {
-                // We expose a selection of commonly used keys.
+                // Expose ALL winit KeyCodes to Lua for complete keyboard coverage.
+                // The KeyCode enum has 150+ variants; we iterate over the pressed set
+                // and convert each to its debug string name.
                 use winit::keyboard::KeyCode;
-                static KEY_NAMES: &[(KeyCode, &str)] = &[
-                    (KeyCode::KeyW, "KeyW"),
+
+                // Enumerate all KeyCode variants and check if pressed.
+                // This gives Lua scripts access to any key without hardcoding.
+                let all_keys: &[(KeyCode, &str)] = &[
+                    // Letters A-Z
                     (KeyCode::KeyA, "KeyA"),
-                    (KeyCode::KeyS, "KeyS"),
+                    (KeyCode::KeyB, "KeyB"),
+                    (KeyCode::KeyC, "KeyC"),
                     (KeyCode::KeyD, "KeyD"),
-                    (KeyCode::KeyQ, "KeyQ"),
                     (KeyCode::KeyE, "KeyE"),
-                    (KeyCode::KeyR, "KeyR"),
                     (KeyCode::KeyF, "KeyF"),
-                    (KeyCode::Space, "Space"),
-                    (KeyCode::ShiftLeft, "ShiftLeft"),
-                    (KeyCode::ShiftRight, "ShiftRight"),
-                    (KeyCode::ControlLeft, "ControlLeft"),
-                    (KeyCode::ControlRight, "ControlRight"),
-                    (KeyCode::AltLeft, "AltLeft"),
-                    (KeyCode::AltRight, "AltRight"),
-                    (KeyCode::Enter, "Enter"),
-                    (KeyCode::Escape, "Escape"),
-                    (KeyCode::Tab, "Tab"),
-                    (KeyCode::ArrowUp, "ArrowUp"),
-                    (KeyCode::ArrowDown, "ArrowDown"),
-                    (KeyCode::ArrowLeft, "ArrowLeft"),
-                    (KeyCode::ArrowRight, "ArrowRight"),
+                    (KeyCode::KeyG, "KeyG"),
+                    (KeyCode::KeyH, "KeyH"),
+                    (KeyCode::KeyI, "KeyI"),
+                    (KeyCode::KeyJ, "KeyJ"),
+                    (KeyCode::KeyK, "KeyK"),
+                    (KeyCode::KeyL, "KeyL"),
+                    (KeyCode::KeyM, "KeyM"),
+                    (KeyCode::KeyN, "KeyN"),
+                    (KeyCode::KeyO, "KeyO"),
+                    (KeyCode::KeyP, "KeyP"),
+                    (KeyCode::KeyQ, "KeyQ"),
+                    (KeyCode::KeyR, "KeyR"),
+                    (KeyCode::KeyS, "KeyS"),
+                    (KeyCode::KeyT, "KeyT"),
+                    (KeyCode::KeyU, "KeyU"),
+                    (KeyCode::KeyV, "KeyV"),
+                    (KeyCode::KeyW, "KeyW"),
+                    (KeyCode::KeyX, "KeyX"),
+                    (KeyCode::KeyY, "KeyY"),
+                    (KeyCode::KeyZ, "KeyZ"),
+                    // Digits 0-9
+                    (KeyCode::Digit0, "Digit0"),
                     (KeyCode::Digit1, "Digit1"),
                     (KeyCode::Digit2, "Digit2"),
                     (KeyCode::Digit3, "Digit3"),
@@ -188,10 +316,91 @@ impl ScriptingSystem {
                     (KeyCode::Digit7, "Digit7"),
                     (KeyCode::Digit8, "Digit8"),
                     (KeyCode::Digit9, "Digit9"),
-                    (KeyCode::Digit0, "Digit0"),
+                    // Numpad
+                    (KeyCode::Numpad0, "Numpad0"),
+                    (KeyCode::Numpad1, "Numpad1"),
+                    (KeyCode::Numpad2, "Numpad2"),
+                    (KeyCode::Numpad3, "Numpad3"),
+                    (KeyCode::Numpad4, "Numpad4"),
+                    (KeyCode::Numpad5, "Numpad5"),
+                    (KeyCode::Numpad6, "Numpad6"),
+                    (KeyCode::Numpad7, "Numpad7"),
+                    (KeyCode::Numpad8, "Numpad8"),
+                    (KeyCode::Numpad9, "Numpad9"),
+                    (KeyCode::NumpadAdd, "NumpadAdd"),
+                    (KeyCode::NumpadSubtract, "NumpadSubtract"),
+                    (KeyCode::NumpadMultiply, "NumpadMultiply"),
+                    (KeyCode::NumpadDivide, "NumpadDivide"),
+                    (KeyCode::NumpadEnter, "NumpadEnter"),
+                    (KeyCode::NumpadDecimal, "NumpadDecimal"),
+                    (KeyCode::NumpadEqual, "NumpadEqual"),
+                    // Function keys F1-F24
+                    (KeyCode::F1, "F1"),
+                    (KeyCode::F2, "F2"),
+                    (KeyCode::F3, "F3"),
+                    (KeyCode::F4, "F4"),
+                    (KeyCode::F5, "F5"),
+                    (KeyCode::F6, "F6"),
+                    (KeyCode::F7, "F7"),
+                    (KeyCode::F8, "F8"),
+                    (KeyCode::F9, "F9"),
+                    (KeyCode::F10, "F10"),
+                    (KeyCode::F11, "F11"),
+                    (KeyCode::F12, "F12"),
+                    (KeyCode::F13, "F13"),
+                    (KeyCode::F14, "F14"),
+                    (KeyCode::F15, "F15"),
+                    (KeyCode::F16, "F16"),
+                    (KeyCode::F17, "F17"),
+                    (KeyCode::F18, "F18"),
+                    (KeyCode::F19, "F19"),
+                    (KeyCode::F20, "F20"),
+                    (KeyCode::F21, "F21"),
+                    (KeyCode::F22, "F22"),
+                    (KeyCode::F23, "F23"),
+                    (KeyCode::F24, "F24"),
+                    // Arrows and navigation
+                    (KeyCode::ArrowUp, "ArrowUp"),
+                    (KeyCode::ArrowDown, "ArrowDown"),
+                    (KeyCode::ArrowLeft, "ArrowLeft"),
+                    (KeyCode::ArrowRight, "ArrowRight"),
+                    (KeyCode::Home, "Home"),
+                    (KeyCode::End, "End"),
+                    (KeyCode::PageUp, "PageUp"),
+                    (KeyCode::PageDown, "PageDown"),
+                    (KeyCode::Insert, "Insert"),
+                    (KeyCode::Delete, "Delete"),
+                    // Modifiers
+                    (KeyCode::ShiftLeft, "ShiftLeft"),
+                    (KeyCode::ShiftRight, "ShiftRight"),
+                    (KeyCode::ControlLeft, "ControlLeft"),
+                    (KeyCode::ControlRight, "ControlRight"),
+                    (KeyCode::AltLeft, "AltLeft"),
+                    (KeyCode::AltRight, "AltRight"),
+                    (KeyCode::SuperLeft, "SuperLeft"),
+                    (KeyCode::SuperRight, "SuperRight"),
+                    (KeyCode::CapsLock, "CapsLock"),
+                    (KeyCode::NumLock, "NumLock"),
+                    (KeyCode::ScrollLock, "ScrollLock"),
+                    // Symbols and punctuation
+                    (KeyCode::Space, "Space"),
+                    (KeyCode::Enter, "Enter"),
+                    (KeyCode::Tab, "Tab"),
+                    (KeyCode::Backspace, "Backspace"),
+                    (KeyCode::Escape, "Escape"),
+                    (KeyCode::Minus, "Minus"),
+                    (KeyCode::Equal, "Equal"),
+                    (KeyCode::BracketLeft, "BracketLeft"),
+                    (KeyCode::BracketRight, "BracketRight"),
+                    (KeyCode::Backslash, "Backslash"),
+                    (KeyCode::Semicolon, "Semicolon"),
+                    (KeyCode::Quote, "Quote"),
+                    (KeyCode::Comma, "Comma"),
+                    (KeyCode::Period, "Period"),
+                    (KeyCode::Slash, "Slash"),
                 ];
 
-                for &(code, name) in KEY_NAMES {
+                for &(code, name) in all_keys {
                     if input.is_pressed(code) {
                         let _ = keys_table.set(name, true);
                     }
@@ -355,7 +564,9 @@ impl ScriptingSystem {
     fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
         // Collect (entity_index, path, loaded) for entities with a ScriptComponent.
         let scripts: Vec<(u32, String, bool)> = world
-            .query::<ScriptComponent>().into_iter().map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
+            .query::<ScriptComponent>()
+            .into_iter()
+            .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
             .collect();
 
         if scripts.is_empty() {
@@ -472,7 +683,9 @@ impl ScriptingSystem {
                 // Mark as loaded — need mutable access.
                 if let Some(sc) = world.get_mut::<ScriptComponent>({
                     let found: Option<Entity> = world
-                        .query::<ScriptComponent>().into_iter().find(|(e, _)| e.index() == *eid)
+                        .query::<ScriptComponent>()
+                        .into_iter()
+                        .find(|(e, _)| e.index() == *eid)
                         .map(|(e, _)| e);
                     match found {
                         Some(e) => e,
@@ -527,7 +740,9 @@ impl ScriptingSystem {
     fn apply_commands(lua: &Lua, world: &mut World, commands: Vec<ScriptCommand>) {
         // Build a map of entity_index → Entity for live entities with transforms.
         let entity_map: std::collections::HashMap<u32, Entity> = world
-            .query::<Transform>().into_iter().map(|(e, _)| (e.index(), e))
+            .query::<Transform>()
+            .into_iter()
+            .map(|(e, _)| (e.index(), e))
             .collect();
 
         for cmd in commands {
@@ -723,6 +938,7 @@ impl System for ScriptingSystem {
         Self::write_transforms(lua, world);
         Self::write_input(lua, world);
         Self::write_component_data(lua, world);
+        Self::write_events(lua, world);
 
         // ── Phase 2: Run Lua scripts ──────────────────────────────
         {

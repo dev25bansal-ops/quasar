@@ -11,6 +11,8 @@ use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 
+pub mod replication;
+
 pub const DEFAULT_PORT: u16 = 7777;
 pub const MAX_CLIENTS: usize = 32;
 pub const TICK_RATE: u32 = 60;
@@ -1305,7 +1307,7 @@ impl NetworkPlugin {
 }
 
 fn network_system(world: &mut crate::World) {
-    // â”€â”€ Receive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Receive ──────────────────────────────────────────────────────────────────────────────
     let messages = {
         let Some(transport) = world.resource_mut::<NetworkTransportResource>() else {
             return;
@@ -1317,6 +1319,7 @@ fn network_system(world: &mut crate::World) {
     type TransformUpdate = (NetworkEntityId, [f32; 3], [f32; 4], [f32; 3]);
     let mut transform_updates: Vec<TransformUpdate> = Vec::new();
     let mut snapshot_updates: Vec<(u64, Vec<EntitySnapshot>)> = Vec::new();
+    let mut despawn_updates: Vec<NetworkEntityId> = Vec::new();
 
     {
         let Some(replication) = world.resource::<NetworkReplication>() else {
@@ -1346,6 +1349,9 @@ fn network_system(world: &mut crate::World) {
                 } => {
                     transform_updates.push((*entity_id, *position, *rotation, *scale));
                 }
+                NetworkPayload::EntityDespawn { entity_id } => {
+                    despawn_updates.push(*entity_id);
+                }
                 NetworkPayload::Input { client_id, inputs } => {
                     state.input_buffer.insert(*client_id, inputs.clone());
                 }
@@ -1360,7 +1366,7 @@ fn network_system(world: &mut crate::World) {
 
     // Apply received entity transforms.
     if !transform_updates.is_empty() {
-        // Build network_id â†’ entity_index map
+        // Build network_id → entity_index map
         let net_to_entity: HashMap<NetworkEntityId, u32> = {
             let Some(replication) = world.resource::<NetworkReplication>() else {
                 return;
@@ -1369,7 +1375,7 @@ fn network_system(world: &mut crate::World) {
             state.network_to_entity.clone()
         };
 
-        // Build entity_index â†’ Entity handle
+        // Build entity_index → Entity handle
         let entity_map: HashMap<u32, crate::ecs::Entity> = world
             .query::<quasar_math::Transform>()
             .into_iter()
@@ -1394,6 +1400,33 @@ fn network_system(world: &mut crate::World) {
         }
     }
 
+    // Handle received despawns — remove local entities.
+    for net_id in &despawn_updates {
+        let entity_index = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                continue;
+            };
+            let mut state = replication.state.write().unwrap_or_else(|e| e.into_inner());
+            state.network_to_entity.remove(net_id);
+            let idx = net_id.0 as u32;
+            state.entity_to_network.remove(&idx);
+            state.network_to_entity.get(net_id).copied()
+        };
+        if let Some(idx) = entity_index {
+            let all_entities: Vec<crate::ecs::Entity> = world
+                .query::<quasar_math::Transform>()
+                .into_iter()
+                .map(|(e, _)| e)
+                .collect();
+            for entity in all_entities {
+                if entity.index() == idx {
+                    world.despawn(entity);
+                    break;
+                }
+            }
+        }
+    }
+
     // Feed received state snapshots into interpolation + rollback.
     for (frame, entities) in &snapshot_updates {
         // Build map for both interpolation and rollback.
@@ -1410,7 +1443,7 @@ fn network_system(world: &mut crate::World) {
         }
     }
 
-    // â”€â”€ Send (server broadcasts entity transforms) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Send (server broadcasts entity transforms) ───────────────────────────────
     let is_server = world
         .resource::<NetworkReplication>()
         .map(|r| {
@@ -1423,8 +1456,82 @@ fn network_system(world: &mut crate::World) {
         return;
     }
 
+    // ── Despawn replication: read from world despawn log and broadcast ───────────
+    let despawned_indices = world.take_despawn_log();
+    if !despawned_indices.is_empty() {
+        let (despawn_messages, client_addrs) = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                return;
+            };
+            let mut state = replication.state.write().unwrap_or_else(|e| e.into_inner());
+
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            let msgs: Vec<NetworkMessage> = despawned_indices
+                .iter()
+                .filter_map(|&idx| state.entity_to_network.get(&idx))
+                .map(|&net_id| NetworkMessage {
+                    sequence: state.frame_number,
+                    timestamp: now,
+                    payload: NetworkPayload::EntityDespawn { entity_id: net_id },
+                })
+                .collect();
+
+            // Clean up mappings for despawned entities
+            for &idx in &despawned_indices {
+                if let Some(net_id) = state.entity_to_network.remove(&idx) {
+                    state.network_to_entity.remove(&net_id);
+                }
+            }
+
+            let addrs: Vec<SocketAddr> = state
+                .clients
+                .values()
+                .filter(|c| c.connected)
+                .map(|c| c.addr)
+                .collect();
+
+            (msgs, addrs)
+        };
+
+        if !despawn_messages.is_empty() && !client_addrs.is_empty() {
+            if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
+                for msg in &despawn_messages {
+                    for &addr in &client_addrs {
+                        if let Err(e) = transport.send(addr, msg) {
+                            log::warn!("Failed to send despawn to {}: {}", addr, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Interest management: per-client spatial filtering ─────────────────────────
+    // Build a spatial grid of all networked entities with transforms.
+    use crate::network::replication::{SpatialFilter, SpatialGrid};
+    use quasar_math::Vec3;
+    const INTEREST_RADIUS: f32 = 100.0;
+    const MAX_ENTITIES_PER_CLIENT: usize = 128;
+
+    let _spatial_grid: SpatialGrid = {
+        let entities_with_transforms: Vec<(crate::ecs::Entity, &quasar_math::Transform)> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .collect();
+
+        let mut grid = SpatialGrid::new(20.0);
+        for (entity, t) in entities_with_transforms {
+            grid.insert(entity, Vec3::new(t.position.x, t.position.y, t.position.z));
+        }
+        grid
+    };
+
     // Collect all networked entity transforms.
-    let (outgoing_messages, client_addrs) = {
+    let (outgoing_messages, client_addrs_with_positions) = {
         let Some(replication) = world.resource::<NetworkReplication>() else {
             return;
         };
@@ -1439,37 +1546,64 @@ fn network_system(world: &mut crate::World) {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_millis() as u64;
-                    NetworkMessage {
-                        sequence: state.frame_number,
-                        timestamp: now,
-                        payload: NetworkPayload::EntityTransform {
-                            entity_id: *net_id,
-                            position: [t.position.x, t.position.y, t.position.z],
-                            rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
-                            scale: [t.scale.x, t.scale.y, t.scale.z],
+                    (
+                        *net_id,
+                        entity.index(),
+                        NetworkMessage {
+                            sequence: state.frame_number,
+                            timestamp: now,
+                            payload: NetworkPayload::EntityTransform {
+                                entity_id: *net_id,
+                                position: [t.position.x, t.position.y, t.position.z],
+                                rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                                scale: [t.scale.x, t.scale.y, t.scale.z],
+                            },
                         },
-                    }
+                        Vec3::new(t.position.x, t.position.y, t.position.z),
+                    )
                 })
             })
             .collect();
 
-        let addrs: Vec<SocketAddr> = state
+        // Build client positions from controlled entities (entities with owner matching client).
+        // For simplicity, use AudioListener position if available, else origin.
+        let client_positions: HashMap<ClientId, Vec3> = world
+            .query::<(Replicated, quasar_math::Transform)>()
+            .into_iter()
+            .filter_map(|(_, (rep, t))| {
+                rep.owner
+                    .map(|owner| (owner, Vec3::new(t.position.x, t.position.y, t.position.z)))
+            })
+            .collect();
+
+        let addrs: Vec<(SocketAddr, Option<ClientId>, Option<Vec3>)> = state
             .clients
             .values()
             .filter(|c| c.connected)
-            .map(|c| c.addr)
+            .map(|c| (c.addr, Some(c.id), client_positions.get(&c.id).copied()))
             .collect();
 
         (transforms, addrs)
     };
 
-    // Send transform snapshots to all connected clients.
-    if !outgoing_messages.is_empty() && !client_addrs.is_empty() {
+    // Send transform snapshots with interest management.
+    if !outgoing_messages.is_empty() && !client_addrs_with_positions.is_empty() {
         if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
-            for msg in &outgoing_messages {
-                for &addr in &client_addrs {
-                    if let Err(e) = transport.send(addr, msg) {
-                        log::warn!("Failed to send to {}: {}", addr, e);
+            for (addr, _client_id, client_pos) in &client_addrs_with_positions {
+                let filter = client_pos
+                    .map(|p| SpatialFilter::new(p, INTEREST_RADIUS))
+                    .unwrap_or_else(|| SpatialFilter::new(Vec3::ZERO, f32::MAX));
+
+                let mut count = 0usize;
+                for (_net_id, _entity_idx, msg, pos) in &outgoing_messages {
+                    if count >= MAX_ENTITIES_PER_CLIENT {
+                        break;
+                    }
+                    if filter.contains(*pos) {
+                        if let Err(e) = transport.send(*addr, msg) {
+                            log::warn!("Failed to send to {}: {}", addr, e);
+                        }
+                        count += 1;
                     }
                 }
             }

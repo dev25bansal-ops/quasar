@@ -163,3 +163,194 @@ impl GestureRecognizer {
         out
     }
 }
+
+// ---------------------------------------------------------------------------
+// Gesture → Action Mapping
+// ---------------------------------------------------------------------------
+
+/// A named action that can be triggered by a gesture.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActionName(pub String);
+
+impl ActionName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+}
+
+impl std::fmt::Display for ActionName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Mapping from gestures to named actions.
+#[derive(Debug, Clone, Default)]
+pub struct GestureActionMap {
+    /// Single tap → action
+    pub tap_action: Option<ActionName>,
+    /// Swipe directions → actions
+    pub swipe_left: Option<ActionName>,
+    pub swipe_right: Option<ActionName>,
+    pub swipe_up: Option<ActionName>,
+    pub swipe_down: Option<ActionName>,
+    /// Pinch → actions
+    pub pinch_in: Option<ActionName>,
+    pub pinch_out: Option<ActionName>,
+    /// Rotate → action
+    pub rotate: Option<ActionName>,
+}
+
+impl GestureActionMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the action for single taps.
+    pub fn on_tap(mut self, action: impl Into<String>) -> Self {
+        self.tap_action = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for swipe left.
+    pub fn on_swipe_left(mut self, action: impl Into<String>) -> Self {
+        self.swipe_left = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for swipe right.
+    pub fn on_swipe_right(mut self, action: impl Into<String>) -> Self {
+        self.swipe_right = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for swipe up.
+    pub fn on_swipe_up(mut self, action: impl Into<String>) -> Self {
+        self.swipe_up = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for swipe down.
+    pub fn on_swipe_down(mut self, action: impl Into<String>) -> Self {
+        self.swipe_down = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for pinch in (zoom out).
+    pub fn on_pinch_in(mut self, action: impl Into<String>) -> Self {
+        self.pinch_in = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for pinch out (zoom in).
+    pub fn on_pinch_out(mut self, action: impl Into<String>) -> Self {
+        self.pinch_out = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Set the action for rotation.
+    pub fn on_rotate(mut self, action: impl Into<String>) -> Self {
+        self.rotate = Some(ActionName(action.into()));
+        self
+    }
+
+    /// Convert detected gestures to actions.
+    pub fn map(&self, gestures: &[Gesture]) -> Vec<(ActionName, f32)> {
+        let mut actions = Vec::new();
+
+        for gesture in gestures {
+            match gesture {
+                Gesture::Tap(_) => {
+                    if let Some(ref action) = self.tap_action {
+                        actions.push((action.clone(), 1.0));
+                    }
+                }
+                Gesture::Swipe { direction, .. } => {
+                    let action = match direction {
+                        SwipeDirection::Left => &self.swipe_left,
+                        SwipeDirection::Right => &self.swipe_right,
+                        SwipeDirection::Up => &self.swipe_up,
+                        SwipeDirection::Down => &self.swipe_down,
+                    };
+                    if let Some(ref action) = action {
+                        actions.push((action.clone(), 1.0));
+                    }
+                }
+                Gesture::Pinch { scale, .. } => {
+                    if *scale < 1.0 {
+                        if let Some(ref action) = self.pinch_in {
+                            actions.push((action.clone(), 1.0 - scale));
+                        }
+                    } else {
+                        if let Some(ref action) = self.pinch_out {
+                            actions.push((action.clone(), scale - 1.0));
+                        }
+                    }
+                }
+                Gesture::Rotate { angle_rad, .. } => {
+                    if let Some(ref action) = self.rotate {
+                        actions.push((action.clone(), angle_rad.abs()));
+                    }
+                }
+            }
+        }
+
+        actions
+    }
+}
+
+/// Bridge that connects gesture recognition to the engine's action system.
+///
+/// This struct holds a `GestureRecognizer` and a `GestureActionMap`,
+/// providing a one-stop interface for mobile games to process touch input
+/// and receive named actions each frame.
+#[derive(Debug, Clone)]
+pub struct GestureActionBridge {
+    pub recognizer: GestureRecognizer,
+    pub action_map: GestureActionMap,
+}
+
+impl GestureActionBridge {
+    /// Create a new bridge with default configuration.
+    pub fn new() -> Self {
+        Self {
+            recognizer: GestureRecognizer::new(GestureConfig::default()),
+            action_map: GestureActionMap::new(),
+        }
+    }
+
+    /// Create a bridge with custom configuration.
+    pub fn with_config(config: GestureConfig) -> Self {
+        Self {
+            recognizer: GestureRecognizer::new(config),
+            action_map: GestureActionMap::new(),
+        }
+    }
+
+    /// Set the action map.
+    pub fn with_action_map(mut self, map: GestureActionMap) -> Self {
+        self.action_map = map;
+        self
+    }
+
+    /// Process touch input for this frame and return triggered actions.
+    ///
+    /// # Arguments
+    /// * `input` - The current touch input state
+    /// * `dt` - Delta time in seconds
+    /// * `elapsed` - Total elapsed time since app start
+    ///
+    /// # Returns
+    /// A list of `(action_name, magnitude)` pairs. Magnitude depends on
+    /// the gesture type (e.g., pinch magnitude = scale delta, rotate = angle).
+    pub fn update(&mut self, input: &TouchInput, dt: f32, elapsed: f32) -> Vec<(ActionName, f32)> {
+        let gestures = self.recognizer.update(input, dt, elapsed);
+        self.action_map.map(&gestures)
+    }
+}
+
+impl Default for GestureActionBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}

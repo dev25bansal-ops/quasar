@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 
 mod client;
 mod protocol;
@@ -51,6 +52,16 @@ pub struct SessionId(pub u64);
 impl fmt::Display for SessionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:016x}", self.0)
+    }
+}
+
+impl FromStr for SessionId {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        u64::from_str_radix(s, 16)
+            .map(SessionId)
+            .map_err(|e| format!("Invalid session ID: {}", e))
     }
 }
 

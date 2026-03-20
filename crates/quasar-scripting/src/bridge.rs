@@ -56,6 +56,129 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("_audio_queue", lua.create_table()?)?;
     quasar.set("_physics_components", lua.create_table()?)?;
 
+    // ── KeyCode constants table ─────────────────────────────────────
+    // Expose all KeyCode variants so scripts can use quasar.KeyCode.KeyW
+    let keycodes = lua.create_table()?;
+    let key_names = [
+        "KeyA",
+        "KeyB",
+        "KeyC",
+        "KeyD",
+        "KeyE",
+        "KeyF",
+        "KeyG",
+        "KeyH",
+        "KeyI",
+        "KeyJ",
+        "KeyK",
+        "KeyL",
+        "KeyM",
+        "KeyN",
+        "KeyO",
+        "KeyP",
+        "KeyQ",
+        "KeyR",
+        "KeyS",
+        "KeyT",
+        "KeyU",
+        "KeyV",
+        "KeyW",
+        "KeyX",
+        "KeyY",
+        "KeyZ",
+        "Digit0",
+        "Digit1",
+        "Digit2",
+        "Digit3",
+        "Digit4",
+        "Digit5",
+        "Digit6",
+        "Digit7",
+        "Digit8",
+        "Digit9",
+        "Numpad0",
+        "Numpad1",
+        "Numpad2",
+        "Numpad3",
+        "Numpad4",
+        "Numpad5",
+        "Numpad6",
+        "Numpad7",
+        "Numpad8",
+        "Numpad9",
+        "NumpadAdd",
+        "NumpadSubtract",
+        "NumpadMultiply",
+        "NumpadDivide",
+        "NumpadEnter",
+        "NumpadDecimal",
+        "NumpadEqual",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F11",
+        "F12",
+        "F13",
+        "F14",
+        "F15",
+        "F16",
+        "F17",
+        "F18",
+        "F19",
+        "F20",
+        "F21",
+        "F22",
+        "F23",
+        "F24",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "Insert",
+        "Delete",
+        "ShiftLeft",
+        "ShiftRight",
+        "ControlLeft",
+        "ControlRight",
+        "AltLeft",
+        "AltRight",
+        "SuperLeft",
+        "SuperRight",
+        "CapsLock",
+        "NumLock",
+        "ScrollLock",
+        "Space",
+        "Enter",
+        "Tab",
+        "Backspace",
+        "Escape",
+        "Minus",
+        "Equal",
+        "BracketLeft",
+        "BracketRight",
+        "Backslash",
+        "Semicolon",
+        "Quote",
+        "Comma",
+        "Period",
+        "Slash",
+    ];
+    for name in key_names {
+        keycodes.set(name, name)?;
+    }
+    quasar.set("KeyCode", keycodes)?;
+
     // ── Utilities ─────────────────────────────────────────────────
 
     // quasar.log(msg)
@@ -628,6 +751,68 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
         Ok(())
     })?;
     quasar.set("emit_event", emit_event_fn)?;
+
+    // ── Collision event registration API ─────────────────────────────
+
+    // quasar.on_collision(handler_fn)
+    // Register a callback for collision events. Handler receives {entity1, entity2, event_type}
+    let on_collision_fn = lua.create_function(|lua, handler: LuaFunction| {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let handlers: LuaTable = quasar.get("_event_handlers")?;
+        let list: LuaTable = match handlers.get::<Option<LuaTable>>("collision")? {
+            Some(existing) => existing,
+            None => {
+                let new_list = lua.create_table()?;
+                handlers.set("collision", new_list.clone())?;
+                new_list
+            }
+        };
+        let len = list.len()?;
+        list.set(len + 1, handler)?;
+        Ok(())
+    })?;
+    quasar.set("on_collision", on_collision_fn)?;
+
+    // quasar.on_spawn(handler_fn)
+    // Register a callback for entity spawn events. Handler receives {entity}
+    let on_spawn_fn = lua.create_function(|lua, handler: LuaFunction| {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let handlers: LuaTable = quasar.get("_event_handlers")?;
+        let list: LuaTable = match handlers.get::<Option<LuaTable>>("spawn")? {
+            Some(existing) => existing,
+            None => {
+                let new_list = lua.create_table()?;
+                handlers.set("spawn", new_list.clone())?;
+                new_list
+            }
+        };
+        let len = list.len()?;
+        list.set(len + 1, handler)?;
+        Ok(())
+    })?;
+    quasar.set("on_spawn", on_spawn_fn)?;
+
+    // quasar.on_despawn(handler_fn)
+    // Register a callback for entity despawn events. Handler receives {entity}
+    let on_despawn_fn = lua.create_function(|lua, handler: LuaFunction| {
+        let quasar: LuaTable = lua.globals().get("quasar")?;
+        let handlers: LuaTable = quasar.get("_event_handlers")?;
+        let list: LuaTable = match handlers.get::<Option<LuaTable>>("despawn")? {
+            Some(existing) => existing,
+            None => {
+                let new_list = lua.create_table()?;
+                handlers.set("despawn", new_list.clone())?;
+                new_list
+            }
+        };
+        let len = list.len()?;
+        list.set(len + 1, handler)?;
+        Ok(())
+    })?;
+    quasar.set("on_despawn", on_despawn_fn)?;
+
+    // Initialize _events table for observer events forwarded each frame
+    quasar.set("_events", lua.create_table()?)?;
 
     Ok(())
 }

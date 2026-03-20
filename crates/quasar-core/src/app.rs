@@ -75,7 +75,7 @@ impl App {
             events: Events::new(),
             time: Time::new(),
             schedule: Schedule::new(),
-            parallel_schedule: None,
+            parallel_schedule: Some(ParallelSchedule::new()),
         }
     }
 
@@ -154,10 +154,12 @@ impl App {
 
         // Ensure a FixedUpdateAccumulator exists.
         if self.world.resource::<FixedUpdateAccumulator>().is_none() {
-            self.world.insert_resource(FixedUpdateAccumulator::default());
+            self.world
+                .insert_resource(FixedUpdateAccumulator::default());
         }
 
-        self.schedule.run_with_fixed_update(&mut self.world, self.time.delta_seconds());
+        self.schedule
+            .run_with_fixed_update(&mut self.world, self.time.delta_seconds());
 
         // Run parallel schedule (if enabled) after sequential schedule.
         if let Some(ps) = &mut self.parallel_schedule {

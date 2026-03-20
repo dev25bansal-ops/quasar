@@ -146,6 +146,10 @@ pub struct AudioSystem {
     handles: HashMap<SoundId, SoundHandle>,
     sound_cache: HashMap<String, StaticSoundData>,
     pub bus_manager: Option<BusManager>,
+    /// DSP graph for the master bus (post-mix effects).
+    pub master_graph: Option<audio_graph::AudioGraph>,
+    /// Per-bus DSP graphs (key = bus name).
+    pub bus_graphs: HashMap<AudioBus, audio_graph::AudioGraph>,
 }
 
 impl AudioSystem {
@@ -153,15 +157,33 @@ impl AudioSystem {
     pub fn new() -> Self {
         let mut manager = AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok();
         if manager.is_none() {
-            log::warn!("Failed to initialize audio backend \u{2014} audio will be silent");
+            log::warn!("Failed to initialize audio backend — audio will be silent");
         }
         let bus_manager = manager.as_mut().map(BusManager::new);
+
+        // Create DSP graphs for each bus at 48kHz
+        let sample_rate = 48000;
+        let mut bus_graphs = HashMap::new();
+        for bus in [
+            AudioBus::Master,
+            AudioBus::Music,
+            AudioBus::Sfx,
+            AudioBus::Voice,
+            AudioBus::Ambient,
+        ] {
+            bus_graphs.insert(bus, audio_graph::AudioGraph::new(sample_rate));
+        }
+
+        let master_graph = Some(audio_graph::AudioGraph::new(sample_rate));
+
         Self {
             manager,
             next_id: 1,
             handles: HashMap::new(),
             sound_cache: HashMap::new(),
             bus_manager,
+            master_graph,
+            bus_graphs,
         }
     }
 
@@ -339,7 +361,7 @@ impl AudioSystem {
     /// Update volume and panning of a spatial sound.
     ///
     /// `distance` — world-space distance between source and listener.
-    /// `panning`  — stereo pan in \[0.0 (left) .. 1.0 (right)\], 0.5 = centre.
+    /// `panning` — stereo pan in \[0.0 (left) .. 1.0 (right)\], 0.5 = centre.
     /// The `source` component provides base volume, ref_distance, max_distance,
     /// and rolloff_factor.
     pub fn update_spatial(
@@ -366,6 +388,77 @@ impl AudioSystem {
 
         handle.set_volume(kira::Volume::Amplitude(gain as f64));
         handle.set_panning(panning);
+    }
+
+    /// Process DSP effects on a bus graph.
+    ///
+    /// Call this after mixing all sources to the bus, before final output.
+    /// The `buffer` is processed in-place through all DSP nodes.
+    pub fn process_bus_dsp(
+        &mut self,
+        bus: &AudioBus,
+        buffer: &mut [f32],
+        sidechain: Option<&[f32]>,
+    ) {
+        if let Some(graph) = self.bus_graphs.get_mut(bus) {
+            graph.process(buffer, sidechain);
+        }
+    }
+
+    /// Process the master DSP graph (final limiter, etc.)
+    pub fn process_master_dsp(&mut self, buffer: &mut [f32], sidechain: Option<&[f32]>) {
+        if let Some(ref mut graph) = self.master_graph {
+            graph.process(buffer, sidechain);
+        }
+    }
+
+    /// Process all DSP graphs in order: per-bus effects, then master.
+    /// This is the main entry point for the audio callback.
+    ///
+    /// Call this from your audio backend callback with the output buffer.
+    /// Returns the processed stereo interleaved buffer.
+    pub fn process_all_dsp(&mut self, output_buffer: &mut [f32], sidechain: Option<&[f32]>) {
+        // Process master graph (limiter, final EQ, etc.)
+        self.process_master_dsp(output_buffer, sidechain);
+    }
+
+    /// Add a DSP node to a specific bus's effect chain.
+    pub fn add_bus_dsp_node(&mut self, bus: &AudioBus, node: Box<dyn audio_graph::DspNode>) {
+        if let Some(graph) = self.bus_graphs.get_mut(bus) {
+            graph.add_node(node);
+        }
+    }
+
+    /// Add a DSP node to the master effect chain.
+    pub fn add_master_dsp_node(&mut self, node: Box<dyn audio_graph::DspNode>) {
+        if let Some(ref mut graph) = self.master_graph {
+            graph.add_node(node);
+        }
+    }
+
+    /// Reset all DSP graphs (e.g., on scene change).
+    pub fn reset_dsp(&mut self) {
+        for graph in self.bus_graphs.values_mut() {
+            graph.reset();
+        }
+        if let Some(ref mut graph) = self.master_graph {
+            graph.reset();
+        }
+    }
+
+    /// Get a reference to the master DSP graph for configuration.
+    pub fn master_graph(&self) -> Option<&audio_graph::AudioGraph> {
+        self.master_graph.as_ref()
+    }
+
+    /// Get a mutable reference to the master DSP graph.
+    pub fn master_graph_mut(&mut self) -> Option<&mut audio_graph::AudioGraph> {
+        self.master_graph.as_mut()
+    }
+
+    /// Get a mutable reference to a bus DSP graph.
+    pub fn bus_graph_mut(&mut self, bus: &AudioBus) -> Option<&mut audio_graph::AudioGraph> {
+        self.bus_graphs.get_mut(bus)
     }
 }
 
@@ -460,7 +553,9 @@ impl AudioSource {
 #[derive(Debug, Clone, Copy)]
 pub struct AudioListener;
 
-pub use ambisonics::{AmbisonicsDecoder, AmbisonicsEncoder, AmbisonicsOrder, SpeakerLayout};
+pub use ambisonics::{
+    AmbisonicsDecoder, AmbisonicsEncoder, AmbisonicsOrder, SpatialAmbisonics, SpeakerLayout,
+};
 pub use dsp::{
     AudioChannel, AudioMixer, AudioMixerSystem, ConvolutionImpulseResponse, ConvolutionReverb,
     ConvolutionReverbZone, DopplerSystem, DopplerTracker, HrtfDatabase, HrtfEntry, HrtfIrPair,

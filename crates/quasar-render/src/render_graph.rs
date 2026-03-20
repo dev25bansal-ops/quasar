@@ -998,6 +998,217 @@ impl RenderNode for ShadowPass {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Concrete RenderPass implementations for use with RenderGraph::execute()
+// ---------------------------------------------------------------------------
+
+use std::sync::Arc as StdArc;
+
+/// Pass data for opaque geometry rendering.
+pub struct OpaquePassData {
+    pub objects: Vec<OpaqueDraw>,
+    pub camera_bind_group: wgpu::BindGroup,
+    pub material_bind_group: wgpu::BindGroup,
+    pub lighting_bind_group: wgpu::BindGroup,
+    pub pipeline: StdArc<wgpu::RenderPipeline>,
+}
+
+#[derive(Clone)]
+pub struct OpaqueDraw {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+    pub uniform_offset: u32,
+}
+
+impl RenderPass for OpaquePassData {
+    fn name(&self) -> &str {
+        "OpaquePass"
+    }
+
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        context: &RenderContext,
+    ) {
+        let hdr_view = match &context.hdr_texture {
+            Some(v) => v,
+            None => return,
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Opaque Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: hdr_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.05,
+                        g: 0.05,
+                        b: 0.08,
+                        a: 1.0,
+                    }),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &context.depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+
+        for draw in &self.objects {
+            pass.set_bind_group(0, &self.camera_bind_group, &[draw.uniform_offset]);
+            pass.set_bind_group(1, &self.material_bind_group, &[]);
+            pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..draw.index_count, 0, 0..1);
+        }
+    }
+}
+
+/// Pass data for post-processing (tonemapping, FXAA, etc.)
+pub struct PostProcessPassData {
+    pub pipeline: StdArc<wgpu::RenderPipeline>,
+    pub bind_group: wgpu::BindGroup,
+    pub source_view: wgpu::TextureView,
+}
+
+impl RenderPass for PostProcessPassData {
+    fn name(&self) -> &str {
+        "PostProcessPass"
+    }
+
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        context: &RenderContext,
+    ) {
+        let output_view = &context.depth_view;
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("PostProcess Render Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
+/// Pass data for UI/egui rendering.
+pub struct UiPassData {
+    pub commands: wgpu::CommandBuffer,
+}
+
+impl RenderPass for UiPassData {
+    fn name(&self) -> &str {
+        "UiPass"
+    }
+
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        _context: &RenderContext,
+    ) {
+    }
+}
+
+/// Helper to build a standard frame's render graph.
+pub struct GraphBuilder<'a> {
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    graph: RenderGraph,
+    next_pass_id: u64,
+    next_attachment_id: u64,
+}
+
+impl<'a> GraphBuilder<'a> {
+    pub fn new(device: &'a wgpu::Device, queue: &'a wgpu::Queue) -> Self {
+        Self {
+            device,
+            queue,
+            graph: RenderGraph::new(),
+            next_pass_id: 100,
+            next_attachment_id: 100,
+        }
+    }
+
+    pub fn add_attachment(
+        &mut self,
+        name: impl Into<String>,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> AttachmentId {
+        let id = AttachmentId(self.next_attachment_id);
+        self.next_attachment_id += 1;
+        self.graph.add_attachment(
+            id,
+            Attachment {
+                name: name.into(),
+                format,
+                size: (width, height),
+                texture: None,
+                view: None,
+            },
+        );
+        id
+    }
+
+    pub fn add_pass(
+        &mut self,
+        pass: Box<dyn RenderPass>,
+        inputs: Vec<AttachmentId>,
+        outputs: Vec<AttachmentId>,
+        dependencies: Vec<PassId>,
+    ) -> PassId {
+        let id = PassId(self.next_pass_id);
+        self.next_pass_id += 1;
+        self.graph.add_pass(id, pass);
+        for att in inputs {
+            self.graph.add_input(id, att);
+        }
+        for att in outputs {
+            self.graph.add_output(id, att);
+        }
+        for dep in dependencies {
+            self.graph.add_dependency(id, dep);
+        }
+        id
+    }
+
+    pub fn build(self) -> RenderGraph {
+        self.graph
+    }
+}
+
 /// G-Buffer pass — writes albedo, normal, emissive, depth.
 pub struct GBufferPass;
 

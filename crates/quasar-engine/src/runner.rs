@@ -28,9 +28,9 @@ use quasar_core::scene::SceneGraph;
 use quasar_core::{App, TimeSnapshot};
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::{
-    gpu_profiler::GpuProfiler, AmbientLight, Camera, DirectionalLight, HdrRenderTarget, LightData,
-    LightsUniform, MeshCache, MeshShape, OrbitController, PointLight, RenderConfig, Renderer,
-    ShadowCamera, ShadowMap, SpotLight, TonemappingPass,
+    gpu_profiler::GpuProfiler, AmbientLight, Camera, CascadeShadowMap, DirectionalLight,
+    HdrRenderTarget, LightData, LightsUniform, MeshCache, MeshShape, OrbitController, PointLight,
+    PostProcessPass, RenderConfig, Renderer, ShadowCamera, ShadowMap, SpotLight, TonemappingPass,
 };
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -49,12 +49,16 @@ struct RunnerState {
     shadow_map: ShadowMap,
     /// Camera used for the directional light shadow projection
     shadow_camera: ShadowCamera,
+    /// Cascade shadow map for improved shadow quality
+    cascade_shadow_map: CascadeShadowMap,
     /// Frame profiler for CPU timing
     profiler: Profiler,
     /// HDR render target for linear-space rendering
     hdr_target: HdrRenderTarget,
     /// Tonemapping pass (HDR → LDR)
     tonemap_pass: TonemappingPass,
+    /// Post-processing pass (SSAO, FXAA, Bloom)
+    post_process_pass: PostProcessPass,
     /// GPU timestamp profiler for render passes
     gpu_profiler: GpuProfiler,
 }
@@ -130,9 +134,16 @@ impl ApplicationHandler for QuasarRunner {
 
         let shadow_map = ShadowMap::new(&renderer.device, 2048);
         let shadow_camera = ShadowCamera::default();
+        let cascade_shadow_map = CascadeShadowMap::new(&renderer.device);
 
         let hdr_target = HdrRenderTarget::new(&renderer.device, size.width, size.height);
         let tonemap_pass = TonemappingPass::new(&renderer.device, renderer.config.format);
+        let post_process_pass = PostProcessPass::new(
+            &renderer.device,
+            size.width / 2,
+            size.height / 2,
+            renderer.config.format,
+        );
         let gpu_profiler =
             GpuProfiler::new(&renderer.device, renderer.queue.get_timestamp_period());
 
@@ -147,9 +158,11 @@ impl ApplicationHandler for QuasarRunner {
             default_light: DirectionalLight::default(),
             shadow_map,
             shadow_camera,
+            cascade_shadow_map,
             profiler: Profiler::new(),
             hdr_target,
             tonemap_pass,
+            post_process_pass,
             gpu_profiler,
         });
 
@@ -465,6 +478,70 @@ impl ApplicationHandler for QuasarRunner {
                         &shadow_objects,
                     );
                     state.renderer.queue.submit(std::iter::once(shadow_cmd));
+
+                    // Update renderer's lighting bind group to use the real shadow map.
+                    state.renderer.update_shadow_bindings(
+                        &state.shadow_map.view,
+                        &state.shadow_map.shadow_uniform_buffer,
+                        &state.shadow_map.sampler,
+                        &state.shadow_map.depth_sampler,
+                    );
+
+                    // ── Cascade Shadow Map rendering ──────────────────
+                    // Update cascade transforms based on camera and light direction
+                    state.cascade_shadow_map.update_cascades(
+                        state.camera.view_projection(),
+                        state.camera.position,
+                        light_dir,
+                        state.camera.near,
+                        state.camera.far,
+                    );
+
+                    // Upload cascade data to the cascade buffer
+                    let cascade_uniforms: Vec<quasar_render::CascadeUniform> = state
+                        .cascade_shadow_map
+                        .cascades
+                        .iter()
+                        .map(|c| quasar_render::CascadeUniform {
+                            view_proj: c.view_projection.to_cols_array_2d(),
+                            split_depth: c.split_depth,
+                            _pad: [0.0; 3],
+                        })
+                        .collect();
+                    state.renderer.queue.write_buffer(
+                        &state.cascade_shadow_map.cascade_buffer,
+                        0,
+                        bytemuck::cast_slice(&cascade_uniforms),
+                    );
+
+                    // Render each cascade
+                    for i in 0..quasar_render::CASCADE_COUNT {
+                        let cascade_cmd = state.cascade_shadow_map.render_cascade(
+                            &state.renderer.device,
+                            &state.renderer.queue,
+                            i,
+                            &shadow_objects,
+                        );
+                        state.renderer.queue.submit(std::iter::once(cascade_cmd));
+                    }
+
+                    // Update lighting bind group with CSM resources
+                    let cascade_array_view = state.cascade_shadow_map.texture.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            label: Some("Cascade Shadow Array View"),
+                            dimension: Some(wgpu::TextureViewDimension::D2Array),
+                            ..Default::default()
+                        },
+                    );
+                    state.renderer.update_csm_bindings(
+                        &state.cascade_shadow_map.cascade_buffer,
+                        &cascade_array_view,
+                        &state.cascade_shadow_map.sampler,
+                        &state.shadow_map.view,
+                        &state.shadow_map.shadow_uniform_buffer,
+                        &state.shadow_map.sampler,
+                        &state.shadow_map.depth_sampler,
+                    );
                 }
                 state.profiler.end_scope("shadow_pass");
 
@@ -529,7 +606,19 @@ impl ApplicationHandler for QuasarRunner {
                             }
                         }
 
-                        // TAA resolve → tonemapping.  Without TAA the HDR target
+                        // SSAO pass — screen-space ambient occlusion with bilateral blur.
+                        // Update depth binding to use the real scene depth buffer.
+                        let gpu_ssao = state.gpu_profiler.begin_pass(&mut encoder, "ssao");
+                        state.post_process_pass.update_depth_texture(
+                            &state.renderer.device,
+                            &state.renderer.depth_view,
+                        );
+                        state.post_process_pass.render_ssao_with_blur(&mut encoder);
+                        if let Some(idx) = gpu_ssao {
+                            state.gpu_profiler.end_pass(&mut encoder, idx);
+                        }
+
+                        // TAA resolve → tonemapping. Without TAA the HDR target
                         // feeds directly into the tonemapping pass.
                         let tonemap_source: &wgpu::TextureView;
                         if let Some(taa) = state.renderer.taa_pass.as_mut() {

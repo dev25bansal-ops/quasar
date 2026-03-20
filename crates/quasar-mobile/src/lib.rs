@@ -21,7 +21,9 @@ pub mod haptics;
 pub mod runner;
 pub mod touch;
 
-pub use gesture::{Gesture, GestureRecognizer, SwipeDirection};
+pub use gesture::{
+    ActionName, Gesture, GestureActionBridge, GestureActionMap, GestureRecognizer, SwipeDirection,
+};
 pub use gyroscope::Gyroscope;
 pub use haptics::{HapticEngine, HapticStyle};
 pub use runner::{run_mobile, MobileRunner};

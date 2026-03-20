@@ -1,11 +1,28 @@
 //! GPU-accelerated convolution reverb using wgpu compute shaders.
 //!
-//! Implements uniformly partitioned convolution:
-//! - The impulse response (IR) is split into fixed-size segments.
-//! - Each frame's audio block is convolved with every IR segment via a
-//!   dedicated compute dispatch.
-//! - Results are accumulated in a persistent GPU overlap-add buffer.
-//! - Supports 32+ simultaneous sources by batching all sources in a single dispatch.
+//! **NOTE: This module is intended for OFFLINE BAKING, not real-time processing.**
+//!
+//! ## Recommended Usage
+//!
+//! For runtime audio, use the `AudioGraph` with `ReverbSend` DSP nodes instead,
+//! which provide CPU-based reverb that integrates with Kira's mixer.
+//!
+//! This GPU convolution reverb is designed for:
+//! - Offline IR (impulse response) generation from geometry analysis
+//! - Pre-baking reverb characteristics for rooms/zones
+//! - Post-processing audio files with high-quality convolution
+//!
+//! ## Offline Bake Workflow
+//!
+//! 1. Export room geometry from the editor
+//! 2. Run GPU raytracing to generate IR samples
+//! 3. Store IRs as asset files
+//! 4. At runtime, load pre-baked IRs into `AudioGraph` reverb sends
+//!
+//! For real-time spatial audio, see:
+//! - `AmbisonicsEncoder` / `AmbisonicsDecoder` for positioning
+//! - `SpatialAmbisonics` for full 3D audio
+//! - `AudioSystem.bus_graphs` for per-bus DSP including reverb
 
 #[cfg(feature = "gpu-reverb")]
 mod inner {

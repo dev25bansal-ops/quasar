@@ -250,8 +250,7 @@ impl PostProcessPass {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
-        let ssao_blur_view =
-            ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let ssao_blur_view = ssao_blur_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let ssao_blur_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -376,15 +375,111 @@ impl PostProcessPass {
         *self = Self::new(device, width, height, format);
     }
 
+    /// Update the depth texture binding for SSAO.
+    ///
+    /// Call this each frame after the depth pre-pass or geometry pass to bind
+    /// the real scene depth buffer for SSAO calculations.
+    pub fn update_depth_texture(&mut self, device: &wgpu::Device, depth_view: &wgpu::TextureView) {
+        let ssao_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SSAO Bind Group"),
+            layout: &self.ssao_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.intermediate_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(
+                        &self
+                            .ssao_noise_texture
+                            .create_view(&wgpu::TextureViewDescriptor::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.ssao_kernel_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.ssao_bind_group = ssao_bind_group;
+
+        let ssao_blur_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SSAO Blur BG"),
+            layout: &self.ssao_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.ssao_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.ssao_blur_bind_group = ssao_blur_bind_group;
+    }
+
+    /// Update the intermediate/color input texture for SSAO.
+    ///
+    /// Call this after rendering the color pass to provide the scene color
+    /// data that SSAO reads for normal reconstruction.
+    pub fn update_color_texture(&mut self, device: &wgpu::Device, color_view: &wgpu::TextureView) {
+        let ssao_noise_view = self
+            .ssao_noise_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_placeholder_view = self
+            .ssao_noise_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let ssao_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SSAO Bind Group"),
+            layout: &self.ssao_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&ssao_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&depth_placeholder_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.ssao_kernel_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        self.ssao_bind_group = ssao_bind_group;
+    }
+
     /// Run the SSAO pass followed by a depth-aware bilateral blur.
     ///
     /// The bilateral blur preserves edges by weighting samples with the depth
     /// difference: `w = exp(-|z_center - z_sample| / threshold)`. Two
     /// separable passes (horizontal, vertical) are applied.
-    pub fn render_ssao_with_blur(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-    ) {
+    pub fn render_ssao_with_blur(&self, encoder: &mut wgpu::CommandEncoder) {
         if !self.settings.ssao_enabled {
             return;
         }
@@ -755,7 +850,6 @@ fn create_ssao_noise_texture(device: &wgpu::Device) -> wgpu::Texture {
     }
 
     let size = (noise_size as f32).sqrt() as u32;
-    
 
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some("SSAO Noise Texture"),
