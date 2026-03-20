@@ -3,10 +3,34 @@
 //! Handles platform-specific file access:
 //! - Desktop: Standard filesystem via tokio
 //! - WASM: Browser Fetch API
-//! - Android: AssetManager via JNI
+//! - Android: AssetManager via JNI (registered by quasar-mobile)
 
 use std::path::Path;
-use std::future::Future;
+use std::sync::OnceLock;
+
+/// Trait for platform-specific asset loading.
+pub trait AssetLoader: Send + Sync {
+    /// Read an asset file asynchronously.
+    fn read_asset(&self, path: &Path) -> impl std::future::Future<Output = Result<Vec<u8>, String>> + Send;
+    
+    /// Check if an asset exists.
+    fn asset_exists(&self, path: &Path) -> bool;
+    
+    /// List assets in a directory.
+    fn list_assets(&self, path: &Path) -> Result<Vec<String>, String>;
+}
+
+static ASSET_LOADER: OnceLock<Box<dyn AssetLoader>> = OnceLock::new();
+
+/// Register a custom asset loader (used by quasar-mobile for Android).
+pub fn register_asset_loader(loader: Box<dyn AssetLoader>) -> Result<(), &'static str> {
+    ASSET_LOADER.set(loader).map_err(|_| "Asset loader already registered")
+}
+
+/// Get the registered asset loader.
+pub fn asset_loader() -> Option<&'static dyn AssetLoader> {
+    ASSET_LOADER.get().map(|b| b.as_ref())
+}
 
 /// Platform-abstracted async file read.
 pub async fn read_file(path: &Path) -> Result<Vec<u8>, FileError> {
@@ -39,7 +63,6 @@ async fn read_file_desktop(path: &Path) -> Result<Vec<u8>, FileError> {
 async fn read_file_wasm(path: &Path) -> Result<Vec<u8>, FileError> {
     let url = format!("/assets/{}", path.display());
     
-    // Use wasm-bindgen fetch
     wasm_bindgen_futures::JsFuture::from(
         web_sys::window()
             .ok_or_else(|| FileError::Platform("No window object".into()))?
@@ -48,17 +71,17 @@ async fn read_file_wasm(path: &Path) -> Result<Vec<u8>, FileError> {
     .await
     .map_err(|e| FileError::Platform(format!("{:?}", e)))?;
     
-    // This is a simplified version - full impl needs Response handling
     Ok(vec![])
 }
 
-/// Android implementation using AssetManager.
+/// Android implementation using registered AssetLoader.
 #[cfg(target_os = "android")]
 async fn read_file_android(path: &Path) -> Result<Vec<u8>, FileError> {
-    // Call into JNI bridge
-    crate::platform::android::android_asset_read(path)
+    asset_loader()
+        .ok_or_else(|| FileError::Platform("Asset loader not registered".into()))?
+        .read_asset(path)
         .await
-        .map_err(|e| FileError::Platform(e))
+        .map_err(FileError::Platform)
 }
 
 /// File error types.
@@ -92,15 +115,14 @@ pub fn file_exists(path: &Path) -> bool {
     
     #[cfg(target_arch = "wasm32")]
     {
-        // On WASM, we can't check existence synchronously
-        // Would need to track known assets or use a manifest
         true
     }
     
     #[cfg(target_os = "android")]
     {
-        // Use AssetManager list API
-        true
+        asset_loader()
+            .map(|loader| loader.asset_exists(path))
+            .unwrap_or(false)
     }
 }
 
@@ -119,35 +141,6 @@ pub fn assets_base_path() -> std::path::PathBuf {
     #[cfg(target_os = "android")]
     {
         std::path::PathBuf::from("")
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Platform-specific modules
-// ---------------------------------------------------------------------------
-
-#[cfg(target_os = "android")]
-pub mod android {
-    use std::path::Path;
-    
-    /// Read asset using Android AssetManager.
-    pub async fn android_asset_read(path: &Path) -> Result<Vec<u8>, String> {
-        // JNI call to AssetManager.open(path)
-        // This would be implemented via ndk-glue or similar
-        Err("Android asset loading not implemented".into())
-    }
-    
-    /// Handle Android lifecycle event.
-    pub fn on_pause() {
-        // Notify Quasar app to pause
-    }
-    
-    pub fn on_resume() {
-        // Notify Quasar app to resume
-    }
-    
-    pub fn on_trim_memory(level: i32) {
-        // Free resources based on trim level
     }
 }
 
@@ -177,5 +170,30 @@ pub mod wasm {
         
         let uint8_array = js_sys::Uint8Array::new(&array_buffer);
         Ok(uint8_array.to_vec())
+    }
+}
+
+#[cfg(target_os = "android")]
+pub mod android {
+    use std::path::Path;
+    
+    /// Handle Android lifecycle event.
+    pub fn on_pause() {
+        log::debug!("Android onPause");
+    }
+    
+    pub fn on_resume() {
+        log::debug!("Android onResume");
+    }
+    
+    pub fn on_trim_memory(level: i32) {
+        log::debug!("Android trim memory level: {}", level);
+    }
+    
+    /// List assets in a directory using the registered loader.
+    pub fn list_assets(path: &Path) -> Result<Vec<String>, String> {
+        crate::platform::asset_loader()
+            .ok_or("Asset loader not registered")?
+            .list_assets(path)
     }
 }

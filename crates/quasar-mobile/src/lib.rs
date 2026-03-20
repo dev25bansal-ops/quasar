@@ -21,6 +21,9 @@ pub mod haptics;
 pub mod runner;
 pub mod touch;
 
+#[cfg(target_os = "android")]
+pub mod android;
+
 pub use gesture::{
     ActionName, Gesture, GestureActionBridge, GestureActionMap, GestureRecognizer, SwipeDirection,
 };
@@ -28,6 +31,9 @@ pub use gyroscope::Gyroscope;
 pub use haptics::{HapticEngine, HapticStyle};
 pub use runner::{run_mobile, MobileRunner};
 pub use touch::{TouchInput, TouchPhase, TouchPointer, MAX_TOUCH_POINTERS};
+
+#[cfg(target_os = "android")]
+pub use android::{asset_exists, init_asset_manager, list_assets, read_asset, AssetManager};
 
 /// Mobile-specific configuration.
 #[derive(Debug, Clone)]
