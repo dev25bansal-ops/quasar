@@ -112,6 +112,8 @@ pub struct Renderer {
     pub motion_vector_view: Option<wgpu::TextureView>,
     /// SSGI pass — screen-space global illumination compute.
     pub ssgi_pass: Option<SsgiPass>,
+    /// GPU particle system — compute-based particle simulation.
+    pub gpu_particle_system: Option<crate::particle::GpuParticleSystem>,
 }
 
 impl Renderer {
@@ -645,6 +647,7 @@ impl Renderer {
             motion_vector_texture: None,
             motion_vector_view: None,
             ssgi_pass: None,
+            gpu_particle_system: None,
         });
         if let Ok(ref mut renderer) = result {
             if renderer.render_config.gpu_driven_culling {
@@ -710,6 +713,36 @@ impl Renderer {
         let len = bytes.len().min(max);
         self.queue
             .write_buffer(&self.instance_buffer, 0, &bytes[..len]);
+    }
+
+    /// Initialize the GPU particle system.
+    ///
+    /// Creates the compute pipeline and buffers for GPU-accelerated
+    /// particle simulation. Call once during initialization if particles are needed.
+    pub fn init_gpu_particles(&mut self) {
+        if self.gpu_particle_system.is_none() {
+            use crate::particle::GpuParticleSystem;
+            self.gpu_particle_system = Some(GpuParticleSystem::new(&self.device, self.config.format));
+        }
+    }
+
+    /// Dispatch GPU particle simulation.
+    ///
+    /// Runs the compute shader to update particle positions and velocities.
+    /// Call before render_gpu_particles() to simulate one frame.
+    pub fn dispatch_gpu_particles(&self, encoder: &mut wgpu::CommandEncoder, particle_count: u32) {
+        if let Some(gpu_particles) = &self.gpu_particle_system {
+            gpu_particles.dispatch(encoder, particle_count);
+        }
+    }
+
+    /// Render GPU-simulated particles.
+    ///
+    /// Draws particles to the given render pass using instanced rendering.
+    pub fn render_gpu_particles(&self, pass: &mut wgpu::RenderPass) {
+        if let Some(gpu_particles) = &self.gpu_particle_system {
+            gpu_particles.render(pass);
+        }
     }
 
     /// Update the camera uniform buffer on the GPU.

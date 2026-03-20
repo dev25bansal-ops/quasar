@@ -27,6 +27,7 @@ use quasar_core::profiler::Profiler;
 use quasar_core::scene::SceneGraph;
 use quasar_core::{App, TimeSnapshot};
 use quasar_editor::{renderer::EditorRenderer, Editor};
+use quasar_render::deferred::{DeferredLightingPass, GBuffer};
 use quasar_render::{
     gpu_profiler::GpuProfiler, AmbientLight, Camera, CascadeShadowMap, DirectionalLight,
     HdrRenderTarget, LightData, LightsUniform, MeshCache, MeshShape, OrbitController, PointLight,
@@ -61,6 +62,10 @@ struct RunnerState {
     post_process_pass: PostProcessPass,
     /// GPU timestamp profiler for render passes
     gpu_profiler: GpuProfiler,
+    /// G-Buffer for deferred rendering (when enabled)
+    gbuffer: Option<GBuffer>,
+    /// Deferred lighting pass (when enabled)
+    deferred_lighting: Option<DeferredLightingPass>,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -159,6 +164,19 @@ impl ApplicationHandler for QuasarRunner {
         let gpu_profiler =
             GpuProfiler::new(&renderer.device, renderer.queue.get_timestamp_period());
 
+        // Create G-Buffer and deferred lighting pass if enabled
+        let (gbuffer, deferred_lighting) = if renderer.render_config.deferred_enabled {
+            let gbuffer = GBuffer::new(&renderer.device, size.width, size.height);
+            let deferred = DeferredLightingPass::new(
+                &renderer.device,
+                renderer.config.format,
+                &gbuffer.read_bind_group_layout,
+            );
+            (Some(gbuffer), Some(deferred))
+        } else {
+            (None, None)
+        };
+
         self.state = Some(RunnerState {
             window,
             renderer,
@@ -176,6 +194,8 @@ impl ApplicationHandler for QuasarRunner {
             tonemap_pass,
             post_process_pass,
             gpu_profiler,
+            gbuffer,
+            deferred_lighting,
         });
 
         log::info!(
@@ -586,6 +606,8 @@ impl ApplicationHandler for QuasarRunner {
                         }
 
                         // 3D pass — render to HDR target (linear space, no tonemapping).
+                        // TODO: When deferred_enabled, render to G-Buffer then run deferred lighting pass.
+                        // This requires a deferred geometry shader that outputs albedo, normal, and PBR params.
                         let gpu_3d = state.gpu_profiler.begin_pass(&mut encoder, "3d_pass");
                         state.renderer.render_3d_pass_batched(
                             &state.camera,
