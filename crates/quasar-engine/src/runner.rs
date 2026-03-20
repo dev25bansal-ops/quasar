@@ -104,6 +104,7 @@ impl ApplicationHandler for QuasarRunner {
             height: config.height,
             resizable: config.resizable,
             vsync: config.vsync,
+            network: config.network.clone(),
         });
 
         let window = Arc::new(
@@ -132,6 +133,17 @@ impl ApplicationHandler for QuasarRunner {
         self.app.world.insert_resource(AssetManager::new());
         self.app.world.insert_resource(SceneGraph::new());
 
+        // Register NetworkPlugin if network configuration is provided.
+        if let Some(network_config) = config.network.clone() {
+            log::info!(
+                "Registering NetworkPlugin in {:?} mode on port {}",
+                network_config.role,
+                network_config.port
+            );
+            self.app
+                .add_plugin(quasar_core::NetworkPlugin::new(network_config));
+        }
+
         let shadow_map = ShadowMap::new(&renderer.device, 2048);
         let shadow_camera = ShadowCamera::default();
         let cascade_shadow_map = CascadeShadowMap::new(&renderer.device);
@@ -140,8 +152,8 @@ impl ApplicationHandler for QuasarRunner {
         let tonemap_pass = TonemappingPass::new(&renderer.device, renderer.config.format);
         let post_process_pass = PostProcessPass::new(
             &renderer.device,
-            size.width / 2,
-            size.height / 2,
+            size.width,
+            size.height,
             renderer.config.format,
         );
         let gpu_profiler =
@@ -602,6 +614,19 @@ impl ApplicationHandler for QuasarRunner {
                                 state.renderer.motion_vector_view.as_ref(),
                             );
                             if let Some(idx) = gpu_ssgi {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
+
+                            // Composite SSGI output into HDR target
+                            let gpu_ssgi_composite = state
+                                .gpu_profiler
+                                .begin_pass(&mut encoder, "ssgi_composite");
+                            ssgi.composite(
+                                &state.renderer.device,
+                                &mut encoder,
+                                &state.hdr_target.view,
+                            );
+                            if let Some(idx) = gpu_ssgi_composite {
                                 state.gpu_profiler.end_pass(&mut encoder, idx);
                             }
                         }

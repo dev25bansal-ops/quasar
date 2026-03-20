@@ -7,6 +7,8 @@ pub struct WindowConfig {
     pub height: u32,
     pub resizable: bool,
     pub vsync: bool,
+    /// Optional network configuration. If set, NetworkPlugin is registered.
+    pub network: Option<quasar_core::NetworkConfig>,
 }
 
 impl Default for WindowConfig {
@@ -17,6 +19,7 @@ impl Default for WindowConfig {
             height: 720,
             resizable: true,
             vsync: true,
+            network: None,
         }
     }
 }

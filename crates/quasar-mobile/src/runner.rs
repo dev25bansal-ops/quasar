@@ -78,6 +78,7 @@ impl ApplicationHandler for MobileRunner {
             height: config.height,
             resizable: false,
             vsync: config.vsync,
+            network: config.network.clone(),
         });
 
         let window = Arc::new(

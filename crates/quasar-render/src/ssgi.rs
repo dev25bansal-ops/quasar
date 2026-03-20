@@ -80,6 +80,10 @@ pub struct SsgiPass {
     pub width: u32,
     pub height: u32,
     pub settings: SsgiSettings,
+    /// Composite pipeline for adding SSGI to HDR target.
+    composite_pipeline: wgpu::RenderPipeline,
+    composite_bgl: wgpu::BindGroupLayout,
+    composite_sampler: wgpu::Sampler,
 }
 
 impl SsgiPass {
@@ -272,6 +276,100 @@ impl SsgiPass {
             mapped_at_creation: false,
         });
 
+        // Create composite pipeline for adding SSGI to HDR target
+        let composite_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("SSGI Composite BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SSGI Composite Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("SSGI Composite Shader"),
+            source: wgpu::ShaderSource::Wgsl(SSGI_COMPOSITE_WGSL.into()),
+        });
+
+        let composite_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("SSGI Composite Layout"),
+            bind_group_layouts: &[&composite_bgl],
+            push_constant_ranges: &[],
+        });
+
+        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("SSGI Composite Pipeline"),
+            layout: Some(&composite_layout),
+            vertex: wgpu::VertexState {
+                module: &composite_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &composite_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::One,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
@@ -287,6 +385,9 @@ impl SsgiPass {
             width,
             height,
             settings: SsgiSettings::default(),
+            composite_pipeline,
+            composite_bgl,
+            composite_sampler,
         }
     }
 
@@ -431,6 +532,53 @@ impl SsgiPass {
         }
     }
 
+    /// Composite SSGI output additively into an HDR target.
+    ///
+    /// Call this after `dispatch()` to add the indirect lighting contribution
+    /// to the scene's HDR color buffer.
+    pub fn composite(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        hdr_target: &wgpu::TextureView,
+    ) {
+        let ssgi_source = self.temporal_output_view();
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("SSGI Composite BG"),
+            layout: &self.composite_bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(ssgi_source),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.composite_sampler),
+                },
+            ],
+        });
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("SSGI Composite Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: hdr_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        pass.set_pipeline(&self.composite_pipeline);
+        pass.set_bind_group(0, &bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+
     /// Recreate textures on resize.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         self.width = width;
@@ -552,5 +700,31 @@ fn cs_temporal(@builtin(global_invocation_id) gid: vec3<u32>) {
     let result = mix(history, current, alpha);
 
     textureStore(t_output, coord, vec4<f32>(result, 1.0));
+}
+"#;
+
+/// WGSL source for the additive composite pass.
+const SSGI_COMPOSITE_WGSL: &str = r#"
+@group(0) @binding(0) var t_ssgi: texture_2d<f32>;
+@group(0) @binding(1) var s_sampler: sampler;
+
+struct VertexOutput {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VertexOutput {
+    var out: VertexOutput;
+    let uv = vec2<f32>(f32(vid & 1u), f32((vid >> 1u) & 1u));
+    out.pos = vec4<f32>(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = uv;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let ssgi = textureSampleLevel(t_ssgi, s_sampler, in.uv, 0.0);
+    return vec4<f32>(ssgi.rgb, 0.0);
 }
 "#;
