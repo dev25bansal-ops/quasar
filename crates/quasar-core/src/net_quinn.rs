@@ -21,6 +21,7 @@ struct SelfSigned {
     key_der: Vec<u8>,
 }
 
+#[allow(clippy::expect_used)]
 fn generate_self_signed() -> SelfSigned {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
         .expect("rcgen: failed to generate self-signed cert");
@@ -92,10 +93,11 @@ impl QuinnBackend {
             .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
             .with_no_client_auth();
 
-        ClientConfig::new(Arc::new(
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-                .expect("quinn client config"),
-        ))
+        #[allow(clippy::expect_used)]
+        let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
+            .expect("quinn client config");
+        
+        ClientConfig::new(Arc::new(quic_config))
     }
 
     /// Spawn a background task that accepts new incoming connections.
@@ -194,6 +196,7 @@ impl QuicTransportBackend for QuinnBackend {
         let endpoint = if let Some(ep) = self.endpoint.as_ref() {
             ep.clone()
         } else {
+            #[allow(clippy::unwrap_used)]
             let mut ep = Endpoint::client("0.0.0.0:0".parse().unwrap())
                 .map_err(|e| NetworkError(format!("quinn endpoint: {e}")))?;
             ep.set_default_client_config(client_cfg);
@@ -418,6 +421,11 @@ impl Transport for QuinnBackend {
         self.endpoint
             .as_ref()
             .map(|e| e.local_addr().map_err(|e| NetworkError(format!("local_addr: {e}"))))
-            .unwrap_or_else(|| Ok("0.0.0.0:0".parse().unwrap()))
+            .unwrap_or_else(|| {
+                #[allow(clippy::unwrap_used)]
+                {
+                    Ok("0.0.0.0:0".parse().unwrap())
+                }
+            })
     }
 }
