@@ -7,7 +7,7 @@
 #[cfg(feature = "wasm")]
 mod inner {
     use std::path::Path;
-    
+
     use wasmtime::*;
 
     /// Host API functions exposed to WASM guest modules.
@@ -155,10 +155,7 @@ mod inner {
             let instance = linker.instantiate(&mut store, module)?;
 
             // Call the on_update export if it exists.
-            if let Some(func) = instance
-                .get_typed_func::<f32, ()>(&mut store, "on_update")
-                .ok()
-            {
+            if let Ok(func) = instance.get_typed_func::<f32, ()>(&mut store, "on_update") {
                 func.call(&mut store, dt)?;
             }
 

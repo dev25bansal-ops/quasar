@@ -37,6 +37,7 @@ use quasar_ui::{UiRenderPass, UiResource};
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
 /// Runtime state created once the window is available.
+#[allow(dead_code)]
 struct RunnerState {
     window: Arc<Window>,
     renderer: Renderer,

@@ -1134,13 +1134,14 @@ impl RenderPass for UiPassData {
         &self,
         _device: &wgpu::Device,
         _queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        _encoder: &mut wgpu::CommandEncoder,
         _context: &RenderContext,
     ) {
     }
 }
 
 /// Helper to build a standard frame's render graph.
+#[allow(dead_code)]
 pub struct GraphBuilder<'a> {
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,

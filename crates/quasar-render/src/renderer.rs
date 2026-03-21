@@ -12,7 +12,7 @@ use super::taa::TaaPass;
 use super::ssgi::SsgiPass;
 use super::texture::Texture;
 #[cfg(feature = "meshlet")]
-use super::meshlet::{MeshletGpuBuffers, MeshletMesh, MESHLET_CULL_WGSL};
+use super::meshlet::{MeshletGpuBuffers, MESHLET_CULL_WGSL};
 
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
@@ -807,11 +807,12 @@ impl Renderer {
     ///
     /// Call this after rendering cascade shadow maps to bind the cascade texture array
     /// and cascade uniform buffer for CSM sampling in the main pass.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_csm_bindings(
         &mut self,
         cascade_buffer: &wgpu::Buffer,
         cascade_shadow_view: &wgpu::TextureView,
-        cascade_sampler: &wgpu::Sampler,
+        _cascade_sampler: &wgpu::Sampler,
         shadow_view: &wgpu::TextureView,
         shadow_uniform_buffer: &wgpu::Buffer,
         shadow_sampler: &wgpu::Sampler,
@@ -1748,7 +1749,7 @@ texture: &'static wgpu::BindGroup,
         encoder: &mut wgpu::CommandEncoder,
         output_view: &wgpu::TextureView,
     ) {
-        use super::meshlet::{MAX_MESHLETS, MeshletData, MeshletBounds};
+        use super::meshlet::MAX_MESHLETS;
 
         let visibility_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Meshlet Visibility"),
@@ -1856,7 +1857,7 @@ texture: &'static wgpu::BindGroup,
             });
             cull_pass.set_pipeline(&cull_pipeline);
             cull_pass.set_bind_group(0, &cull_bind_group, &[]);
-            let workgroups = (meshlet_buffers.meshlet_count + 63) / 64;
+            let workgroups = meshlet_buffers.meshlet_count.div_ceil(64);
             cull_pass.dispatch_workgroups(workgroups, 1, 1);
         }
 

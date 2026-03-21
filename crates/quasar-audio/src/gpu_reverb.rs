@@ -363,7 +363,7 @@ mod inner {
                 pass.set_pipeline(&self.pipeline);
                 pass.set_bind_group(0, &bind_group, &[]);
                 // One workgroup per output sample (PARTITION_SIZE workgroups).
-                let workgroup_count = ((PARTITION_SIZE + 63) / 64) as u32;
+                let workgroup_count = PARTITION_SIZE.div_ceil(64) as u32;
                 pass.dispatch_workgroups(workgroup_count, 1, 1);
             }
 

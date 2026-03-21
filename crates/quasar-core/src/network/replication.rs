@@ -45,11 +45,16 @@ pub trait Replicate: 'static + Send + Sync {
     fn apply_delta(&mut self, delta: &[u8]);
 }
 
+/// Serializer function type
+type SerializerFn = fn(&dyn std::any::Any, &mut Vec<u8>);
+/// Deserializer function type
+type DeserializerFn = fn(&[u8]) -> Box<dyn std::any::Any>;
+
 /// Global registry of replicatable component types.
 pub struct ReplicationRegistry {
     type_ids: HashMap<TypeId, u16>,
-    serializers: HashMap<u16, fn(&dyn std::any::Any, &mut Vec<u8>)>,
-    deserializers: HashMap<u16, fn(&[u8]) -> Box<dyn std::any::Any>>,
+    serializers: HashMap<u16, SerializerFn>,
+    deserializers: HashMap<u16, DeserializerFn>,
     type_names: HashMap<u16, &'static str>,
     next_id: u16,
 }
@@ -141,10 +146,10 @@ pub fn quantize_rotation(rot: Quat) -> [i16; 3] {
         let abs_vals = [rot.x.abs(), rot.y.abs(), rot.z.abs(), rot.w.abs()];
         let mut max_idx = 0;
         let mut max_val = abs_vals[0];
-        for i in 1..4 {
-            if abs_vals[i] > max_val {
+        for (i, &val) in abs_vals.iter().enumerate().skip(1) {
+            if val > max_val {
                 max_idx = i;
-                max_val = abs_vals[i];
+                max_val = val;
             }
         }
         // Determine sign to ensure largest component is positive
@@ -160,10 +165,10 @@ pub fn quantize_rotation(rot: Quat) -> [i16; 3] {
     let components = [rot.x * sign, rot.y * sign, rot.z * sign, rot.w * sign];
     let mut result = [0i16; 3];
     let mut j = 0;
-    for i in 0..4 {
+    for (i, &comp) in components.iter().enumerate() {
         if i != largest_idx {
             // Scale to 16-bit range
-            result[j] = (components[i] * 32767.0).round() as i16;
+            result[j] = (comp * 32767.0).round() as i16;
             j += 1;
         }
     }
@@ -175,9 +180,9 @@ pub fn quantize_rotation(rot: Quat) -> [i16; 3] {
 pub fn dequantize_rotation(quant: [i16; 3], largest_idx: u8) -> Quat {
     let mut components = [0.0f32; 4];
     let mut j = 0;
-    for i in 0..4 {
+    for (i, comp) in components.iter_mut().enumerate() {
         if i as u8 != largest_idx {
-            components[i] = quant[j] as f32 / 32767.0;
+            *comp = quant[j] as f32 / 32767.0;
             j += 1;
         }
     }

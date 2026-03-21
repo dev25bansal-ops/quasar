@@ -135,17 +135,12 @@ impl QuinnBackend {
             let conn = conn.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                loop {
-                    match conn.read_datagram().await {
-                        Ok(data) => {
-                            let _ = tx.send(QuicEvent::Data {
-                                from: addr,
-                                channel: QuicChannel::Unreliable,
-                                payload: data.to_vec(),
-                            });
-                        }
-                        Err(_) => break,
-                    }
+                while let Ok(data) = conn.read_datagram().await {
+                    let _ = tx.send(QuicEvent::Data {
+                        from: addr,
+                        channel: QuicChannel::Unreliable,
+                        payload: data.to_vec(),
+                    });
                 }
                 let _ = tx.send(QuicEvent::Disconnected(
                     addr,
@@ -159,30 +154,21 @@ impl QuinnBackend {
             let conn = conn.clone();
             let tx = tx.clone();
             tokio::spawn(async move {
-                loop {
-                    match conn.accept_uni().await {
-                        Ok(mut recv) => {
-                            let tx = tx.clone();
-                            tokio::spawn(async move {
-                                let mut buf = Vec::new();
-                                if recv.read_to_end(1024 * 1024).await.is_ok() {
-                                    buf = recv
-                                        .read_to_end(1024 * 1024)
-                                        .await
-                                        .unwrap_or_default()
-                                        .to_vec();
-                                }
-                                if !buf.is_empty() {
-                                    let _ = tx.send(QuicEvent::Data {
-                                        from: addr,
-                                        channel: QuicChannel::Reliable,
-                                        payload: buf,
-                                    });
-                                }
+                while let Ok(mut recv) = conn.accept_uni().await {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let buf = recv
+                            .read_to_end(1024 * 1024)
+                            .await
+                            .unwrap_or_default();
+                        if !buf.is_empty() {
+                            let _ = tx.send(QuicEvent::Data {
+                                from: addr,
+                                channel: QuicChannel::Reliable,
+                                payload: buf,
                             });
                         }
-                        Err(_) => break,
-                    }
+                    });
                 }
             });
         }
@@ -410,8 +396,8 @@ impl Transport for QuinnBackend {
                 } else {
                     0.0
                 },
-                bytes_sent: stats.udp_tx.bytes as u64,
-                bytes_received: stats.udp_rx.bytes as u64,
+                bytes_sent: stats.udp_tx.bytes,
+                bytes_received: stats.udp_rx.bytes,
                 last_update: Some(std::time::Instant::now()),
             }
         })

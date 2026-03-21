@@ -281,10 +281,8 @@ impl GestureActionMap {
                         if let Some(ref action) = self.pinch_in {
                             actions.push((action.clone(), 1.0 - scale));
                         }
-                    } else {
-                        if let Some(ref action) = self.pinch_out {
-                            actions.push((action.clone(), scale - 1.0));
-                        }
+                    } else if let Some(ref action) = self.pinch_out {
+                        actions.push((action.clone(), scale - 1.0));
                     }
                 }
                 Gesture::Rotate { angle_rad, .. } => {

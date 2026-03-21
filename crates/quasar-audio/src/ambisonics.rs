@@ -1,7 +1,7 @@
 //! Ambisonics encoding and decoding (orders 1–3).
 //!
 //! - [`AmbisonicsEncoder`] converts a mono source at a given direction into
-//! B-format (ACN/SN3D channel ordering).
+//!   B-format (ACN/SN3D channel ordering).
 //! - [`AmbisonicsDecoder`] maps B-format channels to a given [`SpeakerLayout`].
 //!
 //! ## Integration with AudioSystem
@@ -290,7 +290,8 @@ pub struct SpatialAmbisonics {
     decoder: AmbisonicsDecoder,
     /// Accumulated B-format buffer (one Vec per channel).
     bformat_bus: Vec<Vec<f32>>,
-    /// Sample rate for buffer sizing.
+    /// Sample rate for buffer sizing (used for future resampling support).
+    #[allow(dead_code)]
     sample_rate: u32,
 }
 
@@ -356,7 +357,7 @@ impl SpatialAmbisonics {
                 let mut r = 0.0f32;
 
                 // Front left/right
-                if speaker_feeds.len() > 0 {
+                if !speaker_feeds.is_empty() {
                     l += speaker_feeds[0][i] * 0.5;
                 }
                 if speaker_feeds.len() > 1 {

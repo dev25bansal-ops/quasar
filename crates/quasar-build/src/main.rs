@@ -1585,7 +1585,7 @@ fn convert_wav_to_16bit(
     let audio_data = &data[data_start..data_start.min(data.len())];
 
     // Convert samples to 16-bit
-    let samples_per_frame = channels as usize;
+    let _samples_per_frame = channels as usize;
     let bytes_per_sample = (bits_per_sample / 8) as usize;
     let num_samples = audio_data.len() / bytes_per_sample;
 

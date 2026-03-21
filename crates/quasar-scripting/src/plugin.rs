@@ -174,7 +174,7 @@ impl ScriptingSystem {
         }
 
         // Forward entity spawn events from World's spawn log
-        let spawn_log: Vec<u32> = world.spawn_log().iter().copied().collect();
+        let spawn_log: Vec<u32> = world.spawn_log().to_vec();
         for entity_index in spawn_log {
             if let Ok(evt) = lua.create_table() {
                 let _ = evt.set("type", "spawn");
@@ -193,20 +193,16 @@ impl ScriptingSystem {
         // Dispatch events to registered handlers
         if let Ok(handlers) = quasar.get::<LuaTable>("_event_handlers") {
             // Collision events
-            if let Ok(collision_handlers) = handlers.get::<Option<LuaTable>>("collision") {
-                if let Some(ch) = collision_handlers {
-                    let len = ch.len().unwrap_or(0);
-                    for i in 1..=len {
-                        if let Ok(handler) = ch.get::<LuaFunction>(i) {
-                            // Re-read events for dispatch
-                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
-                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
-                                    if let Ok((_, evt)) = pair {
-                                        if let Ok(evt_type) = evt.get::<String>("type") {
-                                            if evt_type == "collision" {
-                                                let _ = handler.call::<()>(evt);
-                                            }
-                                        }
+            if let Some(ch) = handlers.get::<Option<LuaTable>>("collision").ok().flatten() {
+                let len = ch.len().unwrap_or(0);
+                for i in 1..=len {
+                    if let Ok(handler) = ch.get::<LuaFunction>(i) {
+                        // Re-read events for dispatch
+                        if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                            for (_, evt) in events_tbl.pairs::<LuaValue, LuaTable>().flatten() {
+                                if let Ok(evt_type) = evt.get::<String>("type") {
+                                    if evt_type == "collision" {
+                                        let _ = handler.call::<()>(evt);
                                     }
                                 }
                             }
@@ -216,19 +212,15 @@ impl ScriptingSystem {
             }
 
             // Spawn events
-            if let Ok(spawn_handlers) = handlers.get::<Option<LuaTable>>("spawn") {
-                if let Some(sh) = spawn_handlers {
-                    let len = sh.len().unwrap_or(0);
-                    for i in 1..=len {
-                        if let Ok(handler) = sh.get::<LuaFunction>(i) {
-                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
-                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
-                                    if let Ok((_, evt)) = pair {
-                                        if let Ok(evt_type) = evt.get::<String>("type") {
-                                            if evt_type == "spawn" {
-                                                let _ = handler.call::<()>(evt);
-                                            }
-                                        }
+            if let Some(sh) = handlers.get::<Option<LuaTable>>("spawn").ok().flatten() {
+                let len = sh.len().unwrap_or(0);
+                for i in 1..=len {
+                    if let Ok(handler) = sh.get::<LuaFunction>(i) {
+                        if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                            for (_, evt) in events_tbl.pairs::<LuaValue, LuaTable>().flatten() {
+                                if let Ok(evt_type) = evt.get::<String>("type") {
+                                    if evt_type == "spawn" {
+                                        let _ = handler.call::<()>(evt);
                                     }
                                 }
                             }
@@ -238,19 +230,15 @@ impl ScriptingSystem {
             }
 
             // Despawn events
-            if let Ok(despawn_handlers) = handlers.get::<Option<LuaTable>>("despawn") {
-                if let Some(dh) = despawn_handlers {
-                    let len = dh.len().unwrap_or(0);
-                    for i in 1..=len {
-                        if let Ok(handler) = dh.get::<LuaFunction>(i) {
-                            if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
-                                for pair in events_tbl.pairs::<LuaValue, LuaTable>() {
-                                    if let Ok((_, evt)) = pair {
-                                        if let Ok(evt_type) = evt.get::<String>("type") {
-                                            if evt_type == "despawn" {
-                                                let _ = handler.call::<()>(evt);
-                                            }
-                                        }
+            if let Some(dh) = handlers.get::<Option<LuaTable>>("despawn").ok().flatten() {
+                let len = dh.len().unwrap_or(0);
+                for i in 1..=len {
+                    if let Ok(handler) = dh.get::<LuaFunction>(i) {
+                        if let Ok(events_tbl) = quasar.get::<LuaTable>("_events") {
+                            for (_, evt) in events_tbl.pairs::<LuaValue, LuaTable>().flatten() {
+                                if let Ok(evt_type) = evt.get::<String>("type") {
+                                    if evt_type == "despawn" {
+                                        let _ = handler.call::<()>(evt);
                                     }
                                 }
                             }

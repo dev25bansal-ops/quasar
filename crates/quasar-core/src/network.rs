@@ -1185,6 +1185,7 @@ impl NetworkReplication {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum TransportResource {
     Udp(UdpTransport),
     #[cfg(feature = "quinn-transport")]

@@ -478,7 +478,7 @@ pub fn generate_session_token(session_id: SessionId, player_id: &PlayerId, secre
 
 /// Validate a session token.
 /// Returns Ok((session_id, player_id)) if valid, Err otherwise.
-pub fn validate_session_token(token: &str, secret: &[u8], max_age_secs: u64) -> Result<(SessionId, PlayerId), LobbyError> {
+pub fn validate_session_token(token: &str, _secret: &[u8], _max_age_secs: u64) -> Result<(SessionId, PlayerId), LobbyError> {
     let parts: Vec<&str> = token.splitn(3, '_').collect();
     if parts.len() != 3 || parts[0] != "sess" {
         return Err(LobbyError::InvalidPassword);
