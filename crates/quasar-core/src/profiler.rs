@@ -258,12 +258,14 @@ impl GpuProfiler {
     }
 
     pub fn resolve(&mut self, encoder: &mut wgpu::CommandEncoder) {
-        if let (Some(query_set), Some(resolve_buffer), Some(read_buffer)) =
-            (self.query_sets.first(), self.resolve_buffers.first(), self.read_buffers.first())
-        {
+        if let (Some(query_set), Some(resolve_buffer), Some(read_buffer)) = (
+            self.query_sets.first(),
+            self.resolve_buffers.first(),
+            self.read_buffers.first(),
+        ) {
             let timestamp_count = self.next_query_index * 2;
             let byte_size = timestamp_count * std::mem::size_of::<u64>() as u32;
-            
+
             encoder.resolve_query_set(query_set, 0..timestamp_count, resolve_buffer, 0);
             encoder.copy_buffer_to_buffer(resolve_buffer, 0, read_buffer, 0, byte_size as u64);
         }
@@ -276,7 +278,11 @@ impl GpuProfiler {
         }
     }
 
-    pub fn read_results(&mut self, device: &wgpu::Device, timestamp_period: f32) -> Option<Vec<(String, f64)>> {
+    pub fn read_results(
+        &mut self,
+        device: &wgpu::Device,
+        timestamp_period: f32,
+    ) -> Option<Vec<(String, f64)>> {
         if self.pending_queries.is_empty() {
             return None;
         }
@@ -285,28 +291,28 @@ impl GpuProfiler {
 
         if let Some(read_buffer) = self.read_buffers.first() {
             let slice = read_buffer.slice(..);
-            if let Ok(mapped) = slice.get_mapped_range() {
-                let timestamps: &[u64] = bytemuck::cast_slice(&mapped);
-                
-                let mut results = Vec::with_capacity(self.pending_queries.len());
-                for (name, query_idx) in &self.pending_queries {
-                    let start_idx = query_idx * 2;
-                    let end_idx = start_idx + 1;
-                    if (start_idx as usize) < timestamps.len() && (end_idx as usize) < timestamps.len() {
-                        let start = timestamps[start_idx as usize];
-                        let end = timestamps[end_idx as usize];
-                        let duration_ns = (end.wrapping_sub(start)) as f64 * timestamp_period as f64;
-                        let duration_ms = duration_ns / 1_000_000.0;
-                        results.push((name.clone(), duration_ms));
-                    }
+            let mapped = slice.get_mapped_range();
+            let timestamps: &[u64] = bytemuck::cast_slice(&mapped);
+
+            let mut results = Vec::with_capacity(self.pending_queries.len());
+            for (name, query_idx) in &self.pending_queries {
+                let start_idx = query_idx * 2;
+                let end_idx = start_idx + 1;
+                if (start_idx as usize) < timestamps.len() && (end_idx as usize) < timestamps.len()
+                {
+                    let start = timestamps[start_idx as usize];
+                    let end = timestamps[end_idx as usize];
+                    let duration_ns = (end.wrapping_sub(start)) as f64 * timestamp_period as f64;
+                    let duration_ms = duration_ns / 1_000_000.0;
+                    results.push((name.clone(), duration_ms));
                 }
-                
-                drop(mapped);
-                read_buffer.unmap();
-                return Some(results);
             }
+
+            drop(mapped);
+            read_buffer.unmap();
+            return Some(results);
         }
-        
+
         None
     }
 

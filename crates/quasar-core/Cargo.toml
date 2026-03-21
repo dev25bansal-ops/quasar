@@ -23,13 +23,14 @@ rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
 wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
 
 [features]
 default = []
 quinn-transport = ["dep:quinn", "dep:rustls", "dep:tokio", "dep:rcgen"]
 puffin = ["dep:puffin"]
 tracy = ["dep:tracy-client"]
-gpu-profiling = ["dep:wgpu"]
+gpu-profiling = ["dep:wgpu", "dep:bytemuck"]
 
 [dependencies.puffin]
 version = "0.19"
