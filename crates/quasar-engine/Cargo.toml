@@ -7,11 +7,12 @@ license.workspace = true
 
 [features]
 default = ["full"]
-full = ["physics", "audio", "scripting", "editor"]
+full = ["physics", "audio", "scripting", "editor", "ui"]
 physics = ["dep:quasar-physics"]
 audio = ["dep:quasar-audio"]
 scripting = ["dep:quasar-scripting"]
 editor = ["dep:quasar-editor"]
+ui = ["dep:quasar-ui"]
 
 [dependencies]
 quasar-core = { workspace = true }
@@ -22,6 +23,7 @@ quasar-physics = { workspace = true, optional = true }
 quasar-audio = { workspace = true, optional = true }
 quasar-scripting = { workspace = true, optional = true }
 quasar-editor = { workspace = true, optional = true }
+quasar-ui = { workspace = true, optional = true }
 winit = { workspace = true }
 pollster = { workspace = true }
 log = { workspace = true }

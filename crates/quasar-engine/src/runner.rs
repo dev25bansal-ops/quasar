@@ -726,6 +726,7 @@ impl ApplicationHandler for QuasarRunner {
                                         )],
                                         depth_stencil_attachment: None,
                                         timestamp_writes: None,
+                                        occlusion_query_set: None,
                                     });
                                 state.ui_render_pass.draw(
                                     &state.renderer.queue,

@@ -1010,10 +1010,11 @@ mod tests {
     fn bridge_get_component() {
         let lua = setup_lua();
 
+        // _component_data is organized as: _component_data[type_name][entity_id] = component_data
         lua.load(
             r#"
-            quasar._physics_components["1"] = {
-                RigidBody = { vx = 1.0, vy = 2.0, vz = 3.0 }
+            quasar._component_data["RigidBody"] = {
+                [1] = { vx = 1.0, vy = 2.0, vz = 3.0 }
             }
         "#,
         )

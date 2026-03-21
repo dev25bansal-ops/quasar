@@ -807,7 +807,6 @@ impl Editor {
     pub fn bake_lightmaps(&mut self, world: &mut quasar_core::ecs::World) {
         use quasar_math::Transform;
         use quasar_render::lightmap::{BakeConfig, BakerTriangle, LightmapBaker};
-        use quasar_render::MeshShape;
 
         log::info!("Starting lightmap bake...");
 
@@ -817,9 +816,11 @@ impl Editor {
         for (_, transform) in world.query::<Transform>().into_iter() {
             // Create a simple quad for each entity (real impl would use actual mesh data)
             let pos = transform.position;
-            let normal = transform.rotation * glam::Vec3::Z;
-            let tangent = transform.rotation * glam::Vec3::X;
-            let bitangent = transform.rotation * glam::Vec3::Y;
+            // Use Transform's direction helpers: forward is -Z, right is +X, up is +Y
+            // For a forward-facing quad, normal should be -forward (Z+), so we negate forward
+            let normal = -transform.forward(); // +Z direction
+            let tangent = transform.right(); // +X direction
+            let bitangent = transform.up(); // +Y direction
 
             // Simple 1x1 quad
             let half_size = 0.5;
