@@ -78,6 +78,7 @@ pub struct Renderer {
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_uniform: CameraUniform,
     pub material_texture_bind_group_layout: wgpu::BindGroupLayout,
+    pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub light_buffer: wgpu::Buffer,
     pub lighting_bind_group: wgpu::BindGroup,
     pub lighting_bind_group_layout: wgpu::BindGroupLayout,
@@ -264,6 +265,32 @@ impl Renderer {
                     // Albedo sampler (binding 2)
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        // -- Create texture-only bind group layout (for standalone textures) --
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Texture Bind Group Layout"),
+                entries: &[
+                    // Texture view (binding 0)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        },
+                        count: None,
+                    },
+                    // Sampler (binding 1)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                         count: None,
@@ -486,7 +513,7 @@ impl Renderer {
 
 // -- Default 1×1 white texture --
         let default_texture =
-            Texture::white(&device, &queue, &material_texture_bind_group_layout);
+            Texture::white(&device, &queue, &texture_bind_group_layout);
 
         // -- Default material (white, roughness=0.5, metallic=0) --
         let default_material = Material::new(
@@ -633,6 +660,7 @@ impl Renderer {
             camera_bind_group_layout,
             camera_uniform,
             material_texture_bind_group_layout,
+            texture_bind_group_layout,
             light_buffer,
             lighting_bind_group,
             lighting_bind_group_layout,
@@ -923,7 +951,7 @@ impl Renderer {
         let texture = Texture::from_file(
             &self.device,
             &self.queue,
-            &self.material_texture_bind_group_layout,
+            &self.texture_bind_group_layout,
             path,
         )?;
         Ok(self.add_texture(texture))
