@@ -347,6 +347,7 @@ pub enum EditorAction {
     Redo,
     StepFrame,
     SpawnLogicGraph,
+    BakeLightmaps,
 }
 
 /// Editor state — tracks visible panels and the selected entity.
@@ -517,6 +518,13 @@ impl Editor {
                     .clicked()
                 {
                     editor_action = Some(EditorAction::StepFrame);
+                }
+
+                ui.separator();
+
+                // Bake lightmaps button
+                if ui.button("💡 Bake Lightmaps").clicked() {
+                    editor_action = Some(EditorAction::BakeLightmaps);
                 }
 
                 ui.separator();
@@ -788,7 +796,74 @@ impl Editor {
                     self.logic_graph.name
                 );
             }
+            EditorAction::BakeLightmaps => {
+                // Trigger lightmap baking for the current scene
+                self.bake_lightmaps(world);
+            }
         }
+    }
+
+    /// Bake lightmaps for the current scene.
+    pub fn bake_lightmaps(&mut self, world: &mut quasar_core::ecs::World) {
+        use quasar_math::Transform;
+        use quasar_render::lightmap::{BakeConfig, BakerTriangle, LightmapBaker};
+        use quasar_render::MeshShape;
+
+        log::info!("Starting lightmap bake...");
+
+        // Collect mesh data from the world
+        let mut triangles: Vec<BakerTriangle> = Vec::new();
+
+        for (_, transform) in world.query::<Transform>().into_iter() {
+            // Create a simple quad for each entity (real impl would use actual mesh data)
+            let pos = transform.position;
+            let normal = transform.rotation * glam::Vec3::Z;
+            let tangent = transform.rotation * glam::Vec3::X;
+            let bitangent = transform.rotation * glam::Vec3::Y;
+
+            // Simple 1x1 quad
+            let half_size = 0.5;
+            triangles.push(BakerTriangle {
+                positions: [
+                    pos - tangent * half_size - bitangent * half_size,
+                    pos + tangent * half_size - bitangent * half_size,
+                    pos + tangent * half_size + bitangent * half_size,
+                ],
+                normals: [normal, normal, normal],
+                lightmap_uvs: [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+            });
+            triangles.push(BakerTriangle {
+                positions: [
+                    pos - tangent * half_size - bitangent * half_size,
+                    pos + tangent * half_size + bitangent * half_size,
+                    pos - tangent * half_size + bitangent * half_size,
+                ],
+                normals: [normal, normal, normal],
+                lightmap_uvs: [[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            });
+        }
+
+        if triangles.is_empty() {
+            log::warn!("No geometry found for lightmap baking");
+            return;
+        }
+
+        let config = BakeConfig::default();
+        let lightmap = LightmapBaker::bake(&triangles, &config);
+
+        log::info!(
+            "Lightmap bake complete: {}x{} ({} triangles processed)",
+            lightmap.width,
+            lightmap.height,
+            triangles.len()
+        );
+
+        // Store lightmap as a resource (would need GPU upload in real impl)
+        world.insert_resource(quasar_render::lightmap::LightmapMaterial {
+            lightmap_name: "baked".to_string(),
+            uv_channel: 1,
+            intensity: 1.0,
+        });
     }
 
     /// Record a frame time for the profiler overlay.

@@ -538,19 +538,18 @@ pub fn register_bridge(lua: &Lua) -> LuaResult<()> {
     quasar.set("raycast", raycast_fn)?;
 
     // quasar.get_component(entity_id, type_name) -> table or nil
+    // Uses the component registry data populated by write_component_data()
     let get_component_fn = lua.create_function(
         |lua, (entity_id, type_name): (u32, String)| -> LuaResult<LuaValue> {
             let quasar: LuaTable = lua.globals().get("quasar")?;
-            let components: LuaTable = quasar.get("_physics_components")?;
+            let component_data: LuaTable = quasar.get("_component_data")?;
 
-            let entity_key = entity_id.to_string();
-            match components.get::<Option<LuaTable>>(entity_key.as_str())? {
-                Some(entity_components) => {
-                    match entity_components.get::<Option<LuaTable>>(type_name.as_str())? {
-                        Some(comp) => Ok(LuaValue::Table(comp)),
-                        None => Ok(LuaValue::Nil),
-                    }
-                }
+            // component_data[type_name][entity_id]
+            match component_data.get::<Option<LuaTable>>(type_name.as_str())? {
+                Some(entities_table) => match entities_table.get::<Option<LuaTable>>(entity_id)? {
+                    Some(comp) => Ok(LuaValue::Table(comp)),
+                    None => Ok(LuaValue::Nil),
+                },
                 None => Ok(LuaValue::Nil),
             }
         },

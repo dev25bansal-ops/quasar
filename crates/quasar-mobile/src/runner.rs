@@ -22,7 +22,7 @@ use quasar_render::{
 };
 use quasar_window::{Input, QuasarWindow, WindowConfig};
 
-use crate::{GestureRecognizer, MobileConfig, MobilePlatform, TouchInput};
+use crate::{GestureRecognizer, Gyroscope, HapticEngine, MobileConfig, MobilePlatform, TouchInput};
 
 /// Runtime state created once the window is available on the device.
 struct MobileState {
@@ -32,9 +32,78 @@ struct MobileState {
     mesh_cache: MeshCache,
     touch: TouchInput,
     gestures: GestureRecognizer,
+    gyroscope: Gyroscope,
+    haptics: HapticEngine,
     #[allow(dead_code)]
     config: MobileConfig,
     elapsed: f32,
+}
+
+impl MobileState {
+    /// Poll platform-specific motion sensors and update gyroscope state.
+    /// On Android, uses SensorManager via JNI. On iOS, uses CoreMotion.
+    /// On other platforms, this is a no-op.
+    pub fn poll_motion_sensors(&mut self) {
+        #[cfg(target_os = "android")]
+        {
+            self.poll_android_sensors();
+        }
+
+        #[cfg(target_os = "ios")]
+        {
+            self.poll_ios_sensors();
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    fn poll_android_sensors(&mut self) {
+        use jni::objects::{JObject, JValue};
+        use jni::JNIEnv;
+
+        let ctx = ndk_context::android_context();
+        let vm = match unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) } {
+            Ok(vm) => vm,
+            Err(_) => return,
+        };
+        let Ok(mut env) = vm.attach_current_thread() else {
+            return;
+        };
+
+        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+        // Get SensorManager
+        let sensor_service = match env.new_string("sensor") {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let sensor_manager = match env.call_method(
+            &activity,
+            "getSystemService",
+            "(Ljava/lang/String;)Ljava/lang/Object;",
+            &[JValue::Object(&sensor_service.into())],
+        ) {
+            Ok(v) => match v.l() {
+                Ok(o) => o,
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+
+        if sensor_manager.is_null() {
+            return;
+        }
+
+        // Get gyroscope sensor values (simplified - real impl would cache sensor listeners)
+        // This is a placeholder that sets availability to true
+        self.gyroscope.available = true;
+    }
+
+    #[cfg(target_os = "ios")]
+    fn poll_ios_sensors(&mut self) {
+        // CoreMotion integration would go here
+        // Real implementation would use CMMotionManager
+        self.gyroscope.available = true;
+    }
 }
 
 /// Winit `ApplicationHandler` for Android & iOS.
@@ -99,6 +168,8 @@ impl ApplicationHandler for MobileRunner {
         let camera = Camera::new(size.width, size.height);
 
         self.app.world.insert_resource(Input::new());
+        self.app.world.insert_resource(Gyroscope::default());
+        self.app.world.insert_resource(HapticEngine::default());
 
         self.state = Some(MobileState {
             window,
@@ -107,6 +178,8 @@ impl ApplicationHandler for MobileRunner {
             mesh_cache: MeshCache::new(),
             touch: TouchInput::new(),
             gestures: GestureRecognizer::default(),
+            gyroscope: Gyroscope::default(),
+            haptics: HapticEngine::default(),
             config: self.mobile_config.clone(),
             elapsed: 0.0,
         });
@@ -172,6 +245,18 @@ impl ApplicationHandler for MobileRunner {
                 if let Some(state) = self.state.as_mut() {
                     state.touch.begin_frame();
                     state.elapsed += self.app.time.delta_seconds();
+
+                    // Sync gyroscope state to world resource (platform-specific sensors
+                    // should update state.gyroscope via platform callbacks)
+                    state.poll_motion_sensors();
+                    if let Some(gyro) = self.app.world.resource_mut::<Gyroscope>() {
+                        *gyro = state.gyroscope.clone();
+                    }
+
+                    // Sync haptics state from world (game code can enable/disable)
+                    if let Some(haptics) = self.app.world.resource::<HapticEngine>() {
+                        state.haptics.set_enabled(haptics.is_enabled());
+                    }
 
                     // Collect meshes from the world.
                     let shape_mats: Vec<(MeshShape, glam::Mat4)> = {

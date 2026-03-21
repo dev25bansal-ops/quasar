@@ -33,6 +33,7 @@ use quasar_render::{
     HdrRenderTarget, LightData, LightsUniform, MeshCache, MeshShape, OrbitController, PointLight,
     PostProcessPass, RenderConfig, Renderer, ShadowCamera, ShadowMap, SpotLight, TonemappingPass,
 };
+use quasar_ui::{UiRenderPass, UiResource};
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
 /// Runtime state created once the window is available.
@@ -66,6 +67,8 @@ struct RunnerState {
     gbuffer: Option<GBuffer>,
     /// Deferred lighting pass (when enabled)
     deferred_lighting: Option<DeferredLightingPass>,
+    /// UI render pass for in-game UI
+    ui_render_pass: UiRenderPass,
 }
 
 /// The winit `ApplicationHandler` that drives the Quasar engine loop.
@@ -149,6 +152,9 @@ impl ApplicationHandler for QuasarRunner {
                 .add_plugin(quasar_core::NetworkPlugin::new(network_config));
         }
 
+        // Register UiPlugin for in-game UI
+        self.app.add_plugin(quasar_ui::UiPlugin);
+
         let shadow_map = ShadowMap::new(&renderer.device, 2048);
         let shadow_camera = ShadowCamera::default();
         let cascade_shadow_map = CascadeShadowMap::new(&renderer.device);
@@ -177,6 +183,9 @@ impl ApplicationHandler for QuasarRunner {
             (None, None)
         };
 
+        // Create UI render pass for in-game UI
+        let ui_render_pass = UiRenderPass::new(&renderer.device, renderer.config.format);
+
         self.state = Some(RunnerState {
             window,
             renderer,
@@ -196,6 +205,7 @@ impl ApplicationHandler for QuasarRunner {
             gpu_profiler,
             gbuffer,
             deferred_lighting,
+            ui_render_pass,
         });
 
         log::info!(
@@ -694,6 +704,41 @@ impl ApplicationHandler for QuasarRunner {
                         state.tonemap_pass.execute(&mut encoder, &view);
                         if let Some(idx) = gpu_tonemap {
                             state.gpu_profiler.end_pass(&mut encoder, idx);
+                        }
+
+                        // In-game UI pass (rendered after 3D/tonemapping, before editor)
+                        if let Some(ui_resource) = self.app.world.resource::<UiResource>() {
+                            let gpu_ui = state.gpu_profiler.begin_pass(&mut encoder, "ui");
+                            let size = state.window.inner_size();
+                            {
+                                let mut ui_pass =
+                                    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                        label: Some("UI Pass"),
+                                        color_attachments: &[Some(
+                                            wgpu::RenderPassColorAttachment {
+                                                view: &view,
+                                                resolve_target: None,
+                                                ops: wgpu::Operations {
+                                                    load: wgpu::LoadOp::Load,
+                                                    store: wgpu::StoreOp::Store,
+                                                },
+                                            },
+                                        )],
+                                        depth_stencil_attachment: None,
+                                        timestamp_writes: None,
+                                    });
+                                state.ui_render_pass.draw(
+                                    &state.renderer.queue,
+                                    &mut ui_pass,
+                                    &ui_resource.tree,
+                                    &ui_resource.layout,
+                                    size.width as f32,
+                                    size.height as f32,
+                                );
+                            }
+                            if let Some(idx) = gpu_ui {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
                         }
 
                         // egui pass (editor overlay).
