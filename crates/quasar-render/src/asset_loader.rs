@@ -48,6 +48,8 @@ pub struct AssetLoader<'a> {
     texture_layout: &'a wgpu::BindGroupLayout,
     material_layout: &'a wgpu::BindGroupLayout,
     assets: &'a mut AssetManager,
+    default_texture_view: &'a wgpu::TextureView,
+    default_sampler: &'a wgpu::Sampler,
 }
 
 impl<'a> AssetLoader<'a> {
@@ -57,6 +59,8 @@ impl<'a> AssetLoader<'a> {
         texture_layout: &'a wgpu::BindGroupLayout,
         material_layout: &'a wgpu::BindGroupLayout,
         assets: &'a mut AssetManager,
+        default_texture_view: &'a wgpu::TextureView,
+        default_sampler: &'a wgpu::Sampler,
     ) -> Self {
         Self {
             device,
@@ -64,6 +68,8 @@ impl<'a> AssetLoader<'a> {
             texture_layout,
             material_layout,
             assets,
+            default_texture_view,
+            default_sampler,
         }
     }
 
@@ -106,7 +112,13 @@ impl<'a> AssetLoader<'a> {
         roughness: f32,
         metallic: f32,
     ) -> AssetHandle<GpuMaterial> {
-        let mut material = Material::new(self.device, self.material_layout, name);
+        let mut material = Material::new(
+            self.device,
+            self.material_layout,
+            name,
+            self.default_texture_view,
+            self.default_sampler,
+        );
         material.set_base_color(base_color[0], base_color[1], base_color[2], base_color[3]);
         material.set_roughness(roughness);
         material.set_metallic(metallic);
@@ -156,6 +168,8 @@ pub struct RenderAssetManager {
     assets: AssetManager,
     texture_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
+    default_texture_view: wgpu::TextureView,
+    default_sampler: wgpu::Sampler,
 }
 
 impl RenderAssetManager {
@@ -163,11 +177,15 @@ impl RenderAssetManager {
         _device: &wgpu::Device,
         texture_layout: wgpu::BindGroupLayout,
         material_layout: wgpu::BindGroupLayout,
+        default_texture_view: wgpu::TextureView,
+        default_sampler: wgpu::Sampler,
     ) -> Self {
         Self {
             assets: AssetManager::new(),
             texture_layout,
             material_layout,
+            default_texture_view,
+            default_sampler,
         }
     }
 
@@ -182,6 +200,8 @@ impl RenderAssetManager {
             &self.texture_layout,
             &self.material_layout,
             &mut self.assets,
+            &self.default_texture_view,
+            &self.default_sampler,
         )
     }
 

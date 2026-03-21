@@ -87,9 +87,22 @@ pub struct Material {
 }
 
 impl Material {
-    /// Create a new material with default properties.
-    pub fn new(device: &wgpu::Device, layout: &wgpu::BindGroupLayout, name: &str) -> Self {
-        Self::from_uniform(device, layout, name, MaterialUniform::default())
+    /// Create a new material with default properties and default texture/sampler.
+    pub fn new(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        name: &str,
+        default_texture_view: &wgpu::TextureView,
+        default_sampler: &wgpu::Sampler,
+    ) -> Self {
+        Self::from_uniform(
+            device,
+            layout,
+            name,
+            MaterialUniform::default(),
+            default_texture_view,
+            default_sampler,
+        )
     }
 
     /// Create a material from a [`MaterialOverride`] component.
@@ -99,8 +112,17 @@ impl Material {
         layout: &wgpu::BindGroupLayout,
         name: &str,
         material_override: &MaterialOverride,
+        default_texture_view: &wgpu::TextureView,
+        default_sampler: &wgpu::Sampler,
     ) -> Self {
-        let mat = Self::from_uniform(device, layout, name, material_override.to_uniform());
+        let mat = Self::from_uniform(
+            device,
+            layout,
+            name,
+            material_override.to_uniform(),
+            default_texture_view,
+            default_sampler,
+        );
         mat.update(queue);
         mat
     }
@@ -111,6 +133,8 @@ impl Material {
         layout: &wgpu::BindGroupLayout,
         name: &str,
         uniform: MaterialUniform,
+        texture_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
     ) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&format!("Material Buffer: {}", name)),
@@ -122,10 +146,20 @@ impl Material {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(&format!("Material Bind Group: {}", name)),
             layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
         });
 
         Self {

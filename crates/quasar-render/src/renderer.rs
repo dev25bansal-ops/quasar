@@ -484,13 +484,18 @@ impl Renderer {
             ],
         });
 
-        // -- Default material (white, roughness=0.5, metallic=0) --
-        let default_material =
-            Material::new(&device, &material_texture_bind_group_layout, "Default");
+// -- Default 1×1 white texture --
+        let default_texture =
+            Texture::white(&device, &queue, &material_texture_bind_group_layout);
 
-    // -- Default 1×1 white texture --
-    let default_texture =
-        Texture::white(&device, &queue, &material_texture_bind_group_layout);
+        // -- Default material (white, roughness=0.5, metallic=0) --
+        let default_material = Material::new(
+            &device,
+            &material_texture_bind_group_layout,
+            "Default",
+            &default_texture.view,
+            &default_texture.sampler,
+        );
 
         // -- Instance buffer for GPU instancing --
         let max_instances = MAX_RENDER_OBJECTS;
@@ -1610,6 +1615,8 @@ texture: &'static wgpu::BindGroup,
             &self.material_texture_bind_group_layout,
             name,
             material_override,
+            &self.default_texture.view,
+            &self.default_texture.sampler,
         )
     }
 
