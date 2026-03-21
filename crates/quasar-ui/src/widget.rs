@@ -7,8 +7,7 @@ use crate::style::UiStyle;
 pub struct WidgetId(pub u32);
 
 /// Content inside a UI node.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub enum UiContent {
     /// No content — container only.
     #[default]
@@ -18,7 +17,6 @@ pub enum UiContent {
     /// Image (path to texture asset).
     Image(String),
 }
-
 
 /// UI interaction state.
 #[derive(Debug, Clone, Copy, Default)]
@@ -140,10 +138,7 @@ impl UiTree {
     /// Remove a node (and recursively its children).
     pub fn remove(&mut self, id: WidgetId) {
         // Collect children first.
-        let children: Vec<WidgetId> = self
-            .get(id)
-            .map(|n| n.children.clone())
-            .unwrap_or_default();
+        let children: Vec<WidgetId> = self.get(id).map(|n| n.children.clone()).unwrap_or_default();
         for child in children {
             self.remove(child);
         }

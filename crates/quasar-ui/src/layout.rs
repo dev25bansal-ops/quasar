@@ -117,8 +117,11 @@ impl LayoutSolver {
 
             let child_w =
                 self.resolve_size(child.style.width, content_rect.width, child.style.min_width);
-            let child_h =
-                self.resolve_size(child.style.height, content_rect.height, child.style.min_height);
+            let child_h = self.resolve_size(
+                child.style.height,
+                content_rect.height,
+                child.style.min_height,
+            );
 
             let child_rect = LayoutRect {
                 x: cursor_x + child.style.margin[3],
@@ -168,8 +171,7 @@ impl LayoutSolver {
                     cursor_x += child_w + child.style.margin[1] + child.style.margin[3] + style.gap;
                 }
                 FlexDirection::Column => {
-                    cursor_y +=
-                        child_h + child.style.margin[0] + child.style.margin[2] + style.gap;
+                    cursor_y += child_h + child.style.margin[0] + child.style.margin[2] + style.gap;
                 }
             }
         }

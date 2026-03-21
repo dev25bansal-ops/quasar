@@ -271,7 +271,11 @@ impl Checkbox {
             UiStyle {
                 width: SizeDimension::Px(desc.size),
                 height: SizeDimension::Px(desc.size),
-                background_color: if desc.checked { CHECKBOX_CHECK } else { CHECKBOX_BG },
+                background_color: if desc.checked {
+                    CHECKBOX_CHECK
+                } else {
+                    CHECKBOX_BG
+                },
                 border_radius: 3.0,
                 border_width: 1.0,
                 border_color: Color::rgba(0.5, 0.5, 0.5, 1.0),
@@ -503,12 +507,7 @@ pub struct Panel {
 
 impl Panel {
     /// Create a panel under `parent`.  If `title` is `Some`, a text header is added.
-    pub fn spawn(
-        tree: &mut UiTree,
-        parent: WidgetId,
-        title: Option<&str>,
-        style: UiStyle,
-    ) -> Self {
+    pub fn spawn(tree: &mut UiTree, parent: WidgetId, title: Option<&str>, style: UiStyle) -> Self {
         let root = tree.add_child(parent, style);
         let title_id = title.map(|t| {
             tree.add_text(

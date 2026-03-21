@@ -3490,6 +3490,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "blake3",
+ "bytemuck",
  "criterion",
  "crossbeam-channel",
  "log",
@@ -3555,6 +3556,7 @@ dependencies = [
  "quasar-physics",
  "quasar-render",
  "quasar-scripting",
+ "quasar-ui",
  "quasar-window",
  "wasm-bindgen",
  "wasm-bindgen-futures",
