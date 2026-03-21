@@ -876,9 +876,7 @@ impl World {
         let last_run = self
             .system_last_run
             .read()
-            .unwrap()
-            .get(name)
-            .copied()
+            .map(|guard| guard.get(name).copied().unwrap_or(0))
             .unwrap_or(0);
         self.active_system_last_run
             .store(last_run, Ordering::SeqCst);
@@ -887,10 +885,9 @@ impl World {
     /// Finalize after running a system: record the current tick as the
     /// system's last-run tick.
     pub fn end_system(&mut self, name: &str) {
-        self.system_last_run
-            .write()
-            .unwrap()
-            .insert(name.to_string(), self.current_tick);
+        if let Ok(mut guard) = self.system_last_run.write() {
+            guard.insert(name.to_string(), self.current_tick);
+        }
         self.active_system_last_run.store(0, Ordering::SeqCst);
     }
 
@@ -911,9 +908,7 @@ impl World {
     pub fn get_system_last_run(&self, name: &str) -> u64 {
         self.system_last_run
             .read()
-            .unwrap()
-            .get(name)
-            .copied()
+            .map(|guard| guard.get(name).copied().unwrap_or(0))
             .unwrap_or(0)
     }
 
