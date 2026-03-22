@@ -110,31 +110,43 @@ impl GpuProfiler {
         );
     }
 
-    /// Kick off an async buffer map for the staging buffer.
-    /// Call after `queue.submit`.
+    /// Mark that results are pending. Call after `queue.submit`.
     pub fn request_results(&mut self) {
         if self.pass_count == 0 || self.pending {
             return;
         }
         self.pending = true;
-        let slice = self.staging_buf.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |_| {});
     }
 
     /// Poll the device and try to harvest results.
     /// Returns the latest pass timings if a read-back completed.
     pub fn try_collect(&mut self, device: &wgpu::Device) -> Option<&[(String, f64)]> {
         if !self.pending {
-            return if self.results.is_empty() { None } else { Some(&self.results) };
+            return if self.results.is_empty() {
+                None
+            } else {
+                Some(&self.results)
+            };
         }
 
-        device.poll(wgpu::Maintain::Poll);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let slice = self.staging_buf.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        device.poll(wgpu::Maintain::Wait);
 
-        // Check if the buffer is mapped.
+        match rx.recv() {
+            Ok(Ok(())) => {}
+            _ => {
+                self.pending = false;
+                return None;
+            }
+        }
+
         let slice = self.staging_buf.slice(..);
         let data = slice.get_mapped_range();
-        let timestamps: &[u64] =
-            bytemuck::cast_slice(&data);
+        let timestamps: &[u64] = bytemuck::cast_slice(&data);
 
         self.results.clear();
         for i in 0..self.pass_names.len() {

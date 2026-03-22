@@ -40,9 +40,9 @@ impl Default for RenderConfig {
         {
             Self {
                 msaa_sample_count: 1,
-                gpu_driven_culling: true,
-                taa_enabled: true,
-                ssgi_enabled: true,
+                gpu_driven_culling: false,  // Temporarily disabled for debugging
+                taa_enabled: false,         // Temporarily disabled for debugging
+                ssgi_enabled: false,        // Temporarily disabled for debugging
                 deferred_enabled: false,
             }
         }
@@ -83,6 +83,10 @@ pub struct Renderer {
     pub lighting_bind_group: wgpu::BindGroup,
     pub lighting_bind_group_layout: wgpu::BindGroupLayout,
     pub light_uniform: LightsUniform,
+    /// Dummy CSM cascade shadow view for binding 6 placeholder
+    pub dummy_cascade_shadow_view: wgpu::TextureView,
+    /// Dummy CSM cascades buffer for binding 5 placeholder
+    pub dummy_cascade_buffer: wgpu::Buffer,
     /// Default white material used when no material is specified.
     pub default_material: Material,
     /// Default 1×1 white texture used when no texture is specified.
@@ -152,7 +156,9 @@ impl Renderer {
         log::info!("GPU adapter: {:?}", adapter.get_info().name);
 
         // Request the device and queue.
-        let mut required_features = wgpu::Features::empty();
+        let mut required_features = wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER
+            | wgpu::Features::TIMESTAMP_QUERY
+            | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS;
         if render_config.gpu_driven_culling {
             required_features |= wgpu::Features::MULTI_DRAW_INDIRECT;
         }
@@ -317,7 +323,7 @@ impl Renderer {
                     // Shadow uniform (binding 1)
                     wgpu::BindGroupLayoutEntry {
                         binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
@@ -386,12 +392,31 @@ impl Renderer {
         
         // -- Create dummy shadow resources for bindings 1-6 --
         // Shadow uniform buffer (binding 1)
+        // Size: mat4x4<f32> (64 bytes) + vec4<f32> (16 bytes) = 80 bytes
         let shadow_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dummy Shadow Uniform Buffer"),
-            size: 64, // mat4x4<f32> + vec4<f32>
+            size: 80,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Initialize with identity matrix and valid pcss params
+        let identity_matrix: [[f32; 4]; 4] = glam::Mat4::IDENTITY.to_cols_array_2d();
+        let shadow_init: [u8; 80] = {
+            let mut data = [0u8; 80];
+            // Write matrix (64 bytes)
+            for i in 0..4 {
+                for j in 0..4 {
+                    let offset = (i * 4 + j) * 4;
+                    let bytes = identity_matrix[i][j].to_ne_bytes();
+                    data[offset..offset + 4].copy_from_slice(&bytes);
+                }
+            }
+            // Write pcss_params (16 bytes): light_size=1.0, shadow_map_size=1024.0, unused=0, unused=0
+            data[64..68].copy_from_slice(&1.0f32.to_ne_bytes()); // light_size
+            data[68..72].copy_from_slice(&1024.0f32.to_ne_bytes()); // shadow_map_size
+            data
+        };
+        queue.write_buffer(&shadow_uniform_buffer, 0, &shadow_init);
 
         // Dummy depth texture for shadow map (binding 2)
         let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -436,12 +461,33 @@ impl Renderer {
         });
 
         // CSM cascades storage buffer (binding 5)
+        // Size: 4 cascades * (mat4x4 (64 bytes) + split_depth + padding (16 bytes)) = 320 bytes
         let csm_cascades_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Dummy CSM Cascades Buffer"),
-            size: 256, // 4 * CascadeUniform (64 bytes each)
+            size: 320, // 4 * CascadeUniform (80 bytes each)
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // Initialize with identity matrices and valid split depths
+        let cascade_init: [u8; 320] = {
+            let mut data = [0u8; 320];
+            let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
+            for cascade in 0..4 {
+                let offset = cascade * 80; // 80 bytes per cascade
+                // Write matrix (64 bytes)
+                for i in 0..4 {
+                    for j in 0..4 {
+                        let byte_offset = offset + (i * 4 + j) * 4;
+                        let bytes = identity[i][j].to_ne_bytes();
+                        data[byte_offset..byte_offset + 4].copy_from_slice(&bytes);
+                    }
+                }
+                // Write split_depth (16 bytes from offset 64): set to large value so shadows work
+                data[offset + 64..offset + 68].copy_from_slice(&10000.0f32.to_ne_bytes()); // split_depth
+            }
+            data
+        };
+        queue.write_buffer(&csm_cascades_buffer, 0, &cascade_init);
 
         // Dummy CSM cascade shadow texture array (binding 6)
         let csm_shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -565,48 +611,11 @@ impl Renderer {
             }],
         });
 
-        // -- Create merged material + texture bind group layout --
-        let material_texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Material + Texture Bind Group Layout"),
-                entries: &[
-                    // Material uniform (binding 0)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                    // Albedo texture (binding 1)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    // Albedo sampler (binding 2)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-
         // -- Render pipeline --
         let shader_source = include_str!("../../../assets/shaders/basic.wgsl");
         let render_pipeline = pipeline::create_render_pipeline(
             &device,
-            format,
+            wgpu::TextureFormat::Rgba16Float,
             &camera_bind_group_layout,
             &material_texture_bind_group_layout,
             &lighting_bind_group_layout,
@@ -665,6 +674,8 @@ impl Renderer {
             lighting_bind_group,
             lighting_bind_group_layout,
             light_uniform,
+            dummy_cascade_shadow_view: csm_shadow_view,
+            dummy_cascade_buffer: csm_cascades_buffer,
             default_material,
             default_texture,
             default_material_texture_bind_group,
@@ -830,6 +841,18 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(shadow_depth_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.dummy_cascade_buffer,
+                        offset: 0,
+                        size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.dummy_cascade_shadow_view),
                 },
             ],
         });
@@ -1253,8 +1276,8 @@ texture: &'static wgpu::BindGroup,
             pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
         for batch in batches.values() {
-            // Use the batch's material texture bind group
-            pass.set_bind_group(1, batch.texture, &[]);
+            // Use the combined material + texture bind group
+            pass.set_bind_group(1, &self.default_material_texture_bind_group, &[]);
             pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
             pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 

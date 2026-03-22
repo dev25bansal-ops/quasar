@@ -63,7 +63,7 @@ fn fs_ssao(in: VertexOutput) -> @location(0) vec4<f32> {
     let tbn = mat3x3<f32>(tangent, bitangent, normal);
 
     var occlusion = 0.0;
-    let kernel_size = int(params.kernel_size);
+    let kernel_size = i32(params.kernel_size);
 
     for (var i = 0; i < 64; i++) {
         if (i >= kernel_size) {
@@ -77,7 +77,7 @@ fn fs_ssao(in: VertexOutput) -> @location(0) vec4<f32> {
         let sample_depth = textureSample(t_depth, s_source, sample_uv).r;
 
         let range_check = smoothstep(0.0, 1.0, params.radius / abs(position.z - sample_depth));
-        occlusion += (sample_depth >= sample_pos.z + params.bias ? 1.0 : 0.0) * range_check;
+        occlusion += select(0.0, 1.0, sample_depth >= sample_pos.z + params.bias) * range_check;
     }
 
     occlusion = 1.0 - (occlusion / f32(kernel_size));

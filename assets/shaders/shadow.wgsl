@@ -33,5 +33,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     return out;
 }
 
-// No fragment shader needed - depth-only pass
-// Depth is written by the rasterizer, no color output required
+// Empty fragment shader for depth-only pass
+@fragment
+fn fs_main(in: VertexOutput) {}

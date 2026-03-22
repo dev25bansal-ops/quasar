@@ -213,6 +213,10 @@ pub struct LightsUniform {
     pub _padding: [u32; 3],
     /// Ambient color (rgb) and intensity (a).
     pub ambient: [f32; 4],
+    /// Additional padding for WGSL alignment.
+    pub _padding2: [f32; 4],
+    /// Additional padding for WGSL struct alignment.
+    pub _padding3: [f32; 4],
 }
 
 impl Default for LightsUniform {
@@ -227,6 +231,8 @@ impl Default for LightsUniform {
             count: 0,
             _padding: [0; 3],
             ambient: [0.1, 0.1, 0.1, 1.0],
+            _padding2: [0.0; 4],
+            _padding3: [0.0; 4],
         }
     }
 }

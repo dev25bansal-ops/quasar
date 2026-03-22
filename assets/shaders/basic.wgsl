@@ -4,18 +4,12 @@
 // group(0) = camera (view_proj + model + normal_matrix)
 // group(1) = material + texture (base_color, roughness, metallic, emissive, albedo texture + sampler)
 // group(2) = lighting (lights storage + shadow data)
-// group(3) = instance data (storage buffer with model matrices for GPU instancing)
 
 struct CameraUniform {
     view_proj: mat4x4<f32>,
     model: mat4x4<f32>,
     normal_matrix: mat4x4<f32>,
     prev_view_proj: mat4x4<f32>,
-};
-
-struct InstanceData {
-    model: mat4x4<f32>,
-    normal_matrix: mat4x4<f32>,
 };
 
 struct LightData {
@@ -26,10 +20,11 @@ params: vec4<f32>,
 };
 
 struct LightsUniform {
-lights: array<LightData, 256>,
-count: u32,
-_pad: vec3<u32>,
-ambient: vec4<f32>,
+    lights: array<LightData, 256>,
+    count: u32,
+    _pad: vec3<u32>,
+    ambient: vec4<f32>,
+    _pad2: vec4<f32>,
 };
 
 struct MaterialUniform {
@@ -80,13 +75,6 @@ var<storage, read> cascades: array<CascadeUniform, 4>;
 @group(2) @binding(6)
 var t_cascade_shadow: texture_depth_2d_array;
 
-// Instance data for GPU instancing (optional, used when gpu_driven_culling is enabled)
-@group(3) @binding(0)
-var<storage, read> instances: array<InstanceData>;
-
-// Push constant for instance index (used with GPU-driven indirect rendering)
-var<push_constant> instance_index: u32;
-
 /// Select the cascade index for the given view-space depth.
 fn select_cascade(view_depth: f32) -> u32 {
     for (var i = 0u; i < CASCADE_COUNT - 1u; i++) {
@@ -130,8 +118,6 @@ struct VertexInput {
     @location(1) normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
-    // Instance ID for GPU instancing (built-in)
-    @builtin(instance_index) instance_id: u32,
 };
 
 struct VertexOutput {
@@ -149,8 +135,6 @@ struct VertexOutput {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    // Support both instanced and non-instanced rendering
-    // When instance_id > 0 and instances buffer is bound, use instance data
     let model = camera.model;
     let normal_mat = camera.normal_matrix;
 
@@ -215,9 +199,11 @@ fn calculate_shadow(shadow_pos: vec4<f32>) -> f32 {
     let search_radius = light_size * texel * 8.0;
     var blocker_sum = 0.0;
     var blocker_count = 0.0;
+    let shadow_dims = textureDimensions(t_shadow);
     for (var i = 0u; i < 16u; i++) {
         let sample_uv = uv + poisson[i] * search_radius;
-        let d = textureSampleLevel(t_shadow, s_shadow_depth, sample_uv, 0.0);
+        let texel_coords = vec2<i32>(sample_uv * vec2<f32>(shadow_dims));
+        let d = textureLoad(t_shadow, texel_coords, 0);
         if (d < shadow_depth) {
             blocker_sum += d;
             blocker_count += 1.0;
@@ -252,12 +238,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let base = tex_color * material.base_color * in.color;
 
     let n = normalize(in.world_normal);
-    let pcss_shadow = calculate_shadow(in.shadow_position);
-    let csm_shadow = calculate_cascade_shadow(in.world_position, in.view_depth);
-    // Use CSM for pixels inside cascade frustums, fall back to PCSS for distant pixels
-    // is_in_cascade is true when view_depth is within any cascade split depth
-    let is_in_cascade = in.view_depth < cascades[CASCADE_COUNT - 1u].split_depth;
-    let shadow = select(pcss_shadow, csm_shadow, is_in_cascade);
+    // Simplified: no shadow calculations
+    let shadow = 1.0;
     let ambient = lights.ambient.rgb * lights.ambient.a;
 
     var diffuse_total = vec3<f32>(0.0);

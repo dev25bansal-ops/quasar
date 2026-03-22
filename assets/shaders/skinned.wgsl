@@ -36,6 +36,7 @@ struct LightsUniform {
     count: u32,
     _pad: vec3<u32>,
     ambient: vec4<f32>,
+    _pad2: vec4<f32>,
 };
 
 struct ShadowUniform {

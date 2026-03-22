@@ -72,17 +72,17 @@ fn fs_fxaa(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir_reduce = max((luma_nw + luma_ne + luma_sw + luma_se) * 0.25 * FXAA_REDUCE_MUL, FXAA_REDUCE_MIN);
     let rcp_dir_min = 1.0 / (min(abs(dir.x), abs(dir.y)) + dir_reduce);
 
-    let dir = min(vec2<f32>(FXAA_SPAN_MAX), max(vec2<f32>(-FXAA_SPAN_MAX), dir * rcp_dir_min)) * texel_size;
+    let dir_scaled = min(vec2<f32>(FXAA_SPAN_MAX), max(vec2<f32>(-FXAA_SPAN_MAX), dir * rcp_dir_min)) * texel_size;
 
     let rgb_a = 0.5 * (
-        textureSample(t_source, s_source, in.uv + dir * 1.0 / 3.0 - 4.0).rgb +
-        textureSample(t_source, s_source, in.uv + dir * 2.0 / 3.0 - 4.0).rgb
+        textureSample(t_source, s_source, in.uv + dir_scaled * 1.0 / 3.0 - 4.0).rgb +
+        textureSample(t_source, s_source, in.uv + dir_scaled * 2.0 / 3.0 - 4.0).rgb
     );
     let rgb_b = rgb_a * 0.25 + 0.25 * (
-        textureSample(t_source, s_source, in.uv + dir * -0.5).rgb +
-        textureSample(t_source, s_source, in.uv + dir * 0.5).rgb +
-        textureSample(t_source, s_source, in.uv + dir * -1.0).rgb +
-        textureSample(t_source, s_source, in.uv + dir * 1.0).rgb
+        textureSample(t_source, s_source, in.uv + dir_scaled * -0.5).rgb +
+        textureSample(t_source, s_source, in.uv + dir_scaled * 0.5).rgb +
+        textureSample(t_source, s_source, in.uv + dir_scaled * -1.0).rgb +
+        textureSample(t_source, s_source, in.uv + dir_scaled * 1.0).rgb
     );
 
     let luma_b = dot(rgb_b, vec3<f32>(0.299, 0.587, 0.114));

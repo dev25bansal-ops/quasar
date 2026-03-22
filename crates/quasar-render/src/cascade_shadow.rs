@@ -159,7 +159,7 @@ impl CascadeShadowMap {
         let cascade_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cascade Data Buffer"),
             size: (CASCADE_COUNT * std::mem::size_of::<CascadeUniform>()) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 

@@ -272,10 +272,7 @@ impl GpuProfiler {
     }
 
     pub fn request_results(&mut self) {
-        if let Some(read_buffer) = self.read_buffers.first() {
-            let slice = read_buffer.slice(..);
-            slice.map_async(wgpu::MapMode::Read, |_| {});
-        }
+        // Mapping is now done synchronously in read_results
     }
 
     pub fn read_results(
@@ -287,9 +284,21 @@ impl GpuProfiler {
             return None;
         }
 
-        device.poll(wgpu::Maintain::Poll);
-
         if let Some(read_buffer) = self.read_buffers.first() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let slice = read_buffer.slice(..);
+            slice.map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+            device.poll(wgpu::Maintain::Wait);
+
+            match rx.recv() {
+                Ok(Ok(())) => {}
+                _ => {
+                    return None;
+                }
+            }
+
             let slice = read_buffer.slice(..);
             let mapped = slice.get_mapped_range();
             let timestamps: &[u64] = bytemuck::cast_slice(&mapped);
