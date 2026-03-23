@@ -549,7 +549,7 @@ impl AudioSource {
 
 /// ECS component for the audio listener (usually the camera/player).
 ///
-/// Attach to the entity whose [`Transform`] represents the player / camera.
+/// Attach to the entity whose `Transform` represents the player / camera.
 #[derive(Debug, Clone, Copy)]
 pub struct AudioListener;
 
@@ -727,5 +727,184 @@ impl MusicStemSystem {
                 stem.active = false;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_audio_bus_default() {
+        let bus = AudioBus::default();
+        assert_eq!(bus, AudioBus::Sfx);
+    }
+
+    #[test]
+    fn test_audio_bus_equality() {
+        assert_eq!(AudioBus::Master, AudioBus::Master);
+        assert_eq!(
+            AudioBus::Custom("test".to_string()),
+            AudioBus::Custom("test".to_string())
+        );
+        assert_ne!(AudioBus::Master, AudioBus::Music);
+    }
+
+    #[test]
+    fn test_audio_bus_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(AudioBus::Master);
+        set.insert(AudioBus::Music);
+        set.insert(AudioBus::Sfx);
+        assert_eq!(set.len(), 3);
+    }
+
+    #[test]
+    fn test_audio_source_new() {
+        let source = AudioSource::new("test.wav");
+        assert_eq!(source.path, "test.wav");
+        assert!(!source.looping);
+        assert_eq!(source.volume, 1.0);
+        assert!(source.playing_id.is_none());
+        assert_eq!(source.bus, AudioBus::Sfx);
+        assert!(!source.spatial);
+        assert_eq!(source.ref_distance, 1.0);
+        assert_eq!(source.max_distance, 50.0);
+        assert_eq!(source.rolloff_factor, 1.0);
+    }
+
+    #[test]
+    fn test_audio_source_builder() {
+        let source = AudioSource::new("test.wav")
+            .looped()
+            .with_volume(0.5)
+            .with_bus(AudioBus::Music)
+            .spatial()
+            .with_ref_distance(2.0)
+            .with_max_distance(100.0)
+            .with_rolloff(0.5);
+
+        assert!(source.looping);
+        assert_eq!(source.volume, 0.5);
+        assert_eq!(source.bus, AudioBus::Music);
+        assert!(source.spatial);
+        assert_eq!(source.ref_distance, 2.0);
+        assert_eq!(source.max_distance, 100.0);
+        assert_eq!(source.rolloff_factor, 0.5);
+    }
+
+    #[test]
+    fn test_audio_system_new() {
+        let system = AudioSystem::new();
+        assert!(system.bus_manager.is_some() || !system.is_available());
+    }
+
+    #[test]
+    fn test_audio_system_active_sounds() {
+        let system = AudioSystem::new();
+        assert_eq!(system.active_sounds(), 0);
+    }
+
+    #[test]
+    fn test_room_acoustics_default() {
+        let room = RoomAcoustics::default();
+        assert_eq!(room.half_extents, [5.0, 3.0, 5.0]);
+        assert_eq!(room.absorption, 0.3);
+        assert_eq!(room.diffusion, 0.5);
+    }
+
+    #[test]
+    fn test_room_acoustics_rt60() {
+        let room = RoomAcoustics {
+            half_extents: [10.0, 5.0, 10.0],
+            absorption: 0.2,
+            ..Default::default()
+        };
+        let rt60 = room.estimated_rt60();
+        assert!(rt60 > 0.0);
+        assert!(rt60 < 10.0);
+    }
+
+    #[test]
+    fn test_room_acoustics_early_reflection() {
+        let room = RoomAcoustics {
+            half_extents: [5.0, 5.0, 5.0],
+            ..Default::default()
+        };
+        let delay = room.early_reflection_delay_ms();
+        assert!(delay > 0.0);
+        assert!(delay < 100.0);
+    }
+
+    #[test]
+    fn test_music_stem_new() {
+        let stem = MusicStem::new("drums", "music/drums.wav");
+        assert_eq!(stem.name, "drums");
+        assert_eq!(stem.path, "music/drums.wav");
+        assert_eq!(stem.volume, 0.0);
+        assert_eq!(stem.target_volume, 0.0);
+        assert_eq!(stem.fade_speed, 1.0);
+        assert!(!stem.active);
+    }
+
+    #[test]
+    fn test_music_stem_system_new() {
+        let system = MusicStemSystem::new();
+        assert!(system.stems.is_empty());
+        assert!(system.current_state.is_empty());
+        assert!(system.state_map.is_empty());
+        assert_eq!(system.bpm, 120.0);
+    }
+
+    #[test]
+    fn test_music_stem_system_add_state() {
+        let mut system = MusicStemSystem::new();
+        system.add_state("combat", vec!["drums".to_string(), "bass".to_string()]);
+
+        assert!(system.state_map.contains_key("combat"));
+        let stems = system.state_map.get("combat").unwrap();
+        assert_eq!(stems.len(), 2);
+        assert!(stems.contains(&"drums".to_string()));
+        assert!(stems.contains(&"bass".to_string()));
+    }
+
+    #[test]
+    fn test_music_stem_system_transition() {
+        let mut system = MusicStemSystem::new();
+        system.stems.push(MusicStem::new("drums", "drums.wav"));
+        system.stems.push(MusicStem::new("melody", "melody.wav"));
+        system.add_state("combat", vec!["drums".to_string()]);
+
+        system.transition_to("combat");
+
+        assert_eq!(system.current_state, "combat");
+        assert_eq!(system.stems[0].target_volume, 1.0);
+        assert!(system.stems[0].active);
+        assert_eq!(system.stems[1].target_volume, 0.0);
+    }
+
+    #[test]
+    fn test_music_stem_system_update_fade() {
+        let mut system = MusicStemSystem::new();
+        let mut stem = MusicStem::new("drums", "drums.wav");
+        stem.target_volume = 1.0;
+        stem.fade_speed = 2.0;
+        system.stems.push(stem);
+
+        system.update(0.5);
+
+        assert!(system.stems[0].volume > 0.0);
+        assert!(system.stems[0].volume <= 1.0);
+    }
+
+    #[test]
+    fn test_music_stem_system_beat_timer() {
+        let mut system = MusicStemSystem::new();
+        system.bpm = 60.0;
+
+        system.update(1.0);
+
+        assert!(system.beat_timer < 1.0);
     }
 }

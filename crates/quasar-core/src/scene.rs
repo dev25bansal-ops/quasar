@@ -351,4 +351,130 @@ mod tests {
         assert!((gc_global.translation().x - 15.0).abs() < eps);
         assert!((gc_global.translation().y - 3.0).abs() < eps);
     }
+
+    #[test]
+    fn scene_graph_new() {
+        let graph = SceneGraph::new();
+        assert!(graph.parents.is_empty());
+        assert!(graph.children.is_empty());
+        assert!(graph.names.is_empty());
+    }
+
+    #[test]
+    fn scene_graph_default() {
+        let graph = SceneGraph::default();
+        assert!(graph.parents.is_empty());
+    }
+
+    #[test]
+    fn has_children_false_when_no_children() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        let graph = SceneGraph::new();
+        assert!(!graph.has_children(entity));
+    }
+
+    #[test]
+    fn has_children_true_when_has_children() {
+        let mut world = World::new();
+        let parent = world.spawn();
+        let child = world.spawn();
+        let mut graph = SceneGraph::new();
+        graph.set_parent(child, parent);
+        assert!(graph.has_children(parent));
+    }
+
+    #[test]
+    fn children_empty_for_entity_without_parent() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        let graph = SceneGraph::new();
+        assert!(graph.children(entity).is_empty());
+    }
+
+    #[test]
+    fn ancestors_empty_for_root() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        let graph = SceneGraph::new();
+        let ancestors = graph.ancestors(entity);
+        assert!(ancestors.is_empty());
+    }
+
+    #[test]
+    fn ancestors_returns_chain() {
+        let mut world = World::new();
+        let root = world.spawn();
+        let child = world.spawn();
+        let grandchild = world.spawn();
+
+        let mut graph = SceneGraph::new();
+        graph.set_parent(child, root);
+        graph.set_parent(grandchild, child);
+
+        let ancestors = graph.ancestors(grandchild);
+        assert_eq!(ancestors.len(), 2);
+        assert_eq!(ancestors[0], child);
+        assert_eq!(ancestors[1], root);
+    }
+
+    #[test]
+    fn set_name_updates_lookups() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        let mut graph = SceneGraph::new();
+
+        graph.set_name(entity, "Entity1");
+        assert_eq!(graph.name(entity), Some("Entity1"));
+        assert_eq!(graph.find_by_name("Entity1"), Some(entity));
+
+        graph.set_name(entity, "Entity2");
+        assert_eq!(graph.name(entity), Some("Entity2"));
+        assert_eq!(graph.find_by_name("Entity2"), Some(entity));
+        assert_eq!(graph.find_by_name("Entity1"), None);
+    }
+
+    #[test]
+    fn roots_returns_entities_without_parents() {
+        let mut world = World::new();
+        let root1 = world.spawn();
+        let root2 = world.spawn();
+        let child = world.spawn();
+
+        let mut graph = SceneGraph::new();
+        graph.set_parent(child, root1);
+
+        let all_entities = vec![root1, root2, child];
+        let roots = graph.roots(&all_entities);
+        assert_eq!(roots.len(), 2);
+        assert!(roots.contains(&root1));
+        assert!(roots.contains(&root2));
+    }
+
+    #[test]
+    fn re_parenting_removes_old_parent() {
+        let mut world = World::new();
+        let parent1 = world.spawn();
+        let parent2 = world.spawn();
+        let child = world.spawn();
+
+        let mut graph = SceneGraph::new();
+        graph.set_parent(child, parent1);
+        assert_eq!(graph.parent(child), Some(parent1));
+        assert_eq!(graph.children(parent1).len(), 1);
+
+        graph.set_parent(child, parent2);
+        assert_eq!(graph.parent(child), Some(parent2));
+        assert_eq!(graph.children(parent1).len(), 0);
+        assert_eq!(graph.children(parent2).len(), 1);
+    }
+
+    #[test]
+    fn descendants_empty_for_leaf() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        let graph = SceneGraph::new();
+        let desc = graph.descendants(entity);
+        assert!(desc.is_empty());
+    }
 }

@@ -143,7 +143,7 @@ impl Default for AmbientLight {
 }
 
 /// Uniform structure for passing light data to shaders.
-/// Matches the layout expected by the WGSL shader (4 × vec4<f32>).
+/// Matches the layout expected by the WGSL shader (4 × `vec4<f32>`).
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct LightData {

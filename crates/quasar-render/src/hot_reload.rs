@@ -1,6 +1,6 @@
 //! Hot-reload system — rebuilds GPU resources when asset files change.
 //!
-//! Consumes [`AssetReloadedEvent`]s produced by [`AssetServer::poll_events`]
+//! Consumes `AssetReloadedEvent`s produced by the asset server's `poll_events`
 //! and recompiles the affected shader pipelines / re-uploads textures.
 
 use std::collections::HashMap;

@@ -76,10 +76,7 @@ impl ColliderShape {
                 scale,
             } => {
                 let matrix = nalgebra::DMatrix::from_row_slice(*nrows, *ncols, heights);
-                SharedShape::heightfield(
-                    matrix,
-                    nalgebra::vector![scale[0], scale[1], scale[2]],
-                )
+                SharedShape::heightfield(matrix, nalgebra::vector![scale[0], scale[1], scale[2]])
             }
         }
     }
@@ -142,5 +139,101 @@ mod tests {
     fn sphere_shape_converts() {
         let shape = ColliderShape::Sphere { radius: 0.5 };
         let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn capsule_shape_converts() {
+        let shape = ColliderShape::Capsule {
+            half_height: 1.0,
+            radius: 0.5,
+        };
+        let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn cylinder_shape_converts() {
+        let shape = ColliderShape::Cylinder {
+            half_height: 1.0,
+            radius: 0.5,
+        };
+        let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn cone_shape_converts() {
+        let shape = ColliderShape::Cone {
+            half_height: 1.0,
+            radius: 0.5,
+        };
+        let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn halfspace_shape_converts() {
+        let shape = ColliderShape::HalfSpace;
+        let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn heightfield_shape_converts() {
+        let shape = ColliderShape::HeightField {
+            nrows: 2,
+            ncols: 2,
+            heights: vec![0.0, 1.0, 1.0, 2.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        let _rapier = shape.to_rapier();
+    }
+
+    #[test]
+    fn collider_component_new() {
+        let handle = rapier3d::prelude::ColliderHandle::from_raw_parts(0, 0);
+        let component = ColliderComponent::new(handle);
+        assert_eq!(component.handle, handle);
+    }
+
+    #[test]
+    fn collider_component_clone() {
+        let handle = rapier3d::prelude::ColliderHandle::from_raw_parts(1, 0);
+        let component = ColliderComponent::new(handle);
+        let cloned = component.clone();
+        assert_eq!(cloned.handle, handle);
+    }
+
+    #[test]
+    fn pending_collider_new_static() {
+        let pending =
+            PendingCollider::new_static(ColliderShape::Sphere { radius: 1.0 }, [0.0, 0.0, 0.0]);
+
+        assert!(pending.parent_body.is_none());
+        assert_eq!(pending.position, [0.0, 0.0, 0.0]);
+        assert_eq!(pending.restitution, 0.3);
+        assert_eq!(pending.friction, 0.5);
+    }
+
+    #[test]
+    fn pending_collider_with_body() {
+        let body_handle = rapier3d::prelude::RigidBodyHandle::from_raw_parts(0, 0);
+        let pending = PendingCollider::with_body(
+            ColliderShape::Box {
+                half_extents: [1.0, 1.0, 1.0],
+            },
+            body_handle,
+        );
+
+        assert!(pending.parent_body.is_some());
+        assert_eq!(pending.parent_body.unwrap(), body_handle);
+    }
+
+    #[test]
+    fn collider_shape_clone() {
+        let shape = ColliderShape::Sphere { radius: 1.0 };
+        let cloned = shape.clone();
+
+        if let ColliderShape::Sphere { radius } = cloned {
+            assert_eq!(radius, 1.0);
+        } else {
+            panic!("Expected Sphere shape");
+        }
     }
 }

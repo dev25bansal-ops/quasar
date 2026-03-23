@@ -707,7 +707,7 @@ impl RenderGraph {
 
     /// Split the compiled pass order into per-queue command buffer groups.
     ///
-    /// Returns a list of (PassQueue, Vec<PassId>) submit groups in order.
+    /// Returns a list of (PassQueue, `Vec<PassId>`) submit groups in order.
     pub fn split_by_queue(
         &self,
         order: &[PassId],

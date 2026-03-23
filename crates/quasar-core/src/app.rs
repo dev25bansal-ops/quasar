@@ -110,8 +110,8 @@ impl App {
     ///
     /// Creates a [`ParallelSchedule`] that runs systems with declared
     /// component/resource access concurrently when safe to do so.
-    /// Systems added via [`add_parallel_system`] use this schedule;
-    /// systems added via [`add_system`] continue to run sequentially.
+    /// Systems added via `add_parallel_system` use this schedule;
+    /// systems added via `add_system` continue to run sequentially.
     pub fn enable_parallel(&mut self) -> &mut Self {
         if self.parallel_schedule.is_none() {
             self.parallel_schedule = Some(ParallelSchedule::new());
@@ -121,7 +121,7 @@ impl App {
 
     /// Add a system with declared access to the parallel schedule.
     ///
-    /// Call [`enable_parallel`] first. If the parallel schedule is not
+    /// Call `enable_parallel` first. If the parallel schedule is not
     /// enabled, the system's node is silently dropped.
     pub fn add_parallel_system(&mut self, stage: SystemStage, node: SystemNode) -> &mut Self {
         if let Some(ps) = &mut self.parallel_schedule {

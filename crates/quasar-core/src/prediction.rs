@@ -1,4 +1,4 @@
-﻿//! Client-side prediction (GGPO-style).
+//! Client-side prediction (GGPO-style).
 //!
 //! The client applies inputs immediately for responsive gameplay.  The server
 //! processes the same inputs and periodically confirms state.  On mismatch the
@@ -7,7 +7,7 @@
 //!
 //! Entity interpolation smooths movement for non-player entities.
 //!
-//! Requires [`PhysicsSnapshot`] from `quasar-physics` for state save/restore.
+//! Requires `PhysicsSnapshot` from `quasar-physics` for state save/restore.
 
 use std::collections::VecDeque;
 
@@ -127,12 +127,18 @@ impl EntityInterpolator {
             (None, None) => None,
             (None, Some(_after)) => {
                 // Only future snapshots - use the earliest.
-                let earliest = snapshots.iter().min_by_key(|s| s.tick).unwrap_or(&snapshots[0]);
+                let earliest = snapshots
+                    .iter()
+                    .min_by_key(|s| s.tick)
+                    .unwrap_or(&snapshots[0]);
                 Some((earliest.position, earliest.rotation, earliest.scale))
             }
             (Some(_before), None) => {
                 // Only past snapshots - use the latest.
-                let latest = snapshots.iter().max_by_key(|s| s.tick).unwrap_or(&snapshots[0]);
+                let latest = snapshots
+                    .iter()
+                    .max_by_key(|s| s.tick)
+                    .unwrap_or(&snapshots[0]);
                 Some((latest.position, latest.rotation, latest.scale))
             }
             (Some(before), Some(after)) => {

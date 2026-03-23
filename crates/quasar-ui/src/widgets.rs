@@ -1,6 +1,6 @@
-//! High-level convenience widgets built on top of [`UiTree`].
+//! High-level convenience widgets built on top of `UiTree`.
 //!
-//! Each widget is a helper that creates one or more [`UiNode`]s with
+//! Each widget is a helper that creates one or more `UiNode`s with
 //! appropriate styles and interaction handling.
 
 use crate::style::{Color, FlexDirection, SizeDimension, UiStyle};

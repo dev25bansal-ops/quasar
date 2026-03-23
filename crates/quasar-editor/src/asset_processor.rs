@@ -108,8 +108,8 @@ impl AssetImporter {
         log::info!("Processing asset {:?} ({:?})", asset_path, kind);
 
         // Load or create metadata
-        let mut meta = if self.metadata.contains_key(asset_path) {
-            self.metadata.get(asset_path).cloned().unwrap()
+        let mut meta = if let Some(existing) = self.metadata.get(asset_path).cloned() {
+            existing
         } else {
             AssetMeta::from_source_file(asset_path)?
         };

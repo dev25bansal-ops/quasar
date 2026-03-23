@@ -15,6 +15,7 @@ members = [
     "crates/quasar-build",
     "crates/quasar-derive",
     "crates/quasar-lobby",
+    "crates/quasar-network",
     "examples/spinning_cube",
     "examples/showcase",
     "examples/physics_sandbox",
@@ -47,6 +48,7 @@ quasar-mobile = { path = "crates/quasar-mobile" }
 quasar-build = { path = "crates/quasar-build" }
 quasar-derive = { path = "crates/quasar-derive" }
 quasar-lobby = { path = "crates/quasar-lobby" }
+quasar-network = { path = "crates/quasar-network" }
 
 # Rendering & windowing
 wgpu = "24"
@@ -81,7 +83,7 @@ rapier3d = { version = "0.22", features = ["simd-stable"] }
 kira = "0.9"
 
 # Scripting
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "send"] }
 
 # Editor GUI
 egui = "0.31"
@@ -115,7 +117,7 @@ rustc-hash = "1"
 smallvec = { version = "1", features = ["serde"] }
 
 # Serialization
-bincode = "1"
+bincode = { version = "2", features = ["serde"] }
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }

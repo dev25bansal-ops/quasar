@@ -41,6 +41,27 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssetError {
+    StillLoading,
+    LoadFailed(String),
+    NotFound(String),
+    InvalidHandle(String),
+}
+
+impl std::fmt::Display for AssetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetError::StillLoading => write!(f, "Asset is still loading"),
+            AssetError::LoadFailed(e) => write!(f, "Asset failed to load: {}", e),
+            AssetError::NotFound(p) => write!(f, "Asset not found: {}", p),
+            AssetError::InvalidHandle(h) => write!(f, "Invalid asset handle: {}", h),
+        }
+    }
+}
+
+impl std::error::Error for AssetError {}
+
 /// Loading state for async assets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadingState<T> {
@@ -65,11 +86,22 @@ impl<T> LoadingState<T> {
         matches!(self, LoadingState::Failed(_))
     }
 
-    pub fn unwrap(self) -> T {
+    pub fn unwrap(self) -> Result<T, AssetError> {
+        match self {
+            LoadingState::Ready(v) => Ok(v),
+            LoadingState::Pending => Err(AssetError::StillLoading),
+            LoadingState::Failed(e) => Err(AssetError::LoadFailed(e)),
+        }
+    }
+
+    pub fn unwrap_or_default(self) -> T
+    where
+        T: Default,
+    {
         match self {
             LoadingState::Ready(v) => v,
-            LoadingState::Pending => panic!("called unwrap on Pending state"),
-            LoadingState::Failed(e) => panic!("called unwrap on Failed state: {}", e),
+            LoadingState::Pending => T::default(),
+            LoadingState::Failed(_) => T::default(),
         }
     }
 

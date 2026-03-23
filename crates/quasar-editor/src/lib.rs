@@ -5,7 +5,7 @@
 //! Provides a runtime GUI overlay for inspecting entities, viewing logs,
 //! and tweaking component values — press F12 to toggle.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod asset_browser;
 pub mod asset_metadata;
@@ -236,7 +236,9 @@ impl TimelinePanel {
                                             + (t - self.scroll_offset) * self.zoom;
                                         let dist =
                                             ((pos.x - kx).powi(2) + (pos.y - cy).powi(2)).sqrt();
-                                        if dist < 6.0 && (best.is_none() || dist < best.unwrap().2)
+                                        if dist < 6.0
+                                            && (best.is_none()
+                                                || dist < best.as_ref().map_or(f32::MAX, |b| b.2))
                                         {
                                             best = Some((ch_idx, kf_idx, dist));
                                         }

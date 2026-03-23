@@ -31,25 +31,41 @@ pub struct ScriptingResource {
 
 impl ScriptingResource {
     pub fn new() -> Self {
-        let engine = ScriptEngine::new().unwrap_or_else(|e| {
-            log::error!("failed to create Lua scripting engine: {}", e);
-            panic!("failed to create Lua scripting engine: {}", e);
+        let engine = match ScriptEngine::new() {
+            Ok(e) => e,
+            Err(e) => {
+                log::error!("Failed to create Lua scripting engine: {}", e);
+                return Self::fallback();
+            }
+        };
+
+        let entity_scripts_key = engine.lua().ok().and_then(|lua| {
+            bridge::register_bridge(&lua).ok()?;
+            lua.create_table()
+                .ok()
+                .and_then(|t| lua.create_registry_value(t).ok())
         });
-        bridge::register_bridge(engine.lua()).unwrap_or_else(|e| {
-            log::error!("failed to register Lua bridge: {}", e);
-            panic!("failed to register Lua bridge: {}", e);
-        });
-        let entity_scripts_key = engine
-            .lua()
-            .create_table()
-            .and_then(|t| engine.lua().create_registry_value(t))
-            .ok();
+
         Self {
             engine,
             component_registry: component_registry::default_registry(),
             entity_scripts_key,
             watched_entity_scripts: Vec::new(),
         }
+    }
+
+    pub fn fallback() -> Self {
+        let engine = ScriptEngine::new_fallback();
+        Self {
+            engine,
+            component_registry: component_registry::default_registry(),
+            entity_scripts_key: None,
+            watched_entity_scripts: Vec::new(),
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.entity_scripts_key.is_some()
     }
 }
 
@@ -893,7 +909,6 @@ impl System for ScriptingSystem {
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
             p.begin_scope("scripting_update");
         }
-        // Read delta time from the Time resource.
         let dt = world
             .resource::<Time>()
             .map(|t| t.delta_seconds())
@@ -905,28 +920,31 @@ impl System for ScriptingSystem {
             .unwrap_or(0.0);
 
         // ── Phase 1: Serialize world state into Lua ────────────────
-        // We need a raw pointer to get the Lua state without holding a
-        // &mut World borrow (we need World for queries too).
-        // Safety: ScriptingSystem is single-threaded; we don't re-enter.
-        let lua_ptr: *const mlua::Lua = {
+        // Lock the Lua state and do all Lua operations while holding the lock.
+        // The MutexGuard derefs to &Lua for the helper methods.
+        {
             let Some(resource) = world.resource::<ScriptingResource>() else {
                 return;
             };
-            resource.engine.lua() as *const _
-        };
 
-        // SAFETY: We only use this pointer while `world` owns the resource.
-        let lua = unsafe { &*lua_ptr };
+            let Ok(lua) = resource.engine.lua() else {
+                log::error!("[scripting] Failed to lock Lua mutex");
+                return;
+            };
 
-        // Write dt, time, transforms, and input.
-        if let Ok(quasar) = lua.globals().get::<LuaTable>("quasar") {
-            let _ = quasar.set("_dt", dt);
-            let _ = quasar.set("_time", total_time);
+            // Write dt, time, transforms, and input.
+            if let Ok(quasar) = lua.globals().get::<LuaTable>("quasar") {
+                let _ = quasar.set("_dt", dt);
+                let _ = quasar.set("_time", total_time);
+            }
+
+            // SAFETY: We only read from world here, and lua is a MutexGuard.
+            // The helper methods take &World and &Lua, which is safe.
+            Self::write_transforms(&lua, world);
+            Self::write_input(&lua, world);
+            Self::write_component_data(&lua, world);
+            Self::write_events(&lua, world);
         }
-        Self::write_transforms(lua, world);
-        Self::write_input(lua, world);
-        Self::write_component_data(lua, world);
-        Self::write_events(lua, world);
 
         // ── Phase 2: Run Lua scripts ──────────────────────────────
         {
@@ -934,23 +952,14 @@ impl System for ScriptingSystem {
                 return;
             };
 
-            // Hot-reload check using file events.
             let _reloaded = resource.engine.hot_reload();
 
-            // Call the global `on_update(dt)` if it exists.
-            //
-            // **DEPRECATED** — The global `on_update(dt)` pattern is deprecated.
-            // Prefer attaching a `ScriptComponent` to an entity and defining
-            // `on_update(entity_id, dt)` in the per-entity behaviour table.
-            // If you need a "global" script, model it as a singleton entity
-            // with a `ScriptComponent`.  The global callback will be removed
-            // in a future release.
             if resource
                 .engine
                 .lua()
-                .globals()
-                .get::<LuaFunction>("on_update")
-                .is_ok()
+                .ok()
+                .and_then(|lua| lua.globals().get::<LuaFunction>("on_update").ok())
+                .is_some()
             {
                 use std::sync::Once;
                 static DEPRECATION_WARNING: Once = Once::new();
@@ -966,15 +975,43 @@ impl System for ScriptingSystem {
         }
 
         // ── Phase 2b: Per-entity script execution ─────────────────
-        //
-        // Entities with a ScriptComponent get their script loaded (once) and
-        // then their per-entity `on_update(entity_id, dt)` called every frame.
-        Self::run_entity_scripts(lua, world, dt);
+        {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            // Get raw pointer to Lua to avoid holding MutexGuard while accessing world
+            // SAFETY: We lock the mutex here and the guard lives until end of scope.
+            // We only use the pointer for the duration of this block, and we don't
+            // access the Lua state from any other thread during this time.
+            let lua_ptr: *const mlua::Lua = {
+                let Ok(lua) = resource.engine.lua() else {
+                    return;
+                };
+                &*lua as *const _
+            };
+            // SAFETY: The MutexGuard from above has been dropped, so we can now
+            // borrow world mutably. The pointer is valid because the Lua state
+            // lives in the ScriptingResource which is owned by world.
+            let lua = unsafe { &*lua_ptr };
+            Self::run_entity_scripts(lua, world, dt);
+        }
 
         // ── Phase 3: Apply queued commands ────────────────────────
-        let commands = Self::read_commands(lua);
-        if !commands.is_empty() {
-            Self::apply_commands(lua, world, commands);
+        {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            let lua_ptr: *const mlua::Lua = {
+                let Ok(lua) = resource.engine.lua() else {
+                    return;
+                };
+                &*lua as *const _
+            };
+            let lua = unsafe { &*lua_ptr };
+            let commands = Self::read_commands(lua);
+            if !commands.is_empty() {
+                Self::apply_commands(lua, world, commands);
+            }
         }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
             p.end_scope("scripting_update");

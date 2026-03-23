@@ -190,4 +190,131 @@ mod tests {
         }
         assert_eq!(Color::TRANSPARENT.a, 0.0);
     }
+
+    #[test]
+    fn color_clone() {
+        let c = Color::rgba(0.1, 0.2, 0.3, 0.4);
+        let cloned = c.clone();
+        assert_eq!(cloned, c);
+    }
+
+    #[test]
+    fn color_copy() {
+        let c = Color::RED;
+        let copied = c;
+        assert_eq!(copied, Color::RED);
+    }
+
+    #[test]
+    fn color_equality() {
+        assert_eq!(Color::WHITE, Color::WHITE);
+        assert_ne!(Color::WHITE, Color::BLACK);
+        assert_ne!(Color::RED, Color::GREEN);
+    }
+
+    #[test]
+    fn color_white_components() {
+        let c = Color::WHITE;
+        assert_eq!(c.r, 1.0);
+        assert_eq!(c.g, 1.0);
+        assert_eq!(c.b, 1.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_black_components() {
+        let c = Color::BLACK;
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_red_components() {
+        let c = Color::RED;
+        assert_eq!(c.r, 1.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_green_components() {
+        let c = Color::GREEN;
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 1.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_blue_components() {
+        let c = Color::BLUE;
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 1.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_yellow_components() {
+        let c = Color::YELLOW;
+        assert_eq!(c.r, 1.0);
+        assert_eq!(c.g, 1.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_cyan_components() {
+        let c = Color::CYAN;
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 1.0);
+        assert_eq!(c.b, 1.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_magenta_components() {
+        let c = Color::MAGENTA;
+        assert_eq!(c.r, 1.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 1.0);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_transparent_components() {
+        let c = Color::TRANSPARENT;
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 0.0);
+    }
+
+    #[test]
+    fn color_cornflower_blue_components() {
+        let c = Color::CORNFLOWER_BLUE;
+        assert!((c.r - 0.392).abs() < 1e-3);
+        assert!((c.g - 0.584).abs() < 1e-3);
+        assert!((c.b - 0.929).abs() < 1e-3);
+        assert_eq!(c.a, 1.0);
+    }
+
+    #[test]
+    fn color_to_array() {
+        let c = Color::rgba(0.5, 0.6, 0.7, 0.8);
+        let arr = c.to_array();
+        assert_eq!(arr, [0.5, 0.6, 0.7, 0.8]);
+    }
+
+    #[test]
+    fn color_from_u8_zero() {
+        let c = Color::from_u8(0, 0, 0, 0);
+        assert_eq!(c.r, 0.0);
+        assert_eq!(c.g, 0.0);
+        assert_eq!(c.b, 0.0);
+        assert_eq!(c.a, 0.0);
+    }
 }

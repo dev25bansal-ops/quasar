@@ -248,4 +248,87 @@ mod tests {
         let cascade = g.owned_recursive(owner);
         assert_eq!(cascade.len(), 2);
     }
+
+    #[test]
+    fn relation_graph_new() {
+        let g = RelationGraph::new();
+        assert!(g.forward.is_empty());
+    }
+
+    #[test]
+    fn has_nonexistent_relation() {
+        let g = RelationGraph::new();
+        let a = e(0);
+        let b = e(1);
+        assert!(!g.has::<ChildOf>(a, b));
+    }
+
+    #[test]
+    fn targets_empty_for_no_relations() {
+        let g = RelationGraph::new();
+        let a = e(0);
+        assert!(g.targets::<ChildOf>(a).is_empty());
+    }
+
+    #[test]
+    fn sources_empty_for_no_relations() {
+        let g = RelationGraph::new();
+        let a = e(0);
+        assert!(g.sources::<ChildOf>(a).is_empty());
+    }
+
+    #[test]
+    fn multiple_targets() {
+        let mut g = RelationGraph::new();
+        let child = e(0);
+        let parent1 = e(1);
+        let parent2 = e(2);
+        let parent3 = e(3);
+
+        // child has ChildOf relation to multiple parents
+        g.add::<ChildOf>(child, parent1);
+        g.add::<ChildOf>(child, parent2);
+        g.add::<ChildOf>(child, parent3);
+
+        let targets = g.targets::<ChildOf>(child);
+        assert_eq!(targets.len(), 3);
+    }
+
+    #[test]
+    fn multiple_relation_types() {
+        let mut g = RelationGraph::new();
+        let a = e(0);
+        let b = e(1);
+
+        g.add::<ChildOf>(a, b);
+        g.add::<Likes>(a, b);
+
+        assert!(g.has::<ChildOf>(a, b));
+        assert!(g.has::<Likes>(a, b));
+    }
+
+    #[test]
+    fn remove_nonexistent_relation() {
+        let mut g = RelationGraph::new();
+        let a = e(0);
+        let b = e(1);
+        g.remove::<Likes>(a, b);
+        assert!(!g.has::<Likes>(a, b));
+    }
+
+    #[test]
+    fn remove_entity_with_no_relations() {
+        let mut g = RelationGraph::new();
+        let a = e(0);
+        g.remove_entity(a);
+        assert!(g.forward.is_empty());
+    }
+
+    #[test]
+    fn owned_recursive_empty() {
+        let g = RelationGraph::new();
+        let owner = e(0);
+        let cascade = g.owned_recursive(owner);
+        assert!(cascade.is_empty());
+    }
 }

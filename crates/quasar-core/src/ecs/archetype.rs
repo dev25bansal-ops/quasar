@@ -585,6 +585,12 @@ impl ArchetypeGraph {
     pub fn all_archetypes(&self) -> impl Iterator<Item = &Archetype> {
         self.archetypes.values()
     }
+
+    /// Returns an iterator over all (ArchetypeId, Archetype) pairs.
+    /// Used for lazy query iteration without allocation.
+    pub fn archetypes_iter(&self) -> std::collections::hash_map::Iter<'_, ArchetypeId, Archetype> {
+        self.archetypes.iter()
+    }
 }
 
 impl Default for ArchetypeGraph {
@@ -631,5 +637,135 @@ mod tests {
 
         let arch_id = graph.get_or_create(&sig);
         assert_eq!(arch_id, 0);
+    }
+
+    #[test]
+    fn archetype_signature_new() {
+        let sig = ArchetypeSignature::new();
+        assert!(sig.component_types.is_empty());
+    }
+
+    #[test]
+    fn archetype_signature_contains_empty() {
+        let sig = ArchetypeSignature::new();
+        assert!(!sig.contains(&TypeId::of::<u32>()));
+    }
+
+    #[test]
+    fn archetype_signature_add_duplicate() {
+        let mut sig = ArchetypeSignature::new();
+        sig.add(TypeId::of::<u32>());
+        sig.add(TypeId::of::<u32>());
+        assert!(sig.contains(&TypeId::of::<u32>()));
+        assert_eq!(sig.component_types.len(), 1);
+    }
+
+    #[test]
+    fn archetype_signature_remove_not_present() {
+        let mut sig = ArchetypeSignature::new();
+        sig.remove(TypeId::of::<u32>());
+        assert!(!sig.contains(&TypeId::of::<u32>()));
+    }
+
+    #[test]
+    fn typed_column_new() {
+        let column = TypedColumn::<i32>::new();
+        assert!(column.data.is_empty());
+    }
+
+    #[test]
+    fn typed_column_push() {
+        let mut column = TypedColumn::<i32>::new();
+        column.push(42);
+        assert_eq!(column.data.len(), 1);
+        assert_eq!(column.data[0], 42);
+    }
+
+    #[test]
+    fn typed_column_get_valid() {
+        let mut column = TypedColumn::<i32>::new();
+        column.push(1);
+        column.push(2);
+        assert_eq!(*column.get(0).unwrap(), 1);
+        assert_eq!(*column.get(1).unwrap(), 2);
+    }
+
+    #[test]
+    fn typed_column_get_invalid() {
+        let column = TypedColumn::<i32>::new();
+        assert!(column.get(0).is_none());
+        assert!(column.get(999).is_none());
+    }
+
+    #[test]
+    fn typed_column_get_mut() {
+        let mut column = TypedColumn::<i32>::new();
+        column.push(1);
+        *column.get_mut(0).unwrap() = 42;
+        assert_eq!(column.data[0], 42);
+    }
+
+    #[test]
+    fn typed_column_swap_remove_first() {
+        let mut column = TypedColumn::<i32>::new();
+        column.push(1);
+        column.push(2);
+        column.push(3);
+        column.swap_remove_entry(0);
+        assert_eq!(column.data.len(), 2);
+        assert!(column.data.contains(&3));
+        assert!(column.data.contains(&2));
+    }
+
+    #[test]
+    fn typed_column_swap_remove_last() {
+        let mut column = TypedColumn::<i32>::new();
+        column.push(1);
+        column.push(2);
+        column.swap_remove_entry(1);
+        assert_eq!(column.data.len(), 1);
+        assert_eq!(column.data[0], 1);
+    }
+
+    #[test]
+    fn typed_column_len() {
+        let mut column = TypedColumn::<i32>::new();
+        assert_eq!(column.data.len(), 0);
+        column.push(1);
+        assert_eq!(column.data.len(), 1);
+        column.push(2);
+        assert_eq!(column.data.len(), 2);
+    }
+
+    #[test]
+    fn archetype_graph_get_or_create_multiple() {
+        let mut graph = ArchetypeGraph::new();
+
+        let mut sig1 = ArchetypeSignature::new();
+        sig1.add(TypeId::of::<u32>());
+
+        let mut sig2 = ArchetypeSignature::new();
+        sig2.add(TypeId::of::<String>());
+
+        let id1 = graph.get_or_create(&sig1);
+        let id2 = graph.get_or_create(&sig2);
+
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn archetype_graph_same_signature_same_id() {
+        let mut graph = ArchetypeGraph::new();
+
+        let mut sig1 = ArchetypeSignature::new();
+        sig1.add(TypeId::of::<u32>());
+
+        let mut sig2 = ArchetypeSignature::new();
+        sig2.add(TypeId::of::<u32>());
+
+        let id1 = graph.get_or_create(&sig1);
+        let id2 = graph.get_or_create(&sig2);
+
+        assert_eq!(id1, id2);
     }
 }

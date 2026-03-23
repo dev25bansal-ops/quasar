@@ -8,8 +8,8 @@
 use quasar_core::asset_server::DecompressedAsset;
 
 /// Staging belt that batches CPU→GPU texture uploads via mapped staging
-/// buffers. Call [`upload_texture`] for each decompressed asset, then
-/// submit the encoder and call [`finish`] to reclaim buffers.
+/// buffers. Call `upload_texture` for each decompressed asset, then
+/// submit the encoder and call `finish` to reclaim buffers.
 pub struct StagingBelt {
     chunk_size: u64,
     active_buffers: Vec<StagingChunk>,
@@ -108,7 +108,7 @@ impl StagingBelt {
     }
 
     /// Write decompressed RGBA data into a mapped staging buffer, then
-    /// use [`queue.write_texture`] for the upload.  This is a simpler
+    /// use `queue.write_texture` for the upload.  This is a simpler
     /// path that avoids manual buffer mapping.
     pub fn upload_texture_via_queue(
         &self,

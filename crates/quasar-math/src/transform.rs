@@ -207,4 +207,113 @@ mod tests {
         assert!(f.dot(u).abs() < 1e-6);
         assert!(r.dot(u).abs() < 1e-6);
     }
+
+    #[test]
+    fn transform_default_is_identity() {
+        let tf = Transform::default();
+        assert_eq!(tf.position, Vec3::ZERO);
+        assert_eq!(tf.rotation, Quat::IDENTITY);
+        assert_eq!(tf.scale, Vec3::ONE);
+    }
+
+    #[test]
+    fn transform_from_position_rotation() {
+        let pos = Vec3::new(1.0, 2.0, 3.0);
+        let rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_4);
+        let tf = Transform::from_position_rotation(pos, rot);
+
+        assert_eq!(tf.position, pos);
+        assert_eq!(tf.rotation, rot);
+        assert_eq!(tf.scale, Vec3::ONE);
+    }
+
+    #[test]
+    fn transform_clone() {
+        let tf = Transform::from_position(Vec3::new(1.0, 2.0, 3.0));
+        let cloned = tf.clone();
+        assert_eq!(cloned.position, tf.position);
+    }
+
+    #[test]
+    fn transform_copy() {
+        let tf = Transform::from_position(Vec3::new(1.0, 2.0, 3.0));
+        let copied = tf;
+        assert_eq!(copied.position, Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn global_transform_identity() {
+        let gt = GlobalTransform::IDENTITY;
+        assert_eq!(gt.matrix, Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn global_transform_default() {
+        let gt = GlobalTransform::default();
+        assert_eq!(gt.matrix, Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn global_transform_from_matrix() {
+        let mat = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        let gt = GlobalTransform::from_matrix(mat);
+        assert_eq!(gt.matrix, mat);
+    }
+
+    #[test]
+    fn global_transform_translation() {
+        let mat = Mat4::from_translation(Vec3::new(10.0, 20.0, 30.0));
+        let gt = GlobalTransform::from_matrix(mat);
+        let trans = gt.translation();
+        assert!((trans.x - 10.0).abs() < 1e-6);
+        assert!((trans.y - 20.0).abs() < 1e-6);
+        assert!((trans.z - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn global_transform_from_transform() {
+        let tf = Transform::from_position(Vec3::new(5.0, 10.0, 15.0));
+        let gt = GlobalTransform::from(tf);
+        let trans = gt.translation();
+        assert!((trans.x - 5.0).abs() < 1e-6);
+        assert!((trans.y - 10.0).abs() < 1e-6);
+        assert!((trans.z - 15.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn global_transform_clone() {
+        let gt = GlobalTransform::from_matrix(Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)));
+        let cloned = gt.clone();
+        assert_eq!(cloned.matrix, gt.matrix);
+    }
+
+    #[test]
+    fn transform_look_at() {
+        let mut tf = Transform::IDENTITY;
+        tf.look_at(Vec3::new(0.0, 0.0, -10.0), Vec3::Y);
+        // Forward should point towards -Z
+        let f = tf.forward();
+        assert!((f - Vec3::NEG_Z).length() < 0.1);
+    }
+
+    #[test]
+    fn transform_forward_identity() {
+        let tf = Transform::IDENTITY;
+        let f = tf.forward();
+        assert!((f - Vec3::NEG_Z).length() < 1e-6);
+    }
+
+    #[test]
+    fn transform_right_identity() {
+        let tf = Transform::IDENTITY;
+        let r = tf.right();
+        assert!((r - Vec3::X).length() < 1e-6);
+    }
+
+    #[test]
+    fn transform_up_identity() {
+        let tf = Transform::IDENTITY;
+        let u = tf.up();
+        assert!((u - Vec3::Y).length() < 1e-6);
+    }
 }

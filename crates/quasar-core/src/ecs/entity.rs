@@ -143,4 +143,140 @@ mod tests {
         assert_eq!(e3.generation(), 1);
         assert_ne!(e1, e3);
     }
+
+    #[test]
+    fn entity_new() {
+        let e = Entity::new(42, 1);
+        assert_eq!(e.index(), 42);
+        assert_eq!(e.generation(), 1);
+    }
+
+    #[test]
+    fn entity_equality() {
+        let e1 = Entity::new(0, 0);
+        let e2 = Entity::new(0, 0);
+        let e3 = Entity::new(0, 1);
+        let e4 = Entity::new(1, 0);
+
+        assert_eq!(e1, e2);
+        assert_ne!(e1, e3);
+        assert_ne!(e1, e4);
+    }
+
+    #[test]
+    fn entity_clone() {
+        let e = Entity::new(5, 2);
+        let cloned = e.clone();
+        assert_eq!(e, cloned);
+        assert_eq!(e.index(), cloned.index());
+        assert_eq!(e.generation(), cloned.generation());
+    }
+
+    #[test]
+    fn entity_copy() {
+        let e = Entity::new(10, 3);
+        let copied = e;
+        assert_eq!(e.index(), copied.index());
+        assert_eq!(e.generation(), copied.generation());
+    }
+
+    #[test]
+    fn entity_debug_format() {
+        let e = Entity::new(5, 2);
+        let debug = format!("{:?}", e);
+        assert_eq!(debug, "Entity(5v2)");
+    }
+
+    #[test]
+    fn entity_display_format() {
+        let e = Entity::new(5, 2);
+        let display = format!("{}", e);
+        assert_eq!(display, "5v2");
+    }
+
+    #[test]
+    fn entity_allocator_new() {
+        let alloc = EntityAllocator::new();
+        assert_eq!(alloc.alive_count(), 0);
+        assert!(alloc.free_list.is_empty());
+    }
+
+    #[test]
+    fn entity_allocator_alive_count() {
+        let mut alloc = EntityAllocator::new();
+        assert_eq!(alloc.alive_count(), 0);
+
+        let e1 = alloc.allocate();
+        assert_eq!(alloc.alive_count(), 1);
+
+        let e2 = alloc.allocate();
+        assert_eq!(alloc.alive_count(), 2);
+
+        alloc.deallocate(e1);
+        assert_eq!(alloc.alive_count(), 1);
+
+        alloc.deallocate(e2);
+        assert_eq!(alloc.alive_count(), 0);
+    }
+
+    #[test]
+    fn entity_allocator_is_alive() {
+        let mut alloc = EntityAllocator::new();
+        let e = alloc.allocate();
+
+        assert!(alloc.is_alive(e));
+        alloc.deallocate(e);
+        assert!(!alloc.is_alive(e));
+    }
+
+    #[test]
+    fn entity_allocator_generation_increments_on_deallocate() {
+        let mut alloc = EntityAllocator::new();
+        let e1 = alloc.allocate();
+        let idx = e1.index();
+
+        alloc.deallocate(e1);
+        assert_eq!(alloc.generation_of(idx), 1);
+
+        let e2 = alloc.allocate();
+        alloc.deallocate(e2);
+        assert_eq!(alloc.generation_of(idx), 2);
+    }
+
+    #[test]
+    fn entity_allocator_generation_of_invalid_index() {
+        let alloc = EntityAllocator::new();
+        assert_eq!(alloc.generation_of(999), 0);
+    }
+
+    #[test]
+    fn entity_allocator_deallocate_twice_fails() {
+        let mut alloc = EntityAllocator::new();
+        let e = alloc.allocate();
+
+        assert!(alloc.deallocate(e));
+        assert!(!alloc.deallocate(e));
+    }
+
+    #[test]
+    fn entity_allocator_deallocate_invalid_entity_fails() {
+        let mut alloc = EntityAllocator::new();
+        let fake = Entity::new(999, 999);
+
+        assert!(!alloc.deallocate(fake));
+    }
+
+    #[test]
+    fn entity_hash() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        let e1 = Entity::new(0, 0);
+        let e2 = Entity::new(1, 0);
+        let e3 = Entity::new(0, 0);
+
+        set.insert(e1);
+        assert!(set.contains(&e1));
+        assert!(!set.contains(&e2));
+        assert!(set.contains(&e3));
+    }
 }

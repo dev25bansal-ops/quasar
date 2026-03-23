@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,107 @@ pub const DEFAULT_PORT: u16 = 7777;
 pub const MAX_CLIENTS: usize = 32;
 pub const TICK_RATE: u32 = 60;
 pub const MTU_SIZE: usize = 1400;
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+pub const MIN_MESSAGE_SIZE: usize = 8;
+pub const MAX_ENTITIES_PER_SNAPSHOT: usize = 1024;
+pub const MAX_COMPONENTS_PER_ENTITY: usize = 64;
+pub const MAX_MESSAGES_PER_SECOND: usize = 1000;
+pub const MAX_MESSAGES_PER_TICK: usize = 100;
+pub const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+pub const ENTITY_CACHE_TTL_SECS: u64 = 60;
+
+/// Rate limiter to prevent message flooding from clients.
+#[derive(Debug, Clone)]
+pub struct RateLimiter {
+    window_start: Instant,
+    message_count: usize,
+    max_per_window: usize,
+    window_duration: Duration,
+}
+
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new(MAX_MESSAGES_PER_SECOND)
+    }
+}
+
+impl RateLimiter {
+    pub fn new(max_per_second: usize) -> Self {
+        Self {
+            window_start: Instant::now(),
+            message_count: 0,
+            max_per_window: max_per_second,
+            window_duration: Duration::from_secs(RATE_LIMIT_WINDOW_SECS),
+        }
+    }
+
+    pub fn check_and_increment(&mut self) -> bool {
+        let now = Instant::now();
+        if now.duration_since(self.window_start) > self.window_duration {
+            self.window_start = now;
+            self.message_count = 0;
+        }
+
+        if self.message_count >= self.max_per_window {
+            false
+        } else {
+            self.message_count += 1;
+            true
+        }
+    }
+
+    pub fn current_rate(&self) -> usize {
+        self.message_count
+    }
+
+    pub fn is_rate_limited(&self) -> bool {
+        let now = Instant::now();
+        if now.duration_since(self.window_start) > self.window_duration {
+            return false;
+        }
+        self.message_count >= self.max_per_window
+    }
+}
+
+/// Security configuration for network validation.
+#[derive(Debug, Clone)]
+pub struct NetworkSecurityConfig {
+    pub enable_rate_limiting: bool,
+    pub max_messages_per_second: usize,
+    pub validate_entity_ids: bool,
+    pub validate_sequences: bool,
+    pub max_sequence_gap: u64,
+}
+
+impl Default for NetworkSecurityConfig {
+    fn default() -> Self {
+        Self {
+            enable_rate_limiting: true,
+            max_messages_per_second: MAX_MESSAGES_PER_SECOND,
+            validate_entity_ids: true,
+            validate_sequences: true,
+            max_sequence_gap: 1000,
+        }
+    }
+}
+
+/// Per-client security state.
+#[derive(Debug)]
+pub struct ClientSecurityState {
+    pub rate_limiter: RateLimiter,
+    pub last_sequence: u64,
+    pub seen_entities: HashMap<NetworkEntityId, Instant>,
+}
+
+impl Default for ClientSecurityState {
+    fn default() -> Self {
+        Self {
+            rate_limiter: RateLimiter::default(),
+            last_sequence: 0,
+            seen_entities: HashMap::new(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
@@ -1258,6 +1360,8 @@ impl TransportResource {
 pub struct NetworkTransportResource {
     pub transport: TransportResource,
     pub fallback_active: bool,
+    pub security_config: NetworkSecurityConfig,
+    pub client_security: HashMap<SocketAddr, ClientSecurityState>,
 }
 
 impl NetworkTransportResource {
@@ -1265,6 +1369,8 @@ impl NetworkTransportResource {
         Self {
             transport,
             fallback_active: false,
+            security_config: NetworkSecurityConfig::default(),
+            client_security: HashMap::new(),
         }
     }
 
@@ -1272,11 +1378,24 @@ impl NetworkTransportResource {
         Self {
             transport,
             fallback_active,
+            security_config: NetworkSecurityConfig::default(),
+            client_security: HashMap::new(),
+        }
+    }
+
+    pub fn with_security(transport: TransportResource, config: NetworkSecurityConfig) -> Self {
+        Self {
+            transport,
+            fallback_active: false,
+            security_config: config,
+            client_security: HashMap::new(),
         }
     }
 
     pub fn send(&mut self, addr: SocketAddr, message: &NetworkMessage) -> Result<(), NetworkError> {
-        let data = bincode::serialize(message).map_err(|e| NetworkError(e.to_string()))?;
+        let config = bincode::config::standard();
+        let data = bincode::serde::encode_to_vec(message, config)
+            .map_err(|e| NetworkError(e.to_string()))?;
         self.transport.send(addr, SendChannel::Unreliable, &data)
     }
 
@@ -1284,16 +1403,188 @@ impl NetworkTransportResource {
         let mut messages = Vec::new();
         for event in self.transport.poll() {
             if let TransportEvent::Data { from, payload, .. } = event {
-                if let Ok(msg) = bincode::deserialize::<NetworkMessage>(&payload) {
-                    messages.push((from, msg));
+                if payload.len() < MIN_MESSAGE_SIZE {
+                    log::warn!(
+                        "Received undersized message ({} bytes) from {}, ignoring",
+                        payload.len(),
+                        from
+                    );
+                    continue;
+                }
+                if payload.len() > MAX_MESSAGE_SIZE {
+                    log::warn!(
+                        "Received oversized message ({} bytes) from {}, ignoring",
+                        payload.len(),
+                        from
+                    );
+                    continue;
+                }
+
+                if self.security_config.enable_rate_limiting {
+                    let security = self.client_security.entry(from).or_default();
+                    if !security.rate_limiter.check_and_increment() {
+                        log::warn!("Rate limiting client {}", from);
+                        continue;
+                    }
+                }
+
+                let config = bincode::config::standard();
+                match bincode::serde::decode_from_slice::<NetworkMessage, _>(&payload, config) {
+                    Ok((msg, _)) => {
+                        if self.validate_message_enhanced(&msg, from).is_ok() {
+                            messages.push((from, msg));
+                        } else {
+                            log::warn!("Message validation failed from {}", from);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to deserialize message from {}: {}", from, e);
+                    }
                 }
             }
         }
         messages
     }
 
+    fn validate_message(&mut self, msg: &NetworkMessage) -> Result<(), NetworkError> {
+        self.validate_message_enhanced(
+            msg,
+            "0.0.0.0:0"
+                .parse()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
+        )
+    }
+
+    fn validate_message_enhanced(
+        &mut self,
+        msg: &NetworkMessage,
+        from: SocketAddr,
+    ) -> Result<(), NetworkError> {
+        if self.security_config.validate_sequences {
+            let security = self.client_security.entry(from).or_default();
+            if msg.sequence > 0 && security.last_sequence > 0 {
+                if msg.sequence <= security.last_sequence {
+                    return Err(NetworkError(format!(
+                        "Sequence {} <= last {} (possible replay attack)",
+                        msg.sequence, security.last_sequence
+                    )));
+                }
+                if msg.sequence > security.last_sequence + self.security_config.max_sequence_gap {
+                    return Err(NetworkError(format!(
+                        "Sequence {} too far ahead of last {} (possible packet injection)",
+                        msg.sequence, security.last_sequence
+                    )));
+                }
+            }
+            if msg.sequence > 0 {
+                security.last_sequence = msg.sequence;
+            }
+        }
+
+        match &msg.payload {
+            NetworkPayload::StateSnapshot { entities, .. } => {
+                if entities.len() > MAX_ENTITIES_PER_SNAPSHOT {
+                    return Err(NetworkError(format!(
+                        "Snapshot has too many entities: {} > {}",
+                        entities.len(),
+                        MAX_ENTITIES_PER_SNAPSHOT
+                    )));
+                }
+                if self.security_config.validate_entity_ids {
+                    for entity in entities {
+                        if entity.entity_id.0 == 0 {
+                            return Err(NetworkError("Invalid entity ID: 0".into()));
+                        }
+                    }
+                }
+            }
+            NetworkPayload::EntitySpawn {
+                entity_id,
+                components,
+            } => {
+                if components.len() > MAX_COMPONENTS_PER_ENTITY {
+                    return Err(NetworkError(format!(
+                        "Entity spawn has too many components: {} > {}",
+                        components.len(),
+                        MAX_COMPONENTS_PER_ENTITY
+                    )));
+                }
+                if self.security_config.validate_entity_ids && entity_id.0 == 0 {
+                    return Err(NetworkError("Invalid entity ID: 0".into()));
+                }
+            }
+            NetworkPayload::EntityUpdate {
+                entity_id,
+                components,
+            } => {
+                if components.len() > MAX_COMPONENTS_PER_ENTITY {
+                    return Err(NetworkError(format!(
+                        "Entity update has too many components: {} > {}",
+                        components.len(),
+                        MAX_COMPONENTS_PER_ENTITY
+                    )));
+                }
+                if self.security_config.validate_entity_ids && entity_id.0 == 0 {
+                    return Err(NetworkError("Invalid entity ID: 0".into()));
+                }
+            }
+            NetworkPayload::EntityDespawn { entity_id } => {
+                if self.security_config.validate_entity_ids && entity_id.0 == 0 {
+                    return Err(NetworkError("Invalid entity ID for despawn: 0".into()));
+                }
+            }
+            NetworkPayload::EntityTransform { entity_id, .. } => {
+                if self.security_config.validate_entity_ids && entity_id.0 == 0 {
+                    return Err(NetworkError("Invalid entity ID for transform: 0".into()));
+                }
+            }
+            NetworkPayload::Rpc {
+                entity_id, args, ..
+            } => {
+                if args.len() > MAX_MESSAGE_SIZE / 4 {
+                    return Err(NetworkError(format!(
+                        "RPC args too large: {} bytes",
+                        args.len()
+                    )));
+                }
+                if self.security_config.validate_entity_ids && entity_id.0 == 0 {
+                    return Err(NetworkError("Invalid entity ID for RPC: 0".into()));
+                }
+            }
+            NetworkPayload::Input { inputs, .. } => {
+                if inputs.len() > 100 {
+                    return Err(NetworkError(format!(
+                        "Too many inputs in one message: {}",
+                        inputs.len()
+                    )));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub fn transport_type(&self) -> TransportType {
         self.transport.transport_type()
+    }
+
+    pub fn get_client_rate(&self, addr: SocketAddr) -> Option<usize> {
+        self.client_security
+            .get(&addr)
+            .map(|s| s.rate_limiter.current_rate())
+    }
+
+    pub fn is_client_rate_limited(&self, addr: SocketAddr) -> bool {
+        self.client_security
+            .get(&addr)
+            .map(|s| s.rate_limiter.is_rate_limited())
+            .unwrap_or(false)
+    }
+
+    pub fn cleanup_stale_clients(&mut self) {
+        self.client_security.retain(|_, state| {
+            state.rate_limiter.current_rate() > 0 || !state.seen_entities.is_empty()
+        });
     }
 }
 
@@ -1357,7 +1648,6 @@ fn network_system(world: &mut crate::World) {
                     state.input_buffer.insert(*client_id, inputs.clone());
                 }
                 NetworkPayload::StateSnapshot { frame, entities } => {
-                    // Store for rollback reconciliation + interpolation.
                     snapshot_updates.push((*frame, entities.clone()));
                 }
                 _ => {}
@@ -1367,7 +1657,6 @@ fn network_system(world: &mut crate::World) {
 
     // Apply received entity transforms.
     if !transform_updates.is_empty() {
-        // Build network_id → entity_index map
         let net_to_entity: HashMap<NetworkEntityId, u32> = {
             let Some(replication) = world.resource::<NetworkReplication>() else {
                 return;
@@ -1376,7 +1665,6 @@ fn network_system(world: &mut crate::World) {
             state.network_to_entity.clone()
         };
 
-        // Build entity_index → Entity handle
         let entity_map: HashMap<u32, crate::ecs::Entity> = world
             .query::<quasar_math::Transform>()
             .into_iter()
@@ -1429,18 +1717,17 @@ fn network_system(world: &mut crate::World) {
     }
 
     // Feed received state snapshots into interpolation + rollback.
-    for (frame, entities) in &snapshot_updates {
-        // Build map for both interpolation and rollback.
+    for (frame, entities) in snapshot_updates {
         let map: HashMap<NetworkEntityId, EntitySnapshot> =
-            entities.iter().map(|s| (s.entity_id, s.clone())).collect();
+            entities.into_iter().map(|s| (s.entity_id, s)).collect();
 
         // Push into SnapshotInterpolation for smooth rendering.
         if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
-            rep_res.interpolation.push_snapshot(*frame, map.clone());
+            rep_res.interpolation.push_snapshot(frame, map.clone());
         }
         // Push into PendingServerSnapshot for rollback reconciliation.
         if let Some(pending) = world.resource_mut::<PendingServerSnapshot>() {
-            pending.snapshot = Some((*frame, map));
+            pending.snapshot = Some((frame, map));
         }
     }
 
@@ -1842,6 +2129,541 @@ mod tests {
         let client = Replicated::client_owned(NetworkEntityId(2), ClientId(5), vec![]);
         assert_eq!(client.owner, Some(ClientId(5)));
     }
+
+    fn make_snapshot(entity_id: u64, x: f32, y: f32, z: f32, frame: u64) -> EntitySnapshot {
+        EntitySnapshot {
+            entity_id: NetworkEntityId(entity_id),
+            position: [x, y, z],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame,
+        }
+    }
+
+    #[test]
+    fn test_rollback_manager_save_and_rollback() {
+        let mut manager = RollbackManager::new(16);
+
+        let entities: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 0.0, 0.0, 0.0, 0))]
+                .into_iter()
+                .collect();
+
+        manager.save_state(entities.clone(), HashMap::new());
+        manager.save_state(
+            [(NetworkEntityId(1), make_snapshot(1, 1.0, 0.0, 0.0, 1))]
+                .into_iter()
+                .collect(),
+            HashMap::new(),
+        );
+
+        assert_eq!(manager.current_frame, 2);
+        assert_eq!(manager.states.len(), 2);
+
+        let state = manager.rollback_to(0);
+        assert!(state.is_some());
+        assert_eq!(state.unwrap().frame, 0);
+    }
+
+    #[test]
+    fn test_rollback_detect_misprediction() {
+        let mut manager = RollbackManager::new(16);
+        manager.misprediction_threshold = 0.01;
+
+        let local_snapshot: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 0.0, 0.0, 0.0, 0))]
+                .into_iter()
+                .collect();
+
+        manager.save_state(local_snapshot.clone(), HashMap::new());
+
+        let server_snapshot: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 10.0, 0.0, 0.0, 0))]
+                .into_iter()
+                .collect();
+
+        let misprediction = manager.detect_misprediction(0, &server_snapshot);
+        assert!(misprediction.is_some());
+
+        let close_snapshot: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 0.001, 0.0, 0.0, 0))]
+                .into_iter()
+                .collect();
+
+        let no_misprediction = manager.detect_misprediction(0, &close_snapshot);
+        assert!(no_misprediction.is_none());
+    }
+
+    #[test]
+    fn test_rollback_full_simulation() {
+        let mut manager = RollbackManager::new(16);
+
+        for frame in 0..5 {
+            let entities: HashMap<NetworkEntityId, EntitySnapshot> = [(
+                NetworkEntityId(1),
+                make_snapshot(1, frame as f32, 0.0, 0.0, frame),
+            )]
+            .into_iter()
+            .collect();
+            manager.save_state(entities, HashMap::new());
+        }
+
+        assert_eq!(manager.current_frame, 5);
+
+        let server_snapshot: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 2.5, 0.0, 0.0, 2))]
+                .into_iter()
+                .collect();
+
+        let simulate_fn = |frame: u64,
+                           _inputs: &HashMap<ClientId, Vec<InputData>>|
+         -> HashMap<NetworkEntityId, EntitySnapshot> {
+            [(
+                NetworkEntityId(1),
+                make_snapshot(1, frame as f32 + 0.5, 0.0, 0.0, frame),
+            )]
+            .into_iter()
+            .collect()
+        };
+
+        let rolled_back = manager.run_rollback(2, &server_snapshot, simulate_fn);
+        assert!(rolled_back);
+    }
+
+    #[test]
+    fn test_input_history() {
+        let mut history = InputHistory::new(8);
+
+        history.record(
+            0,
+            ClientId(1),
+            vec![InputData {
+                input_type: InputType::MoveForward,
+                value: 1.0,
+            }],
+        );
+
+        history.record(
+            1,
+            ClientId(1),
+            vec![InputData {
+                input_type: InputType::Jump,
+                value: 1.0,
+            }],
+        );
+
+        assert!(history.get(0).is_some());
+        assert!(history.get(1).is_some());
+        assert!(history.get(2).is_none());
+
+        let (min, max) = history.available_range();
+        assert_eq!(min, 0);
+        assert_eq!(max, 1);
+    }
+
+    #[test]
+    fn test_delta_compressor_needs_update() {
+        let mut compressor = DeltaCompressor::new();
+
+        let snap = make_snapshot(1, 0.0, 0.0, 0.0, 0);
+        assert!(compressor.needs_update(NetworkEntityId(1), &snap));
+
+        compressor.mark_sent(NetworkEntityId(1), snap.clone());
+        assert!(!compressor.needs_update(NetworkEntityId(1), &snap));
+
+        let moved = make_snapshot(1, 1.0, 0.0, 0.0, 0);
+        assert!(compressor.needs_update(NetworkEntityId(1), &moved));
+    }
+
+    #[test]
+    fn test_delta_compressor_encode_decode() {
+        let mut compressor = DeltaCompressor::new();
+
+        let baseline = make_snapshot(1, 0.0, 0.0, 0.0, 0);
+        compressor.baselines.insert(NetworkEntityId(1), baseline);
+
+        let current = make_snapshot(1, 1.0, 2.0, 3.0, 5);
+        let delta = compressor.encode_delta(NetworkEntityId(1), &current);
+
+        assert!(delta.is_some());
+        let delta = delta.unwrap();
+
+        assert!(delta.flags & DeltaFlags::POSITION != 0);
+        assert!(delta.flags & DeltaFlags::FRAME != 0);
+
+        let decoded = compressor.decode_delta(&delta);
+        assert!((decoded.position[0] - 1.0).abs() < 0.001);
+        assert!((decoded.position[1] - 2.0).abs() < 0.001);
+        assert!((decoded.position[2] - 3.0).abs() < 0.001);
+        assert_eq!(decoded.frame, 5);
+    }
+
+    #[test]
+    fn test_snapshot_interpolation() {
+        let mut interp = SnapshotInterpolation::new(60);
+
+        let snap1: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 0.0, 0.0, 0.0, 0))]
+                .into_iter()
+                .collect();
+
+        let snap2: HashMap<NetworkEntityId, EntitySnapshot> =
+            [(NetworkEntityId(1), make_snapshot(1, 10.0, 0.0, 0.0, 1))]
+                .into_iter()
+                .collect();
+
+        interp.push_snapshot(0, snap1);
+        interp.push_snapshot(1, snap2);
+
+        let results = interp.interpolate(1.0 / 120.0);
+
+        assert!(!results.is_empty());
+        let (_, pos, _) = &results[0];
+        assert!(pos[0] > 0.0 && pos[0] < 10.0);
+    }
+
+    #[test]
+    fn test_tick_accumulator() {
+        let mut acc = TickAccumulator::new(60);
+
+        let ticks = acc.advance(1.0 / 60.0);
+        assert_eq!(ticks, 1);
+
+        let ticks = acc.advance(1.0 / 30.0);
+        assert_eq!(ticks, 2);
+
+        let alpha = acc.alpha();
+        assert!(alpha >= 0.0 && alpha <= 1.0);
+    }
+
+    #[test]
+    fn test_rate_limiter_allows_under_limit() {
+        let mut limiter = RateLimiter::new(10);
+        for _ in 0..10 {
+            assert!(limiter.check_and_increment());
+        }
+    }
+
+    #[test]
+    fn test_rate_limiter_blocks_over_limit() {
+        let mut limiter = RateLimiter::new(5);
+        for _ in 0..5 {
+            assert!(limiter.check_and_increment());
+        }
+        assert!(!limiter.check_and_increment());
+        assert!(!limiter.check_and_increment());
+    }
+
+    #[test]
+    fn test_rate_limiter_resets_after_window() {
+        let mut limiter = RateLimiter::new(3);
+        limiter.window_start = Instant::now() - Duration::from_secs(2);
+        limiter.message_count = 3;
+
+        assert!(limiter.check_and_increment());
+        assert_eq!(limiter.message_count, 1);
+    }
+
+    #[test]
+    fn test_rate_limiter_is_rate_limited() {
+        let mut limiter = RateLimiter::new(2);
+        assert!(!limiter.is_rate_limited());
+        limiter.check_and_increment();
+        limiter.check_and_increment();
+        assert!(limiter.is_rate_limited());
+    }
+
+    #[test]
+    fn test_network_security_config_default() {
+        let config = NetworkSecurityConfig::default();
+        assert!(config.enable_rate_limiting);
+        assert!(config.validate_entity_ids);
+        assert!(config.validate_sequences);
+        assert_eq!(config.max_messages_per_second, MAX_MESSAGES_PER_SECOND);
+    }
+
+    #[test]
+    fn test_client_security_state_default() {
+        let state = ClientSecurityState::default();
+        assert_eq!(state.last_sequence, 0);
+        assert!(state.seen_entities.is_empty());
+    }
+
+    #[test]
+    fn test_message_validation_rejects_zero_entity_id() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+        transport.security_config.validate_entity_ids = true;
+
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 0,
+            payload: NetworkPayload::EntitySpawn {
+                entity_id: NetworkEntityId(0),
+                components: vec![],
+            },
+        };
+
+        let result = transport.validate_message_enhanced(&msg, "127.0.0.1:12345".parse().unwrap());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_validation_rejects_too_many_entities() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+
+        let entities: Vec<EntitySnapshot> = (0..MAX_ENTITIES_PER_SNAPSHOT + 1)
+            .map(|i| EntitySnapshot {
+                entity_id: NetworkEntityId(i as u64 + 1),
+                position: [0.0, 0.0, 0.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+                frame: 0,
+            })
+            .collect();
+
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 0,
+            payload: NetworkPayload::StateSnapshot { frame: 0, entities },
+        };
+
+        let result = transport.validate_message_enhanced(&msg, "127.0.0.1:12345".parse().unwrap());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_validation_rejects_sequence_regression() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+        transport.security_config.validate_sequences = true;
+
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        transport
+            .client_security
+            .entry(addr)
+            .or_default()
+            .last_sequence = 100;
+
+        let msg = NetworkMessage {
+            sequence: 50,
+            timestamp: 0,
+            payload: NetworkPayload::StateSnapshot {
+                frame: 0,
+                entities: vec![],
+            },
+        };
+
+        let result = transport.validate_message_enhanced(&msg, addr);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_message_validation_accepts_valid_message() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 0,
+            payload: NetworkPayload::EntitySpawn {
+                entity_id: NetworkEntityId(1),
+                components: vec![],
+            },
+        };
+
+        let result = transport.validate_message_enhanced(&msg, "127.0.0.1:12345".parse().unwrap());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_message_validation_rejects_too_many_inputs() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+
+        let inputs: Vec<InputData> = (0..101)
+            .map(|_| InputData {
+                input_type: InputType::MoveForward,
+                value: 1.0,
+            })
+            .collect();
+
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 0,
+            payload: NetworkPayload::Input {
+                client_id: ClientId(1),
+                inputs,
+            },
+        };
+
+        let result = transport.validate_message_enhanced(&msg, "127.0.0.1:12345".parse().unwrap());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_client_rate() {
+        let mut transport = NetworkTransportResource::new(TransportResource::Udp(
+            UdpTransport::bind("127.0.0.1:0".parse().unwrap()).unwrap(),
+        ));
+
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        transport
+            .client_security
+            .entry(addr)
+            .or_default()
+            .rate_limiter
+            .message_count = 5;
+
+        assert_eq!(transport.get_client_rate(addr), Some(5));
+        assert_eq!(
+            transport.get_client_rate("127.0.0.1:54321".parse().unwrap()),
+            None
+        );
+    }
+
+    #[test]
+    fn test_input_history_push_and_get() {
+        let mut history = InputHistory::new(10);
+
+        let input1 = InputData {
+            input_type: InputType::MoveForward,
+            value: 1.0,
+        };
+        let input2 = InputData {
+            input_type: InputType::Jump,
+            value: 1.0,
+        };
+
+        history.record(1, ClientId(1), vec![input1.clone()]);
+        history.record(2, ClientId(2), vec![input2.clone()]);
+
+        let inputs = history.get(1);
+        assert!(inputs.is_some());
+        assert!(inputs.unwrap().contains_key(&ClientId(1)));
+
+        let inputs = history.get(3);
+        assert!(inputs.is_none());
+    }
+
+    #[test]
+    fn test_misprediction_creation() {
+        let mut server_entities = HashMap::new();
+        server_entities.insert(
+            NetworkEntityId(1),
+            EntitySnapshot {
+                entity_id: NetworkEntityId(1),
+                position: [100.0, 100.0, 100.0],
+                rotation: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+                frame: 0,
+            },
+        );
+
+        let misprediction = Misprediction {
+            frame: 42,
+            server_entities,
+        };
+
+        assert_eq!(misprediction.frame, 42);
+        assert!(misprediction
+            .server_entities
+            .contains_key(&NetworkEntityId(1)));
+    }
+
+    #[test]
+    fn test_delta_flags_constants() {
+        assert_eq!(DeltaFlags::POSITION, 0b0000_0001);
+        assert_eq!(DeltaFlags::ROTATION, 0b0000_0010);
+        assert_eq!(DeltaFlags::SCALE, 0b0000_0100);
+        assert_eq!(DeltaFlags::FRAME, 0b0000_1000);
+    }
+
+    #[test]
+    fn test_encoded_delta_creation() {
+        let delta = EncodedDelta {
+            entity_id: NetworkEntityId(42),
+            flags: DeltaFlags::POSITION | DeltaFlags::ROTATION,
+            data: vec![1, 2, 3, 4],
+        };
+
+        assert_eq!(delta.entity_id.0, 42);
+        assert_eq!(delta.flags, 0b0000_0011);
+        assert_eq!(delta.data.len(), 4);
+    }
+
+    #[test]
+    fn test_history_buffer_fixed_size() {
+        let mut buffer: HistoryBuffer<i32> = HistoryBuffer::new(4);
+
+        buffer.push(1, 10);
+        buffer.push(2, 20);
+        buffer.push(3, 30);
+        buffer.push(4, 40);
+        buffer.push(5, 50);
+
+        assert_eq!(buffer.len(), 4);
+        assert_eq!(buffer.at_tick(2), Some(&20));
+        assert_eq!(buffer.at_tick(5), Some(&50));
+    }
+
+    #[test]
+    fn test_history_buffer_at_tick() {
+        let mut buffer: HistoryBuffer<i32> = HistoryBuffer::new(10);
+        buffer.push(10, 100);
+        buffer.push(20, 200);
+        buffer.push(30, 300);
+
+        assert_eq!(buffer.at_tick(20), Some(&200));
+        assert_eq!(buffer.at_tick(25), Some(&200));
+        assert_eq!(buffer.at_tick(5), None);
+    }
+
+    #[test]
+    fn test_lag_compensation_manager() {
+        let mut manager = LagCompensationManager::new(100);
+
+        manager.record(NetworkEntityId(1), 100, [10.0, 20.0, 30.0]);
+        manager.record(NetworkEntityId(1), 101, [15.0, 25.0, 35.0]);
+
+        let pos = manager.position_at(NetworkEntityId(1), 100);
+        assert!(pos.is_some());
+        assert_eq!(pos.unwrap(), [10.0, 20.0, 30.0]);
+
+        let pos = manager.position_at(NetworkEntityId(2), 100);
+        assert!(pos.is_none());
+    }
+
+    #[test]
+    fn test_lag_compensation_manager_verify_hit() {
+        let mut manager = LagCompensationManager::new(100);
+
+        manager.record(NetworkEntityId(1), 100, [0.0, 0.0, 0.0]);
+
+        let hit = manager.verify_hit(
+            100,
+            NetworkEntityId(1),
+            [10.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            5.0,
+        );
+        assert!(hit);
+
+        let miss = manager.verify_hit(
+            100,
+            NetworkEntityId(1),
+            [100.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            5.0,
+        );
+        assert!(!miss);
+    }
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -2215,7 +3037,9 @@ impl QuicTransport {
         channel: QuicChannel,
         message: &NetworkMessage,
     ) -> Result<(), NetworkError> {
-        let data = bincode::serialize(message).map_err(|e| NetworkError(e.to_string()))?;
+        let config = bincode::config::standard();
+        let data = bincode::serde::encode_to_vec(message, config)
+            .map_err(|e| NetworkError(e.to_string()))?;
         self.send(addr, channel, &data)
     }
 
@@ -2820,7 +3644,16 @@ impl LagCompensationManager {
         let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] - hitbox_radius * hitbox_radius;
         let discriminant = b * b - c;
 
-        discriminant >= 0.0
+        if discriminant < 0.0 {
+            return false;
+        }
+
+        // Check if at least one intersection point is in front of the ray origin.
+        // t1 = -b - sqrt(discriminant), t2 = -b + sqrt(discriminant)
+        // Hit if t2 >= 0 (furthest intersection is in front of ray origin).
+        let sqrt_disc = discriminant.sqrt();
+        let t2 = -b + sqrt_disc;
+        t2 >= 0.0
     }
 
     /// Remove an entity's history (e.g. on despawn).

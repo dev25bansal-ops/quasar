@@ -225,3 +225,122 @@ impl Default for LayoutSolver {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_layout_rect_default() {
+        let rect = LayoutRect::default();
+        assert_eq!(rect.x, 0.0);
+        assert_eq!(rect.y, 0.0);
+        assert_eq!(rect.width, 0.0);
+        assert_eq!(rect.height, 0.0);
+    }
+
+    #[test]
+    fn test_layout_rect_contains_inside() {
+        let rect = LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        assert!(rect.contains(50.0, 40.0));
+        assert!(rect.contains(10.0, 20.0));
+        assert!(rect.contains(110.0, 70.0));
+    }
+
+    #[test]
+    fn test_layout_rect_contains_outside() {
+        let rect = LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        assert!(!rect.contains(5.0, 40.0));
+        assert!(!rect.contains(50.0, 10.0));
+        assert!(!rect.contains(120.0, 40.0));
+        assert!(!rect.contains(50.0, 80.0));
+    }
+
+    #[test]
+    fn test_layout_rect_contains_edge() {
+        let rect = LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        assert!(rect.contains(0.0, 0.0));
+        assert!(rect.contains(100.0, 100.0));
+        assert!(rect.contains(50.0, 0.0));
+        assert!(rect.contains(0.0, 50.0));
+    }
+
+    #[test]
+    fn test_layout_solver_new() {
+        let solver = LayoutSolver::new();
+        assert!(solver.rects.is_empty());
+    }
+
+    #[test]
+    fn test_layout_solver_default() {
+        let solver = LayoutSolver::default();
+        assert!(solver.rects.is_empty());
+    }
+
+    #[test]
+    fn test_layout_solver_rects_empty() {
+        let solver = LayoutSolver::new();
+        assert!(solver.rects().is_empty());
+    }
+
+    #[test]
+    fn test_layout_solver_rect_none() {
+        let solver = LayoutSolver::new();
+        assert!(solver.rect(WidgetId(0)).is_none());
+    }
+
+    #[test]
+    fn test_layout_rect_clone() {
+        let rect = LayoutRect {
+            x: 10.0,
+            y: 20.0,
+            width: 100.0,
+            height: 50.0,
+        };
+        let cloned = rect.clone();
+        assert_eq!(cloned.x, 10.0);
+        assert_eq!(cloned.y, 20.0);
+        assert_eq!(cloned.width, 100.0);
+        assert_eq!(cloned.height, 50.0);
+    }
+
+    #[test]
+    fn test_layout_rect_zero_size() {
+        let rect = LayoutRect {
+            x: 0.0,
+            y: 0.0,
+            width: 0.0,
+            height: 0.0,
+        };
+        assert!(rect.contains(0.0, 0.0));
+        assert!(!rect.contains(0.1, 0.0));
+    }
+
+    #[test]
+    fn test_layout_rect_negative_coords() {
+        let rect = LayoutRect {
+            x: -50.0,
+            y: -50.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        assert!(rect.contains(-25.0, -25.0));
+        assert!(rect.contains(0.0, 0.0));
+        assert!(!rect.contains(-60.0, 0.0));
+    }
+}

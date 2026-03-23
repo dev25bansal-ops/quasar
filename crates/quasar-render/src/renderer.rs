@@ -40,9 +40,9 @@ impl Default for RenderConfig {
         {
             Self {
                 msaa_sample_count: 1,
-                gpu_driven_culling: false,  // Temporarily disabled for debugging
-                taa_enabled: false,         // Temporarily disabled for debugging
-                ssgi_enabled: false,        // Temporarily disabled for debugging
+                gpu_driven_culling: true,
+                taa_enabled: true,
+                ssgi_enabled: true,
                 deferred_enabled: false,
             }
         }
@@ -747,7 +747,7 @@ impl Renderer {
     /// Upload instance transform matrices to the GPU instance buffer.
     ///
     /// Called by the runner after ECS systems have collected the matrices
-    /// into [`RenderSyncOutput`].
+    /// into `RenderSyncOutput`.
     pub fn upload_instance_transforms(&self, transforms: &[glam::Mat4]) {
         if transforms.is_empty() {
             return;
@@ -1286,6 +1286,85 @@ texture: &'static wgpu::BindGroup,
                     pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
                     pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
                 }
+            }
+        }
+    }
+
+    #[cfg(feature = "deferred")]
+    pub fn render_deferred_geometry_pass(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, Option<&wgpu::BindGroup>, Option<u32>)],
+        gbuffer: &crate::deferred::GBuffer,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+
+        if !objects.is_empty() {
+            let total = aligned_size * objects.len();
+            let mut data = vec![0u8; total];
+            for (i, (_, model, _, _)) in objects.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, *model);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = i * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+        }
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Deferred Geometry Pass"),
+                color_attachments: &[
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &gbuffer.albedo_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &gbuffer.normal_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.5, b: 1.0, a: 1.0 }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                    Some(wgpu::RenderPassColorAttachment {
+                        view: &gbuffer.roughness_metallic_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.0, b: 0.0, a: 1.0 }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    }),
+                ],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &gbuffer.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.render_pipeline);
+
+            for (i, (mesh, _, _mat_bg, _tex_index)) in objects.iter().enumerate() {
+                let dyn_offset = (i * aligned_size) as u32;
+                pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                pass.set_bind_group(1, &self.default_material_texture_bind_group, &[]);
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
     }

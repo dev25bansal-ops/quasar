@@ -88,8 +88,11 @@ impl AnimationClip {
 
     pub fn add_keyframe(mut self, keyframe: TransformKeyframe) -> Self {
         self.keyframes.push(keyframe);
-        self.keyframes
-            .sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        self.keyframes.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         if let Some(last) = self.keyframes.last() {
             self.duration = self.duration.max(last.time);
         }
@@ -222,7 +225,11 @@ impl SkeletalAnimationClip {
             .entry(bone_name.to_string())
             .or_default();
         keyframes.push(keyframe);
-        keyframes.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+        keyframes.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         if let Some(last) = keyframes.last() {
             self.duration = self.duration.max(last.time);
         }
@@ -486,10 +493,7 @@ impl AnimationStateMachine {
     }
 
     /// Evaluate transitions and return the next state name if a transition fires.
-    fn evaluate_transitions(
-        &self,
-        clip_finished: bool,
-    ) -> Option<(&AnimationTransition,)> {
+    fn evaluate_transitions(&self, clip_finished: bool) -> Option<(&AnimationTransition,)> {
         for transition in &self.transitions {
             if transition.from != self.current_state {
                 continue;
@@ -522,9 +526,7 @@ impl AnimationStateMachine {
 #[derive(Debug, Clone)]
 pub enum BlendTreeNode {
     /// Plays a single clip.
-    Clip {
-        clip_name: String,
-    },
+    Clip { clip_name: String },
     /// Blends between two children based on a float parameter (0.0–1.0).
     Lerp {
         parameter: String,
@@ -541,14 +543,16 @@ impl BlendTreeNode {
         time: f32,
     ) -> Option<Transform> {
         match self {
-            BlendTreeNode::Clip { clip_name } => {
-                clips.get(clip_name)?.sample(time)
-            }
+            BlendTreeNode::Clip { clip_name } => clips.get(clip_name)?.sample(time),
             BlendTreeNode::Lerp {
                 parameter,
                 children,
             } => {
-                let t = params.get(parameter).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                let t = params
+                    .get(parameter)
+                    .copied()
+                    .unwrap_or(0.0)
+                    .clamp(0.0, 1.0);
                 let a = children[0].sample(clips, params, time)?;
                 let b = children[1].sample(clips, params, time)?;
                 Some(Transform {
@@ -614,21 +618,22 @@ impl System for AnimationStateMachineSystem {
 
         for (entity, mut sm) in machines {
             // Check if the current clip has finished.
-            let clip_finished = clips.get(
-                sm.states
-                    .iter()
-                    .find(|s| s.name == sm.current_state)
-                    .map(|s| s.clip_name.as_str())
-                    .unwrap_or(""),
-            )
-            .map(|clip| {
-                let player_time = world
-                    .get::<AnimationPlayer>(entity)
-                    .map(|p| p.time)
-                    .unwrap_or(0.0);
-                !clip.looped && player_time >= clip.duration
-            })
-            .unwrap_or(false);
+            let clip_finished = clips
+                .get(
+                    sm.states
+                        .iter()
+                        .find(|s| s.name == sm.current_state)
+                        .map(|s| s.clip_name.as_str())
+                        .unwrap_or(""),
+                )
+                .map(|clip| {
+                    let player_time = world
+                        .get::<AnimationPlayer>(entity)
+                        .map(|p| p.time)
+                        .unwrap_or(0.0);
+                    !clip.looped && player_time >= clip.duration
+                })
+                .unwrap_or(false);
 
             // Evaluate transitions.
             if let Some((transition,)) = sm.evaluate_transitions(clip_finished) {
@@ -683,7 +688,9 @@ impl System for AnimationStateMachineSystem {
                         .get::<AnimationPlayer>(entity)
                         .map(|p| p.time)
                         .unwrap_or(0.0);
-                    if let (Some(tf_a), Some(tf_b)) = (from.sample(from_time), to.sample(player_time)) {
+                    if let (Some(tf_a), Some(tf_b)) =
+                        (from.sample(from_time), to.sample(player_time))
+                    {
                         let blended = Transform {
                             position: tf_a.position.lerp(tf_b.position, t),
                             rotation: tf_a.rotation.slerp(tf_b.rotation, t),
@@ -778,5 +785,113 @@ mod tests {
         player.stop();
         assert_eq!(player.state, AnimationState::Stopped);
         assert_eq!(player.time, 0.0);
+    }
+
+    #[test]
+    fn animation_clip_new() {
+        let clip = AnimationClip::new("idle");
+        assert_eq!(clip.name, "idle");
+        assert!(clip.keyframes.is_empty());
+        assert!(clip.looped);
+        assert_eq!(clip.duration, 0.0);
+    }
+
+    #[test]
+    fn animation_clip_not_looped() {
+        let clip = AnimationClip::new("test").looped(false);
+        assert!(!clip.looped);
+    }
+
+    #[test]
+    fn transform_keyframe_at_identity() {
+        let kf = TransformKeyframe::at_identity(1.0);
+        assert_eq!(kf.time, 1.0);
+        assert_eq!(kf.position, Vec3::ZERO);
+        assert_eq!(kf.rotation, Quat::IDENTITY);
+        assert_eq!(kf.scale, Vec3::ONE);
+    }
+
+    #[test]
+    fn transform_keyframe_at_rotation() {
+        let rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_4);
+        let kf = TransformKeyframe::at_rotation(1.0, rot);
+        assert_eq!(kf.time, 1.0);
+        assert_eq!(kf.rotation, rot);
+        assert_eq!(kf.position, Vec3::ZERO);
+        assert_eq!(kf.scale, Vec3::ONE);
+    }
+
+    #[test]
+    fn animation_player_new() {
+        let player = AnimationPlayer::new("walk");
+        assert_eq!(player.clip_name, "walk");
+        assert_eq!(player.time, 0.0);
+        assert_eq!(player.state, AnimationState::Playing);
+        assert_eq!(player.speed, 1.0);
+    }
+
+    #[test]
+    fn animation_player_play() {
+        let mut player = AnimationPlayer::new("test");
+        player.pause();
+        player.play();
+        assert_eq!(player.state, AnimationState::Playing);
+    }
+
+    #[test]
+    fn animation_player_set_speed() {
+        let mut player = AnimationPlayer::new("test");
+        player.set_speed(2.0);
+        assert_eq!(player.speed, 2.0);
+    }
+
+    #[test]
+    fn animation_player_reset() {
+        let mut player = AnimationPlayer::new("test");
+        player.time = 5.0;
+        player.pause();
+        player.reset();
+        assert_eq!(player.time, 0.0);
+        assert_eq!(player.state, AnimationState::Playing);
+    }
+
+    #[test]
+    fn animation_state_variants() {
+        assert_ne!(AnimationState::Playing, AnimationState::Paused);
+        assert_ne!(AnimationState::Paused, AnimationState::Stopped);
+        assert_ne!(AnimationState::Playing, AnimationState::Stopped);
+    }
+
+    #[test]
+    fn clip_sample_before_first_keyframe() {
+        let clip = AnimationClip::new("test").add_keyframe(TransformKeyframe::at_position(
+            1.0,
+            Vec3::new(10.0, 0.0, 0.0),
+        ));
+
+        let t = clip.sample(0.0).unwrap();
+        assert_eq!(t.position, Vec3::new(10.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn clip_sample_after_last_keyframe() {
+        let clip = AnimationClip::new("test")
+            .looped(false)
+            .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::ZERO))
+            .add_keyframe(TransformKeyframe::at_position(
+                1.0,
+                Vec3::new(10.0, 0.0, 0.0),
+            ));
+
+        // When not looped, time is clamped to [0, duration]
+        // So sampling at 2.0 returns the last keyframe's transform
+        let t = clip.sample(2.0).unwrap();
+        assert_eq!(t.position, Vec3::new(10.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn clip_with_duration() {
+        let clip = AnimationClip::new("test").with_duration(5.0);
+        assert_eq!(clip.duration, 5.0);
     }
 }

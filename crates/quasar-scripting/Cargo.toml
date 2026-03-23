@@ -16,8 +16,9 @@ glam = { workspace = true }
 winit = { workspace = true }
 log = { workspace = true }
 notify = { workspace = true }
-wasmtime = { version = "20", optional = true }
+wasmtime = { version = "29", optional = true }
 anyhow = { workspace = true }
+crossbeam-channel = { workspace = true }
 
 [features]
 default = []

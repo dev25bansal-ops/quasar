@@ -95,10 +95,7 @@ pub struct DecalBatch {
 }
 
 impl DecalBatch {
-    pub fn new(
-        device: &wgpu::Device,
-        output_format: wgpu::TextureFormat,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, output_format: wgpu::TextureFormat) -> Self {
         let buf_size = (std::mem::size_of::<DecalUniform>() * MAX_DECALS) as u64;
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -108,43 +105,41 @@ impl DecalBatch {
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Decal BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Decal BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
+        let depth_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Decal Depth BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Depth,
                     },
                     count: None,
-                }],
-            });
-
-        let depth_bgl =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Decal Depth BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Depth,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                ],
-            });
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Decal BG"),
@@ -221,12 +216,7 @@ impl DecalBatch {
             uniforms[i] = DecalUniform {
                 inv_model: inv.to_cols_array_2d(),
                 color: decal.color,
-                params: [
-                    decal.texture_index as f32,
-                    decal.opacity,
-                    0.0,
-                    0.0,
-                ],
+                params: [decal.texture_index as f32, decal.opacity, 0.0, 0.0],
             };
         }
 
@@ -241,7 +231,11 @@ impl DecalBatch {
     ///
     /// `depth_bind_group` must be created from `self.depth_bgl` binding the
     /// scene depth texture so the shader can reconstruct world positions.
-    pub fn draw<'a>(&'a self, rpass: &mut wgpu::RenderPass<'a>, depth_bind_group: &'a wgpu::BindGroup) {
+    pub fn draw<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        depth_bind_group: &'a wgpu::BindGroup,
+    ) {
         if self.count == 0 {
             return;
         }
@@ -259,7 +253,7 @@ impl DecalBatch {
 /// - `inv_model`: the decal's inverse model matrix.
 /// - `world_pos`: the fragment's world position (reconstructed from depth).
 ///
-/// It outputs UV coordinates in [0,1]³ — fragments outside that range are
+/// It outputs UV coordinates in `[0,1]³` — fragments outside that range are
 /// discarded (the fragment is not inside the decal OBB).
 pub const DECAL_PROJECTION_WGSL: &str = r#"
 fn decal_project(inv_model: mat4x4<f32>, world_pos: vec3<f32>) -> vec3<f32> {

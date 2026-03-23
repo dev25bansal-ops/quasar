@@ -339,7 +339,7 @@ impl World {
         true
     }
 
-    /// Despawn an entity **and** all entities transitively owned via [`OwnedBy`].
+    /// Despawn an entity **and** all entities transitively owned via `OwnedBy` relations.
     pub fn despawn_recursive(&mut self, entity: Entity) {
         let owned = self.relation_graph.owned_recursive(entity);
         for e in owned {
@@ -1790,6 +1790,7 @@ impl<'w> EntityBuilder<'w> {
 mod tests {
     use super::*;
     use crate::query;
+    use crate::Time;
 
     #[derive(Debug, Clone, PartialEq)]
     struct Position {
@@ -2239,5 +2240,147 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].1, &Position { x: 1.0, y: 2.0 });
         assert_eq!(results[0].2, &Velocity { dx: 3.0, dy: 4.0 });
+    }
+
+    #[test]
+    fn world_spawn_batch() {
+        let mut world = World::new();
+        let entities: Vec<Entity> = (0..100).map(|_| world.spawn()).collect();
+        assert_eq!(entities.len(), 100);
+        assert_eq!(world.entity_count(), 100);
+    }
+
+    #[test]
+    fn world_insert_multiple_components() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+        world.insert(e, Velocity { dx: 3.0, dy: 4.0 });
+        world.insert(e, Health(100));
+
+        assert!(world.get::<Position>(e).is_some());
+        assert!(world.get::<Velocity>(e).is_some());
+        assert!(world.get::<Health>(e).is_some());
+    }
+
+    #[test]
+    fn world_remove_component() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+
+        assert!(world.get::<Position>(e).is_some());
+
+        world.remove_component::<Position>(e);
+
+        assert!(world.get::<Position>(e).is_none());
+    }
+
+    #[test]
+    fn world_query_empty() {
+        let world = World::new();
+        let results: Vec<(Entity, &Position)> = world.query::<Position>();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn world_resource_insert_get() {
+        let mut world = World::new();
+        world.insert_resource(Time::default());
+
+        let time = world.resource::<Time>();
+        assert!(time.is_some());
+    }
+
+    #[test]
+    fn world_resource_mut() {
+        let mut world = World::new();
+        world.insert_resource(Time::default());
+
+        {
+            let time = world.resource_mut::<Time>();
+            assert!(time.is_some());
+        }
+    }
+
+    #[test]
+    fn world_resource_remove() {
+        let mut world = World::new();
+        world.insert_resource(Time::default());
+        world.remove_resource::<Time>();
+
+        let time = world.resource::<Time>();
+        assert!(time.is_none());
+    }
+
+    #[test]
+    fn world_get_mut() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+
+        {
+            let pos = world.get_mut::<Position>(e);
+            assert!(pos.is_some());
+            if let Some(p) = pos {
+                p.x = 10.0;
+            }
+        }
+
+        let pos = world.get::<Position>(e);
+        assert_eq!(pos.map(|p| p.x), Some(10.0));
+    }
+
+    #[test]
+    fn world_for_each_mut() {
+        let mut world = World::new();
+        for i in 0..5 {
+            let e = world.spawn();
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                },
+            );
+        }
+
+        world.for_each_mut::<Position, _>(|_e, pos| {
+            pos.x += 100.0;
+        });
+
+        let results = world.query::<Position>();
+        for (_, pos) in results {
+            assert!(pos.x >= 100.0);
+        }
+    }
+
+    #[test]
+    fn world_query2_empty() {
+        let world = World::new();
+        let results = world.query2::<Position, Velocity>();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn world_query3() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 2.0 });
+        world.insert(e, Velocity { dx: 3.0, dy: 4.0 });
+        world.insert(e, Health(100));
+
+        let results = world.query3::<Position, Velocity, Health>();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn world_spawn_log() {
+        let mut world = World::new();
+        let _e1 = world.spawn();
+        let _e2 = world.spawn();
+
+        let log = world.spawn_log();
+        assert_eq!(log.len(), 2);
     }
 }

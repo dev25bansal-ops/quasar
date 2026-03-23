@@ -873,3 +873,365 @@ impl<A: Component, B: Component> Default for CachedQueryState2<A, B> {
         Self::new()
     }
 }
+
+// ---------------------------------------------------------------------------
+// ZeroAllocationQueryIter — truly zero-allocation query iterator
+// ---------------------------------------------------------------------------
+
+/// Zero-allocation query iterator that iterates archetypes directly.
+///
+/// This iterator does not allocate when iterating. It stores a reference
+/// to cached archetype IDs and iterates them lazily.
+pub struct ZeroAllocQueryIter<'w, T: Component> {
+    world: &'w World,
+    type_id: TypeId,
+    archetype_ids: &'w [super::ArchetypeId],
+    current_arch: usize,
+    current_row: usize,
+    _marker: PhantomData<T>,
+}
+
+impl<'w, T: Component> ZeroAllocQueryIter<'w, T> {
+    /// Create a zero-allocation iterator from cached archetype IDs.
+    pub fn new(world: &'w World, archetype_ids: &'w [super::ArchetypeId]) -> Self {
+        Self {
+            world,
+            type_id: TypeId::of::<T>(),
+            archetype_ids,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'w, T: Component> Iterator for ZeroAllocQueryIter<'w, T> {
+    type Item = (Entity, &'w T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_arch < self.archetype_ids.len() {
+            let arch_id = self.archetype_ids[self.current_arch];
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let Some(&col_idx) = arch.type_to_column.get(&self.type_id) {
+                    if let Some(col) = arch.columns[col_idx]
+                        .as_any()
+                        .downcast_ref::<TypedColumn<T>>()
+                    {
+                        if self.current_row < arch.entities.len()
+                            && self.current_row < col.data.len()
+                        {
+                            let entity = arch.entities[self.current_row];
+                            let item = &col.data[self.current_row];
+                            self.current_row += 1;
+                            return Some((entity, item));
+                        }
+                    }
+                }
+            }
+            self.current_arch += 1;
+            self.current_row = 0;
+        }
+        None
+    }
+}
+
+/// Zero-allocation two-component query iterator.
+pub struct ZeroAllocQuery2Iter<'w, A: Component, B: Component> {
+    world: &'w World,
+    type_a: TypeId,
+    type_b: TypeId,
+    archetype_ids: &'w [super::ArchetypeId],
+    current_arch: usize,
+    current_row: usize,
+    _marker: PhantomData<(A, B)>,
+}
+
+impl<'w, A: Component, B: Component> ZeroAllocQuery2Iter<'w, A, B> {
+    /// Create a zero-allocation iterator from cached archetype IDs.
+    pub fn new(world: &'w World, archetype_ids: &'w [super::ArchetypeId]) -> Self {
+        Self {
+            world,
+            type_a: TypeId::of::<A>(),
+            type_b: TypeId::of::<B>(),
+            archetype_ids,
+            current_arch: 0,
+            current_row: 0,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'w, A: Component, B: Component> Iterator for ZeroAllocQuery2Iter<'w, A, B> {
+    type Item = (Entity, &'w A, &'w B);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current_arch < self.archetype_ids.len() {
+            let arch_id = self.archetype_ids[self.current_arch];
+            if let Some(arch) = self.world.archetype_graph().get(arch_id) {
+                if let (Some(&col_a_idx), Some(&col_b_idx)) = (
+                    arch.type_to_column.get(&self.type_a),
+                    arch.type_to_column.get(&self.type_b),
+                ) {
+                    if let (Some(col_a), Some(col_b)) = (
+                        arch.columns[col_a_idx]
+                            .as_any()
+                            .downcast_ref::<TypedColumn<A>>(),
+                        arch.columns[col_b_idx]
+                            .as_any()
+                            .downcast_ref::<TypedColumn<B>>(),
+                    ) {
+                        if self.current_row < arch.entities.len()
+                            && self.current_row < col_a.data.len()
+                            && self.current_row < col_b.data.len()
+                        {
+                            let entity = arch.entities[self.current_row];
+                            let item_a = &col_a.data[self.current_row];
+                            let item_b = &col_b.data[self.current_row];
+                            self.current_row += 1;
+                            return Some((entity, item_a, item_b));
+                        }
+                    }
+                }
+            }
+            self.current_arch += 1;
+            self.current_row = 0;
+        }
+        None
+    }
+}
+
+impl<T: Component> CachedQueryState<T> {
+    /// Create a zero-allocation iterator over matching entities.
+    ///
+    /// Unlike `iter()`, this method does not allocate any heap memory.
+    pub fn iter_zero_alloc<'w>(&'w self, world: &'w World) -> ZeroAllocQueryIter<'w, T> {
+        ZeroAllocQueryIter::new(world, self.archetypes(world))
+    }
+}
+
+impl<A: Component, B: Component> CachedQueryState2<A, B> {
+    /// Create a zero-allocation iterator over matching entities.
+    ///
+    /// Unlike `iter()`, this method does not allocate any heap memory.
+    pub fn iter_zero_alloc<'w>(&'w self, world: &'w World) -> ZeroAllocQuery2Iter<'w, A, B> {
+        ZeroAllocQuery2Iter::new(world, self.archetypes(world))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LazyArchetypeIter — iterates all archetypes without pre-filtering
+// ---------------------------------------------------------------------------
+
+/// Lazy iterator that filters archetypes on-the-fly without pre-allocation.
+///
+/// This is useful when the query is run infrequently or when the set of
+/// matching archetypes changes frequently.
+pub struct LazyArchetypeIter<'w, T: Component> {
+    world: &'w World,
+    type_id: TypeId,
+    arch_iter: std::collections::hash_map::Iter<'w, super::ArchetypeId, super::Archetype>,
+    current_row: usize,
+    current_arch: Option<&'w super::Archetype>,
+    current_col: Option<&'w TypedColumn<T>>,
+    _marker: PhantomData<T>,
+}
+
+impl<'w, T: Component> LazyArchetypeIter<'w, T> {
+    /// Create a lazy iterator that filters archetypes on-the-fly.
+    pub fn new(world: &'w World) -> Self {
+        Self {
+            world,
+            type_id: TypeId::of::<T>(),
+            arch_iter: world.archetype_graph().archetypes_iter(),
+            current_row: 0,
+            current_arch: None,
+            current_col: None,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'w, T: Component> Iterator for LazyArchetypeIter<'w, T> {
+    type Item = (Entity, &'w T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            // Try to get next item from current archetype
+            if let (Some(arch), Some(col)) = (self.current_arch, self.current_col) {
+                if self.current_row < arch.entities.len() && self.current_row < col.data.len() {
+                    let entity = arch.entities[self.current_row];
+                    let item = &col.data[self.current_row];
+                    self.current_row += 1;
+                    return Some((entity, item));
+                }
+            }
+
+            // Move to next archetype
+            self.current_row = 0;
+            self.current_arch = None;
+            self.current_col = None;
+
+            // Find next matching archetype
+            for (id, arch) in &mut self.arch_iter {
+                if !arch.signature.contains(&self.type_id) {
+                    continue;
+                }
+                if let Some(&col_idx) = arch.type_to_column.get(&self.type_id) {
+                    if let Some(col) = arch.columns[col_idx]
+                        .as_any()
+                        .downcast_ref::<TypedColumn<T>>()
+                    {
+                        if !col.data.is_empty() {
+                            self.current_arch = Some(arch);
+                            self.current_col = Some(col);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // If no archetype found, we're done
+            if self.current_arch.is_none() {
+                return None;
+            }
+        }
+    }
+}
+
+// Add method to World for lazy iteration
+impl World {
+    /// Create a lazy iterator over all entities with component T.
+    ///
+    /// This iterator does not allocate and filters archetypes on-the-fly.
+    /// For hot loops, prefer using `CachedQueryState` with `iter_zero_alloc`.
+    pub fn query_iter<T: Component>(&self) -> LazyArchetypeIter<'_, T> {
+        LazyArchetypeIter::new(self)
+    }
+}
+
+#[cfg(test)]
+mod zero_alloc_tests {
+    use super::*;
+    use crate::ecs::World;
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct Position {
+        x: f32,
+        y: f32,
+    }
+
+    #[derive(Debug, Clone, PartialEq)]
+    struct Velocity {
+        dx: f32,
+        dy: f32,
+    }
+
+    #[test]
+    fn lazy_archetype_iter_single_component() {
+        let mut world = World::new();
+
+        // Spawn entities with Position
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 2.0 });
+
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 3.0, y: 4.0 });
+
+        // Spawn entity without Position
+        let e3 = world.spawn();
+        world.insert(e3, Velocity { dx: 1.0, dy: 0.0 });
+
+        let mut count = 0;
+        for (_entity, _pos) in world.query_iter::<Position>() {
+            count += 1;
+        }
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn lazy_archetype_iter_empty_world() {
+        let world = World::new();
+        let mut count = 0;
+        for (_entity, _pos) in world.query_iter::<Position>() {
+            count += 1;
+        }
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn zero_alloc_query_iter_single_component() {
+        let mut world = World::new();
+
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 10.0, y: 20.0 });
+
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 30.0, y: 40.0 });
+
+        let cache = CachedQueryState::<Position>::new();
+        let iter = cache.iter_zero_alloc(&world);
+
+        let positions: Vec<_> = iter.map(|(_, p)| (p.x, p.y)).collect();
+        assert_eq!(positions.len(), 2);
+        assert!(positions.contains(&(10.0, 20.0)));
+        assert!(positions.contains(&(30.0, 40.0)));
+    }
+
+    #[test]
+    fn zero_alloc_query_iter_two_components() {
+        let mut world = World::new();
+
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 2.0 });
+        world.insert(e1, Velocity { dx: 0.1, dy: 0.2 });
+
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 3.0, y: 4.0 });
+        world.insert(e2, Velocity { dx: 0.3, dy: 0.4 });
+
+        // Entity with only Position (should not match)
+        let e3 = world.spawn();
+        world.insert(e3, Position { x: 5.0, y: 6.0 });
+
+        let cache = CachedQueryState2::<Position, Velocity>::new();
+        let iter = cache.iter_zero_alloc(&world);
+
+        let results: Vec<_> = iter.collect();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn cached_query_state_updates_on_new_archetype() {
+        let mut world = World::new();
+        let cache = CachedQueryState::<Position>::new();
+
+        // Initial: empty
+        let archetypes = cache.archetypes(&world);
+        assert_eq!(archetypes.len(), 0);
+
+        // Add entity with Position
+        let e = world.spawn();
+        world.insert(e, Position { x: 1.0, y: 1.0 });
+
+        // Cache should update
+        let archetypes = cache.archetypes(&world);
+        assert!(archetypes.len() >= 1);
+    }
+
+    #[test]
+    fn lazy_iter_after_despawn() {
+        let mut world = World::new();
+
+        let e1 = world.spawn();
+        world.insert(e1, Position { x: 1.0, y: 1.0 });
+
+        let e2 = world.spawn();
+        world.insert(e2, Position { x: 2.0, y: 2.0 });
+
+        // Despawn one
+        world.despawn(e1);
+
+        let positions: Vec<_> = world.query_iter::<Position>().collect();
+        assert_eq!(positions.len(), 1);
+    }
+}

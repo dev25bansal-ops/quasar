@@ -617,17 +617,46 @@ impl ApplicationHandler for QuasarRunner {
                         }
 
                         // 3D pass — render to HDR target (linear space, no tonemapping).
-                        // TODO: When deferred_enabled, render to G-Buffer then run deferred lighting pass.
-                        // This requires a deferred geometry shader that outputs albedo, normal, and PBR params.
-                        let gpu_3d = state.gpu_profiler.begin_pass(&mut encoder, "3d_pass");
-                        state.renderer.render_3d_pass_batched(
-                            &state.camera,
-                            &objects,
-                            &state.hdr_target.view,
-                            &mut encoder,
-                        );
-                        if let Some(idx) = gpu_3d {
-                            state.gpu_profiler.end_pass(&mut encoder, idx);
+                        if let (Some(gbuffer), Some(deferred)) =
+                            (state.gbuffer.as_ref(), state.deferred_lighting.as_ref())
+                        {
+                            let gpu_gbuffer =
+                                state.gpu_profiler.begin_pass(&mut encoder, "gbuffer_pass");
+                            state.renderer.render_deferred_geometry_pass(
+                                &state.camera,
+                                &objects,
+                                gbuffer,
+                                &mut encoder,
+                            );
+                            if let Some(idx) = gpu_gbuffer {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
+
+                            deferred.update_lights(&state.renderer.queue, &lights_uniform);
+                            deferred.update_camera(
+                                &state.renderer.queue,
+                                state.camera.view_projection().inverse(),
+                                state.camera.position,
+                            );
+
+                            let gpu_deferred = state
+                                .gpu_profiler
+                                .begin_pass(&mut encoder, "deferred_lighting");
+                            deferred.execute(&mut encoder, &state.hdr_target.view, gbuffer);
+                            if let Some(idx) = gpu_deferred {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
+                        } else {
+                            let gpu_3d = state.gpu_profiler.begin_pass(&mut encoder, "3d_pass");
+                            state.renderer.render_3d_pass_batched(
+                                &state.camera,
+                                &objects,
+                                &state.hdr_target.view,
+                                &mut encoder,
+                            );
+                            if let Some(idx) = gpu_3d {
+                                state.gpu_profiler.end_pass(&mut encoder, idx);
+                            }
                         }
 
                         // Clear jitter so non-rendering code sees unjittered projection.

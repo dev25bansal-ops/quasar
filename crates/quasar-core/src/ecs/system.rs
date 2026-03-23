@@ -125,7 +125,7 @@ impl Schedule {
     /// Run all systems in stage order, flushing Commands between stages.
     ///
     /// Within each stage, systems are topologically sorted according to
-    /// the constraints registered via [`add_order`].
+    /// the constraints registered via `add_order`.
     pub fn run(&mut self, world: &mut World) {
         for (_stage, systems) in &mut self.stages {
             let order = topo_sort_systems(systems, &self.before);

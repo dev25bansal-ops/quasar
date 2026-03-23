@@ -83,7 +83,7 @@ pub struct AssetServer {
 }
 
 impl AssetServer {
-    /// Access the embedded [`AssetManager`] for generational handle-based
+    /// Access the embedded `AssetManager` for generational handle-based
     /// storage. Prefer this over using the raw `get()` / `load()` methods
     /// when you already have a concrete `AssetHandle<T>`.
     pub fn manager(&self) -> std::sync::MutexGuard<'_, crate::asset::AssetManager> {
@@ -445,7 +445,7 @@ impl AssetServer {
     /// Schedule an asset load on a background thread.
     ///
     /// Returns a handle immediately. The caller can poll
-    /// [`is_loaded`] or listen for [`AssetEvent::Loaded`] to know
+    /// `is_loaded` or listen for `AssetEvent::Loaded` to know
     /// when the data is ready.  The actual decode still happens
     /// synchronously in the asset server's loader; the thread only
     /// does the filesystem I/O.

@@ -260,4 +260,101 @@ mod tests {
 
         assert!(!world.is_alive(entity));
     }
+
+    #[test]
+    fn commands_new() {
+        let cmds = Commands::new();
+        assert!(cmds.queue.is_empty());
+    }
+
+    #[test]
+    fn spawn_builder_with_chain() {
+        let mut world = World::new();
+        let mut cmds = Commands::new();
+
+        let entity_id = cmds
+            .spawn()
+            .with(Position { x: 10.0, y: 20.0 })
+            .with(Velocity { dx: 1.0, dy: 2.0 })
+            .id();
+
+        cmds.apply(&mut world);
+        assert_eq!(world.entity_count(), 1);
+
+        let pos = world.get::<Position>(entity_id);
+        assert!(pos.is_some());
+        let pos = pos.unwrap();
+        assert_eq!(pos.x, 10.0);
+        assert_eq!(pos.y, 20.0);
+
+        let vel = world.get::<Velocity>(entity_id);
+        assert!(vel.is_some());
+        let vel = vel.unwrap();
+        assert_eq!(vel.dx, 1.0);
+        assert_eq!(vel.dy, 2.0);
+    }
+
+    #[test]
+    fn multiple_spawn_commands() {
+        let mut world = World::new();
+        let mut cmds = Commands::new();
+
+        cmds.spawn().with(Position { x: 1.0, y: 1.0 }).id();
+        cmds.spawn().with(Position { x: 2.0, y: 2.0 }).id();
+        cmds.spawn().with(Position { x: 3.0, y: 3.0 }).id();
+
+        cmds.apply(&mut world);
+        assert_eq!(world.entity_count(), 3);
+    }
+
+    #[test]
+    fn commands_clear_after_apply() {
+        let mut world = World::new();
+        let mut cmds = Commands::new();
+
+        cmds.spawn().with(Position { x: 1.0, y: 1.0 }).id();
+        assert!(!cmds.queue.is_empty());
+
+        cmds.apply(&mut world);
+        assert!(cmds.queue.is_empty());
+    }
+
+    #[test]
+    fn insert_multiple_components() {
+        let mut world = World::new();
+        let entity = world.spawn();
+
+        let mut cmds = Commands::new();
+        cmds.insert(entity, Position { x: 5.0, y: 5.0 });
+        cmds.insert(entity, Velocity { dx: 1.0, dy: 1.0 });
+        cmds.apply(&mut world);
+
+        assert!(world.get::<Position>(entity).is_some());
+        assert!(world.get::<Velocity>(entity).is_some());
+    }
+
+    #[test]
+    fn remove_nonexistent_component() {
+        let mut world = World::new();
+        let entity = world.spawn();
+
+        let mut cmds = Commands::new();
+        cmds.remove::<Velocity>(entity);
+        cmds.apply(&mut world);
+
+        assert!(world.get::<Velocity>(entity).is_none());
+    }
+
+    #[test]
+    fn despawn_nonexistent_entity() {
+        let mut world = World::new();
+        let entity = world.spawn();
+        world.despawn(entity);
+
+        let mut cmds = Commands::new();
+        cmds.despawn(entity);
+        cmds.apply(&mut world);
+
+        assert!(!world.is_alive(entity));
+    }
 }

@@ -1,0 +1,25 @@
+[package]
+name = "quasar-network"
+description = "Networking module for Quasar Engine - QUIC/UDP transport, rollback netcode, replication"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+quasar-math = { path = "../quasar-math" }
+parking_lot = { workspace = true }
+quinn = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+
+[features]
+default = []
+quinn-transport = ["dep:quinn", "dep:rustls", "dep:tokio", "dep:rcgen"]
+
+[dev-dependencies]
+criterion = { workspace = true }

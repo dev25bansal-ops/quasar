@@ -2,7 +2,7 @@
 //!
 //! Provides [`SceneData`] as a serializable snapshot of entity transforms,
 //! names, parent–child hierarchy, and mesh shapes. This is intentionally
-//! decoupled from the ECS [`World`] so it can be round-tripped through JSON
+//! decoupled from the ECS `World` so it can be round-tripped through JSON
 //! and later loaded back into a fresh world.
 
 use std::path::Path;

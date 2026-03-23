@@ -277,6 +277,7 @@ pub fn list_assets(path: &Path) -> Result<Vec<String>, String> {
 /// This function uses unsafe code to obtain a 'static reference to the
 /// JNIEnv and AssetManager. The caller must ensure the Android activity
 /// remains valid for the lifetime of the application.
+#[allow(clippy::unwrap_used)]
 pub unsafe fn init_asset_manager() -> Result<(), String> {
     let context = ndk_context::android_context();
     let activity = context.context().cast::<JObject>();

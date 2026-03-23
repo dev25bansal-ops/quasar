@@ -268,4 +268,119 @@ mod tests {
         assert!(!storage.contains::<f32>(e));
         assert!(!storage.contains::<String>(e));
     }
+
+    #[test]
+    fn sparse_set_new() {
+        let set = SparseSet::<i32>::new();
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+    }
+
+    #[test]
+    fn sparse_set_get_mut() {
+        let mut set = SparseSet::<i32>::new();
+        let e = Entity::new(0, 0);
+        set.insert(e, 10);
+
+        *set.get_mut(e).unwrap() = 20;
+        assert_eq!(set.get(e), Some(&20));
+    }
+
+    #[test]
+    fn sparse_set_get_nonexistent() {
+        let set = SparseSet::<i32>::new();
+        let e = Entity::new(0, 0);
+        assert!(set.get(e).is_none());
+    }
+
+    #[test]
+    fn sparse_set_contains() {
+        let mut set = SparseSet::<i32>::new();
+        let e = Entity::new(0, 0);
+        assert!(!set.contains(e));
+
+        set.insert(e, 1);
+        assert!(set.contains(e));
+
+        set.remove(e);
+        assert!(!set.contains(e));
+    }
+
+    #[test]
+    fn sparse_set_remove_nonexistent() {
+        let mut set = SparseSet::<i32>::new();
+        let e = Entity::new(0, 0);
+        assert!(set.remove(e).is_none());
+    }
+
+    #[test]
+    fn sparse_set_clear() {
+        let mut set = SparseSet::<i32>::new();
+        set.insert(Entity::new(0, 0), 1);
+        set.insert(Entity::new(1, 0), 2);
+        set = SparseSet::new();
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn sparse_set_is_empty() {
+        let mut set = SparseSet::<i32>::new();
+        assert!(set.is_empty());
+
+        set.insert(Entity::new(0, 0), 1);
+        assert!(!set.is_empty());
+    }
+
+    #[test]
+    fn sparse_set_iter_mut() {
+        let mut set = SparseSet::<i32>::new();
+        set.insert(Entity::new(0, 0), 1);
+        set.insert(Entity::new(1, 0), 2);
+
+        for (_, v) in set.iter_mut() {
+            *v += 10;
+        }
+
+        assert_eq!(set.get(Entity::new(0, 0)), Some(&11));
+        assert_eq!(set.get(Entity::new(1, 0)), Some(&12));
+    }
+
+    #[test]
+    fn sparse_set_storage_new() {
+        let storage = SparseSetStorage::new();
+        assert!(storage.sets.is_empty());
+    }
+
+    #[test]
+    fn sparse_set_storage_get_or_create() {
+        let mut storage = SparseSetStorage::new();
+        let set = storage.get_or_create::<i32>();
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn sparse_set_storage_get_returns_same_instance() {
+        let mut storage = SparseSetStorage::new();
+        storage.get_or_create::<i32>().insert(Entity::new(0, 0), 42);
+
+        let set = storage.get::<i32>().unwrap();
+        assert_eq!(set.get(Entity::new(0, 0)), Some(&42));
+    }
+
+    #[test]
+    fn sparse_set_storage_get_nonexistent_type() {
+        let storage = SparseSetStorage::new();
+        assert!(storage.get::<i32>().is_none());
+    }
+
+    #[test]
+    fn sparse_set_storage_contains() {
+        let mut storage = SparseSetStorage::new();
+        let e = Entity::new(0, 0);
+
+        assert!(!storage.contains::<i32>(e));
+
+        storage.get_or_create::<i32>().insert(e, 1);
+        assert!(storage.contains::<i32>(e));
+    }
 }

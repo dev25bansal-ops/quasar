@@ -272,7 +272,7 @@ impl CascadeShadowMap {
         Self::calculate_cascades_lambda(near, far, 0.75)
     }
 
-    /// Same as [`calculate_cascades`] but with an explicit blend factor.
+    /// Same as `calculate_cascades` but with an explicit blend factor.
     pub fn calculate_cascades_lambda(near: f32, far: f32, lambda: f32) -> Vec<Cascade> {
         let mut cascades = Vec::with_capacity(CASCADE_COUNT);
 

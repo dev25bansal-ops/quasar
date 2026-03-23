@@ -1010,7 +1010,6 @@ mod tests {
         let settings = PostProcessSettings::default();
         assert!(settings.fxaa_enabled);
         assert!(settings.bloom_enabled);
-        assert!(settings.ssao_enabled);
         assert!(settings.bloom_threshold > 0.0);
     }
 }

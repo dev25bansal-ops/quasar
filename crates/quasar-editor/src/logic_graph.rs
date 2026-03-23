@@ -369,10 +369,10 @@ impl LogicGraphCompiler {
     pub fn compile(graph: &LogicGraph) -> Result<String, String> {
         let mut out = String::new();
 
-        writeln!(out, "-- Auto-generated from logic graph: {}", graph.name).unwrap();
-        writeln!(out, "local _state = {{}}").unwrap();
-        writeln!(out, "local behaviour = {{}}").unwrap();
-        writeln!(out).unwrap();
+        let _ = writeln!(out, "-- Auto-generated from logic graph: {}", graph.name);
+        let _ = writeln!(out, "local _state = {{}}");
+        let _ = writeln!(out, "local behaviour = {{}}");
+        let _ = writeln!(out);
 
         // Find entry-point nodes.
         let on_start_nodes: Vec<&LogicNode> = graph
@@ -393,46 +393,45 @@ impl LogicGraphCompiler {
 
         // on_start
         if !on_start_nodes.is_empty() {
-            writeln!(out, "function behaviour.on_start(entity_id)").unwrap();
+            let _ = writeln!(out, "function behaviour.on_start(entity_id)");
             for node in &on_start_nodes {
                 Self::compile_exec_chain(graph, node.id, 0, &mut out, 1)?;
             }
-            writeln!(out, "end").unwrap();
-            writeln!(out).unwrap();
+            let _ = writeln!(out, "end");
+            let _ = writeln!(out);
         }
 
         // on_update
         if !on_update_nodes.is_empty() {
-            writeln!(out, "function behaviour.on_update(entity_id, dt)").unwrap();
+            let _ = writeln!(out, "function behaviour.on_update(entity_id, dt)");
             for node in &on_update_nodes {
                 Self::compile_exec_chain(graph, node.id, 0, &mut out, 1)?;
             }
-            writeln!(out, "end").unwrap();
-            writeln!(out).unwrap();
+            let _ = writeln!(out, "end");
+            let _ = writeln!(out);
         }
 
         // on_event handlers → registered via on_start
         if !on_event_nodes.is_empty() {
             // Append event registrations to on_start
-            writeln!(
+            let _ = writeln!(
                 out,
                 "local _orig_start = behaviour.on_start or function() end"
-            )
-            .unwrap();
-            writeln!(out, "function behaviour.on_start(entity_id)").unwrap();
-            writeln!(out, "  _orig_start(entity_id)").unwrap();
+            );
+            let _ = writeln!(out, "function behaviour.on_start(entity_id)");
+            let _ = writeln!(out, "  _orig_start(entity_id)");
             for node in &on_event_nodes {
                 if let LogicNodeKind::OnEvent { event_name } = &node.kind {
-                    writeln!(out, "  quasar.on_event(\"{}\", function(data)", event_name).unwrap();
+                    let _ = writeln!(out, "  quasar.on_event(\"{}\", function(data)", event_name);
                     Self::compile_exec_chain(graph, node.id, 0, &mut out, 2)?;
-                    writeln!(out, "  end)").unwrap();
+                    let _ = writeln!(out, "  end)");
                 }
             }
-            writeln!(out, "end").unwrap();
-            writeln!(out).unwrap();
+            let _ = writeln!(out, "end");
+            let _ = writeln!(out);
         }
 
-        writeln!(out, "return behaviour").unwrap();
+        let _ = writeln!(out, "return behaviour");
         Ok(out)
     }
 
@@ -466,7 +465,7 @@ impl LogicGraphCompiler {
         match &node.kind {
             LogicNodeKind::Print => {
                 let msg = Self::compile_data_input(graph, node.id, 0)?;
-                writeln!(out, "{}quasar.log(tostring({}))", pad, msg).unwrap();
+                let _ = writeln!(out, "{}quasar.log(tostring({}))", pad, msg);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::SetPosition => {
@@ -474,12 +473,11 @@ impl LogicGraphCompiler {
                 let x = Self::compile_data_input(graph, node.id, 1)?;
                 let y = Self::compile_data_input(graph, node.id, 2)?;
                 let z = Self::compile_data_input(graph, node.id, 3)?;
-                writeln!(
+                let _ = writeln!(
                     out,
                     "{}quasar.set_position({}, {}, {}, {})",
                     pad, eid, x, y, z
-                )
-                .unwrap();
+                );
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::ApplyForce => {
@@ -487,57 +485,54 @@ impl LogicGraphCompiler {
                 let x = Self::compile_data_input(graph, node.id, 1)?;
                 let y = Self::compile_data_input(graph, node.id, 2)?;
                 let z = Self::compile_data_input(graph, node.id, 3)?;
-                writeln!(
+                let _ = writeln!(
                     out,
                     "{}quasar.apply_force({}, {}, {}, {})",
                     pad, eid, x, y, z
-                )
-                .unwrap();
+                );
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::PlayAudio => {
                 let path = Self::compile_data_input(graph, node.id, 0)?;
-                writeln!(out, "{}quasar.play_audio({})", pad, path).unwrap();
+                let _ = writeln!(out, "{}quasar.play_audio({})", pad, path);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::SpawnEntity => {
-                writeln!(out, "{}quasar.spawn()", pad).unwrap();
+                let _ = writeln!(out, "{}quasar.spawn()", pad);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::DespawnEntity => {
                 let eid = Self::compile_data_input(graph, node.id, 0)?;
-                writeln!(out, "{}quasar.despawn({})", pad, eid).unwrap();
+                let _ = writeln!(out, "{}quasar.despawn({})", pad, eid);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::SetComponent { component, field } => {
                 let eid = Self::compile_data_input(graph, node.id, 0)?;
                 let val = Self::compile_data_input(graph, node.id, 1)?;
-                writeln!(
+                let _ = writeln!(
                     out,
                     "{}quasar.add_component({}, \"{}\", {{ {} = {} }})",
                     pad, eid, component, field, val
-                )
-                .unwrap();
+                );
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             LogicNodeKind::Branch => {
                 let cond = Self::compile_data_input(graph, node.id, 0)?;
-                writeln!(out, "{}if {} then", pad, cond).unwrap();
+                let _ = writeln!(out, "{}if {} then", pad, cond);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent + 1)?;
-                writeln!(out, "{}else", pad).unwrap();
+                let _ = writeln!(out, "{}else", pad);
                 Self::compile_exec_chain(graph, node.id, 1, out, indent + 1)?;
-                writeln!(out, "{}end", pad).unwrap();
+                let _ = writeln!(out, "{}end", pad);
             }
             LogicNodeKind::ForEach { component } => {
-                writeln!(
+                let _ = writeln!(
                     out,
                     "{}for _, _row in ipairs(quasar.query(\"{}\")) do",
                     pad, component
-                )
-                .unwrap();
-                writeln!(out, "{}  local _foreach_entity = _row.entity", pad).unwrap();
+                );
+                let _ = writeln!(out, "{}  local _foreach_entity = _row.entity", pad);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent + 1)?;
-                writeln!(out, "{}end", pad).unwrap();
+                let _ = writeln!(out, "{}end", pad);
                 Self::compile_exec_chain(graph, node.id, 1, out, indent)?;
             }
             LogicNodeKind::Sequence { count } => {
@@ -547,7 +542,7 @@ impl LogicGraphCompiler {
             }
             LogicNodeKind::SetVariable { name } => {
                 let val = Self::compile_data_input(graph, node.id, 0)?;
-                writeln!(out, "{}_state[\"{}\"] = {}", pad, name, val).unwrap();
+                let _ = writeln!(out, "{}_state[\"{}\"] = {}", pad, name, val);
                 Self::compile_exec_chain(graph, node.id, 0, out, indent)?;
             }
             _ => {

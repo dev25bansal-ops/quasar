@@ -126,6 +126,7 @@ impl MobileRunner {
 }
 
 impl ApplicationHandler for MobileRunner {
+    #[allow(clippy::expect_used)]
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.state.is_some() {
             return;
@@ -357,6 +358,7 @@ impl ApplicationHandler for MobileRunner {
 }
 
 /// Convenience entry point: creates an event loop and runs the mobile runner.
+#[allow(clippy::expect_used)]
 pub fn run_mobile(app: App, window_config: WindowConfig, mobile_config: MobileConfig) {
     let event_loop = EventLoop::new().expect("Failed to create mobile event loop");
     event_loop.set_control_flow(ControlFlow::Poll);

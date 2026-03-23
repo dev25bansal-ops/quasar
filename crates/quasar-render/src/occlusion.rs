@@ -327,7 +327,7 @@ pub struct HiZMip {
     pub height: u32,
     /// Depth values (row-major). Each value is the **maximum** (farthest)
     /// depth among the 2×2 parent texels — because in a reversed-Z setup the
-    /// closer depth is *larger*, but we use a standard [0,1] depth where 0 is
+    /// closer depth is *larger*, but we use a standard `[0,1]` depth where 0 is
     /// near and 1 is far, so storing the max is the *conservative* choice for
     /// occlusion: if the max (farthest) pixel is still closer than the object,
     /// the whole tile occludes it.
