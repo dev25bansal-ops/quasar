@@ -18,6 +18,64 @@ use super::meshlet::{MeshletGpuBuffers, MESHLET_CULL_WGSL};
 /// unique model matrices.
 const MAX_RENDER_OBJECTS: usize = 4096;
 
+/// Ring buffer size for uniform data (4MB, enough for many frames).
+const UNIFORM_RING_SIZE: u64 = 4 * 1024 * 1024;
+
+/// Ring buffer for uniform data to avoid per-frame allocations.
+/// Reuses a single GPU buffer with rotating offsets.
+pub struct UniformRingBuffer {
+    buffer: wgpu::Buffer,
+    capacity: u64,
+    offset: u64,
+    frame_offsets: Vec<u64>,
+}
+
+impl UniformRingBuffer {
+    pub fn new(device: &wgpu::Device, capacity: u64, label: Option<&str>) -> Self {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label,
+            size: capacity,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            buffer,
+            capacity,
+            offset: 0,
+            frame_offsets: Vec::new(),
+        }
+    }
+
+    /// Allocate space for data, returns offset into buffer.
+    /// Automatically wraps around when reaching capacity.
+    pub fn allocate(&mut self, size: u64, alignment: u64) -> u64 {
+        let aligned_offset = (self.offset + alignment - 1) / alignment * alignment;
+        let end = aligned_offset + size;
+        
+        if end > self.capacity {
+            // Wrap around
+            self.offset = 0;
+            self.frame_offsets.clear();
+            return 0;
+        }
+        
+        self.offset = end;
+        self.frame_offsets.push(aligned_offset);
+        aligned_offset
+    }
+
+    /// Reset for new frame (keeps buffer, just resets offset tracking).
+    pub fn begin_frame(&mut self) {
+        // Keep some space for previous frame's data still in use
+        // In a proper implementation, we'd track GPU fence
+    }
+
+    /// Get the underlying buffer.
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buffer
+    }
+}
+
 /// Rendering configuration options.
 #[derive(Debug, Clone, Copy)]
 pub struct RenderConfig {
@@ -119,6 +177,10 @@ pub struct Renderer {
     pub ssgi_pass: Option<SsgiPass>,
     /// GPU particle system — compute-based particle simulation.
     pub gpu_particle_system: Option<crate::particle::GpuParticleSystem>,
+    /// Ring buffer for uniform data to avoid per-frame allocations.
+    pub uniform_ring_buffer: UniformRingBuffer,
+    /// Staging buffer for CPU-side uniform data (reused across frames).
+    uniform_staging: Vec<u8>,
 }
 
 impl Renderer {
@@ -655,6 +717,13 @@ impl Renderer {
             ],
         });
 
+        // Create ring buffer before moving device
+        let uniform_ring_buffer = UniformRingBuffer::new(
+            &device,
+            UNIFORM_RING_SIZE,
+            Some("Uniform Ring Buffer"),
+        );
+
         let mut result = Ok(Self {
             device,
             queue,
@@ -692,6 +761,8 @@ impl Renderer {
             motion_vector_view: None,
             ssgi_pass: None,
             gpu_particle_system: None,
+            uniform_ring_buffer,
+            uniform_staging: vec![0u8; UNIFORM_RING_SIZE as usize],
         });
         if let Ok(ref mut renderer) = result {
             if renderer.render_config.gpu_driven_culling {
@@ -1040,7 +1111,14 @@ impl Renderer {
 
         if !objects.is_empty() {
             let total = aligned_size * objects.len();
-            let mut data = vec![0u8; total];
+            
+            // Ensure staging buffer is large enough
+            if self.uniform_staging.len() < total {
+                self.uniform_staging.resize(total, 0);
+            }
+            
+            // Write uniform data to staging buffer
+            let data = &mut self.uniform_staging[..total];
             for (i, (_, model, _, _)) in objects.iter().enumerate() {
                 let mut uniform = CameraUniform::new();
                 uniform.update(camera, *model);
@@ -1048,7 +1126,7 @@ impl Renderer {
                 let offset = i * aligned_size;
                 data[offset..offset + uniform_size].copy_from_slice(bytes);
             }
-            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+            self.queue.write_buffer(&self.camera_buffer, 0, &data[..total]);
         }
 
         {

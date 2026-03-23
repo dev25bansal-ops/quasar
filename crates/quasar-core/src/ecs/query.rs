@@ -1072,7 +1072,7 @@ impl<'w, T: Component> Iterator for LazyArchetypeIter<'w, T> {
             self.current_col = None;
 
             // Find next matching archetype
-            for (id, arch) in &mut self.arch_iter {
+            for (_id, arch) in &mut self.arch_iter {
                 if !arch.signature.contains(&self.type_id) {
                     continue;
                 }

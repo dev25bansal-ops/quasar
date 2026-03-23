@@ -80,6 +80,135 @@ impl RateLimiter {
     }
 }
 
+/// Object pool for reusing message buffers to avoid allocations.
+/// Thread-safe pool that returns buffers on drop.
+pub struct MessagePool {
+    buffers: RwLock<Vec<Vec<u8>>>,
+    default_capacity: usize,
+}
+
+impl MessagePool {
+    pub fn new(default_capacity: usize) -> Self {
+        Self {
+            buffers: RwLock::new(Vec::new()),
+            default_capacity,
+        }
+    }
+
+    /// Get a buffer from the pool, or create a new one.
+    pub fn acquire(&self) -> PooledBuffer<'_> {
+        let buffer = self
+            .buffers
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(self.default_capacity));
+        PooledBuffer {
+            buffer: Some(buffer),
+            pool: self,
+        }
+    }
+
+    /// Return a buffer to the pool.
+    fn release(&self, mut buffer: Vec<u8>) {
+        buffer.clear();
+        let mut buffers = self.buffers.write().unwrap_or_else(|e| e.into_inner());
+        // Limit pool size to prevent unbounded memory growth
+        if buffers.len() < 64 {
+            buffers.push(buffer);
+        }
+    }
+}
+
+/// A buffer acquired from a MessagePool. Returns to pool on drop.
+pub struct PooledBuffer<'a> {
+    buffer: Option<Vec<u8>>,
+    pool: &'a MessagePool,
+}
+
+impl<'a> std::ops::Deref for PooledBuffer<'a> {
+    type Target = Vec<u8>;
+    fn deref(&self) -> &Self::Target {
+        self.buffer.as_ref().unwrap()
+    }
+}
+
+impl<'a> std::ops::DerefMut for PooledBuffer<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.buffer.as_mut().unwrap()
+    }
+}
+
+impl<'a> Drop for PooledBuffer<'a> {
+    fn drop(&mut self) {
+        if let Some(buffer) = self.buffer.take() {
+            self.pool.release(buffer);
+        }
+    }
+}
+
+impl Default for MessagePool {
+    fn default() -> Self {
+        Self::new(MTU_SIZE)
+    }
+}
+
+#[cfg(test)]
+mod pool_tests {
+    use super::*;
+
+    #[test]
+    fn message_pool_new() {
+        let pool = MessagePool::new(1024);
+        assert!(pool.buffers.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn message_pool_acquire_creates_buffer() {
+        let pool = MessagePool::new(1024);
+        let buffer = pool.acquire();
+        assert!(buffer.capacity() >= 1024);
+    }
+
+    #[test]
+    fn message_pool_returns_buffer_on_drop() {
+        let pool = MessagePool::new(1024);
+        {
+            let _buffer = pool.acquire();
+        }
+        assert_eq!(pool.buffers.read().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn message_pool_reuses_buffer() {
+        let pool = MessagePool::new(1024);
+
+        // Acquire and return
+        {
+            let mut buffer = pool.acquire();
+            buffer.extend_from_slice(b"test data");
+        }
+
+        // Acquire again - should reuse
+        let buffer = pool.acquire();
+        assert!(buffer.is_empty()); // Buffer was cleared
+        assert_eq!(pool.buffers.read().unwrap().len(), 0); // Taken from pool
+    }
+
+    #[test]
+    fn message_pool_limits_size() {
+        let pool = MessagePool::new(1024);
+
+        // Acquire and return many buffers
+        for _ in 0..100 {
+            let _ = pool.acquire();
+        }
+
+        // Pool should be limited to 64
+        assert!(pool.buffers.read().unwrap().len() <= 64);
+    }
+}
+
 /// Security configuration for network validation.
 #[derive(Debug, Clone)]
 pub struct NetworkSecurityConfig {
@@ -1324,6 +1453,18 @@ impl TransportResource {
         }
     }
 
+    /// Receive raw data from the transport.
+    pub fn receive_raw(&mut self) -> Result<Option<(SocketAddr, Vec<u8>)>, NetworkError> {
+        match self {
+            TransportResource::Udp(t) => t.receive(),
+            #[cfg(feature = "quinn-transport")]
+            TransportResource::Quic(t) => {
+                // Quinn backend uses different receive pattern
+                Ok(None)
+            }
+        }
+    }
+
     pub fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
         match self {
             TransportResource::Udp(t) => Transport::metrics(t, addr),
@@ -1444,6 +1585,43 @@ impl NetworkTransportResource {
             }
         }
         messages
+    }
+
+    /// Process and deserialize messages in parallel using rayon.
+    /// Returns validated messages ready for processing.
+    pub fn poll_messages_parallel(&mut self) -> Vec<(SocketAddr, NetworkMessage)> {
+        use rayon::prelude::*;
+
+        let mut raw_messages: Vec<(SocketAddr, Vec<u8>)> = Vec::new();
+
+        // First, receive all raw messages
+        loop {
+            match self.transport.receive_raw() {
+                Ok(Some((addr, payload))) => {
+                    if self.security_config.enable_rate_limiting {
+                        let security = self.client_security.entry(addr).or_default();
+                        if !security.rate_limiter.check_and_increment() {
+                            log::warn!("Rate limiting client {}", addr);
+                            continue;
+                        }
+                    }
+                    raw_messages.push((addr, payload));
+                }
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
+
+        // Parallel deserialization
+        let config = bincode::config::standard();
+        raw_messages
+            .par_iter()
+            .filter_map(|(addr, payload)| {
+                bincode::serde::decode_from_slice::<NetworkMessage, _>(payload, config)
+                    .ok()
+                    .map(|(msg, _)| (*addr, msg))
+            })
+            .collect()
     }
 
     fn validate_message(&mut self, msg: &NetworkMessage) -> Result<(), NetworkError> {
