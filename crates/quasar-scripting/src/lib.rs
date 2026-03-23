@@ -24,6 +24,66 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+/// Path traversal protection for script file access.
+/// Validates that paths are within allowed directories.
+pub struct PathValidator {
+    allowed_directories: Vec<PathBuf>,
+}
+
+impl PathValidator {
+    /// Create a new validator with allowed directories.
+    pub fn new(allowed_directories: Vec<PathBuf>) -> Self {
+        Self {
+            allowed_directories,
+        }
+    }
+
+    /// Validate a path is within allowed directories.
+    /// Returns the canonical path if valid, or an error if not.
+    pub fn validate(&self, path: &Path) -> Result<PathBuf, PathValidationError> {
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| PathValidationError::NotFound(e.to_string()))?;
+
+        for allowed in &self.allowed_directories {
+            let allowed_canonical = allowed.canonicalize().unwrap_or_else(|_| allowed.clone());
+            if canonical.starts_with(&allowed_canonical) {
+                return Ok(canonical);
+            }
+        }
+
+        Err(PathValidationError::NotAllowed(canonical))
+    }
+
+    /// Add an allowed directory.
+    pub fn add_allowed(&mut self, dir: PathBuf) {
+        self.allowed_directories.push(dir);
+    }
+}
+
+impl Default for PathValidator {
+    fn default() -> Self {
+        Self::new(vec![PathBuf::from("scripts"), PathBuf::from("assets")])
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PathValidationError {
+    NotFound(String),
+    NotAllowed(PathBuf),
+}
+
+impl std::fmt::Display for PathValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(p) => write!(f, "Path not found: {}", p),
+            Self::NotAllowed(p) => write!(f, "Path not in allowed directories: {}", p.display()),
+        }
+    }
+}
+
+impl std::error::Error for PathValidationError {}
+
 /// Capabilities for sandboxing Lua scripts.
 /// Controls what operations scripts are allowed to perform.
 #[derive(Debug, Clone, Default)]
@@ -89,6 +149,7 @@ pub struct ScriptEngine {
     watcher: Option<RecommendedWatcher>,
     watched_files: Mutex<Vec<String>>,
     pub capabilities: ScriptCapabilities,
+    path_validator: PathValidator,
 }
 
 impl ScriptEngine {
@@ -168,6 +229,7 @@ impl ScriptEngine {
             watcher: Some(watcher),
             watched_files: Mutex::new(Vec::new()),
             capabilities,
+            path_validator: PathValidator::default(),
         })
     }
 
@@ -195,10 +257,16 @@ impl ScriptEngine {
             watcher: None,
             watched_files: Mutex::new(Vec::new()),
             capabilities: ScriptCapabilities::restricted(),
+            path_validator: PathValidator::default(),
         }
     }
 
-    /// Set the capabilities for this scripting engine.
+    /// Set the allowed directories for script file access.
+    pub fn set_allowed_directories(&mut self, dirs: Vec<PathBuf>) {
+        self.path_validator = PathValidator::new(dirs);
+    }
+
+    /// Set the capabilities for the script engine.
     pub fn set_capabilities(&mut self, caps: ScriptCapabilities) {
         self.capabilities = caps;
     }
@@ -232,8 +300,13 @@ impl ScriptEngine {
             return Err(mlua::Error::runtime("File access denied by sandbox"));
         }
 
-        let path_str = path.as_ref().to_string_lossy().to_string();
-        let source = std::fs::read_to_string(&path_str)
+        let validated_path = self
+            .path_validator
+            .validate(path.as_ref())
+            .map_err(|e| mlua::Error::runtime(format!("Path validation failed: {:?}", e)))?;
+
+        let path_str = validated_path.to_string_lossy().to_string();
+        let source = std::fs::read_to_string(&validated_path)
             .map_err(|e| mlua::Error::ExternalError(std::sync::Arc::new(e)))?;
 
         {
@@ -243,7 +316,7 @@ impl ScriptEngine {
                 .map_err(|_| mlua::Error::runtime("Lock poisoned"))?;
             if !watched.contains(&path_str) {
                 if let Some(ref mut watcher) = self.watcher {
-                    let _ = watcher.watch(path.as_ref(), RecursiveMode::NonRecursive);
+                    let _ = watcher.watch(&validated_path, RecursiveMode::NonRecursive);
                 }
                 watched.push(path_str.clone());
             }

@@ -26,6 +26,7 @@ pub const MAX_MESSAGES_PER_SECOND: usize = 1000;
 pub const MAX_MESSAGES_PER_TICK: usize = 100;
 pub const RATE_LIMIT_WINDOW_SECS: u64 = 1;
 pub const ENTITY_CACHE_TTL_SECS: u64 = 60;
+pub const MAX_DESERIALIZE_DEPTH: usize = 32;
 
 /// Rate limiter to prevent message flooding from clients.
 #[derive(Debug, Clone)]
@@ -1569,7 +1570,9 @@ impl NetworkTransportResource {
                     }
                 }
 
-                let config = bincode::config::standard();
+                let config = bincode::config::standard()
+                    .with_limit::<MAX_DESERIALIZE_DEPTH>()
+                    .with_limit::<{ 1024 * 1024 }>();
                 match bincode::serde::decode_from_slice::<NetworkMessage, _>(&payload, config) {
                     Ok((msg, _)) => {
                         if self.validate_message_enhanced(&msg, from).is_ok() {
@@ -1613,7 +1616,9 @@ impl NetworkTransportResource {
         }
 
         // Parallel deserialization
-        let config = bincode::config::standard();
+        let config = bincode::config::standard()
+            .with_limit::<MAX_DESERIALIZE_DEPTH>()
+            .with_limit::<{ 1024 * 1024 }>();
         raw_messages
             .par_iter()
             .filter_map(|(addr, payload)| {
