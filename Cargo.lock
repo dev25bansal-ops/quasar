@@ -3651,6 +3651,7 @@ dependencies = [
  "criterion",
  "log",
  "parking_lot",
+ "proptest",
  "quasar-math",
  "quinn",
  "rcgen",
