@@ -53,7 +53,7 @@ pub use asset_server::{
 pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState, ContentHash, AssetDepGraph};
 pub use ecs::{Component, Entity, EntityBuilder, World, flush_commands, QueryState, WorldQuery, QueryFilter};
 pub use error::{QuasarError, QuasarResult};
-pub use event::Events;
+pub use event::{Events, EventsChannel};
 pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, TransportType, Transport, TransportEvent, SendChannel, ConnectionMetrics, NetworkMetrics, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent, ReplicationResource, Replicated, replication_system, PendingServerSnapshot, rollback_system, ReplicationMode, ReplicatedField, ReplicateDescriptor, HistoryBuffer, LagCompensationManager, RelayServerConfig, RelayServer, RelaySession, UdpTransport};
 pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
 pub use plugin::Plugin;
