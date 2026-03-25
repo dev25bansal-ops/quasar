@@ -4,8 +4,11 @@
 //! - Transport trait and implementations (UDP, QUIC)
 //! - Protocol types (NetworkMessage, NetworkPayload)
 //! - Connection management types
+//! - Authentication and session management
 //!
 //! For ECS integration, see `quasar-core::network`.
+
+pub mod auth;
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};

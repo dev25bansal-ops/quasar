@@ -1,0 +1,17 @@
+[package]
+name = "demo_game"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quasar-engine = { path = "../../crates/quasar-engine" }
+quasar-core = { path = "../../crates/quasar-core" }
+quasar-math = { path = "../../crates/quasar-math" }
+quasar-render = { path = "../../crates/quasar-render" }
+quasar-physics = { path = "../../crates/quasar-physics" }
+quasar-audio = { path = "../../crates/quasar-audio" }
+quasar-scripting = { path = "../../crates/quasar-scripting" }
+quasar-network = { path = "../../crates/quasar-network" }
+glam = "0.29"
+log = "0.4"
+env_logger = "0.11"

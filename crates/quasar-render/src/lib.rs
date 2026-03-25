@@ -67,6 +67,7 @@ pub mod post_process;
 pub mod particle;
 #[cfg(feature = "sprites")]
 pub mod sprite;
+pub mod render_2d;
 #[cfg(feature = "volumetric")]
 pub mod volumetric;
 #[cfg(feature = "lightmap")]
@@ -132,6 +133,14 @@ pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, S
 pub use particle::{ParticleEmitter, ParticleEmitterConfig, ParticleData, GpuParticleSystem, MAX_PARTICLES};
 #[cfg(feature = "sprites")]
 pub use sprite::{SpriteBatch, Sprite, SpriteRect, SpriteVertex, OrthographicCamera, FontAtlas, TextRenderer};
+pub use render_2d::{
+    SpriteAnimator, AnimationFrame, AnimationSequence,
+    Tilemap, Tileset, Tile, TileChunk,
+    Camera2D, ParallaxLayer, SmoothFollow,
+    ParticleEmitter2D, Particle2D, ParticleEmitterConfig,
+    Shape2D, ShapeBatch2D,
+    NineSlice,
+};
 #[cfg(feature = "volumetric")]
 pub use volumetric::{VolumetricFogSettings, VolumetricFogPass, VolumetricFogUniform};
 #[cfg(feature = "lightmap")]

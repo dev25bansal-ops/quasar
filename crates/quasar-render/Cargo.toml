@@ -53,6 +53,7 @@ serde = { workspace = true }
 gltf = { workspace = true }
 fontdue = { workspace = true }
 rayon = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
