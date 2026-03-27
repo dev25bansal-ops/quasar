@@ -182,7 +182,9 @@ impl GpuCullPass {
         let indirect_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("GPU Cull Indirect"),
             size: indirect_buf_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::INDIRECT,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 

@@ -352,6 +352,7 @@ impl Default for RateLimiter {
 /// Authentication server.
 #[derive(Debug)]
 pub struct AuthServer {
+    #[allow(dead_code)]
     config: RateLimitConfig,
     sessions: SessionManager,
     bans: BanList,

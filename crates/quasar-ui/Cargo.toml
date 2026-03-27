@@ -11,3 +11,10 @@ fontdue = { workspace = true }
 log = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "ui_bench"
+harness = false

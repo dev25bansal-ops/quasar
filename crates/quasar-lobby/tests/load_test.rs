@@ -13,7 +13,7 @@ const MAX_CONCURRENT: usize = 20;
 #[tokio::test]
 async fn lobby_load_test() {
     let _ = env_logger::builder().is_test(true).try_init();
-    
+
     let start = Instant::now();
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
     let mut handles = Vec::new();
@@ -22,14 +22,14 @@ async fn lobby_load_test() {
         let permit = semaphore.clone();
         handles.push(tokio::spawn(async move {
             let _permit = permit.acquire().await.unwrap();
-            
+
             for op_id in 0..NUM_OPERATIONS_PER_CLIENT {
                 let session_name = format!("test-session-{}-{}", client_id, op_id);
                 let _session_id = simulate_create_session(&session_name).await;
                 let _results = simulate_find_sessions().await;
                 let _join_info = simulate_join_session(op_id as u64).await;
             }
-            
+
             client_id
         }));
     }
@@ -54,7 +54,10 @@ async fn lobby_load_test() {
     log::info!("  Total operations: {}", total_ops);
     log::info!("  Duration: {:?}", duration);
     log::info!("  Operations/sec: {:.2}", ops_per_sec);
-    log::info!("  Avg latency: {:.2}ms", duration.as_millis() as f64 / total_ops as f64);
+    log::info!(
+        "  Avg latency: {:.2}ms",
+        duration.as_millis() as f64 / total_ops as f64
+    );
 
     assert_eq!(completed, NUM_CLIENTS, "All clients should complete");
     assert!(ops_per_sec > 100.0, "Should achieve at least 100 ops/sec");
@@ -109,8 +112,12 @@ async fn session_query_performance() {
 
     let duration = start.elapsed();
     let queries_per_sec = 100.0 / duration.as_secs_f64();
-    log::info!("Query performance: {} results in {:?} ({:.2} queries/sec)", 
-               total_results, duration, queries_per_sec);
+    log::info!(
+        "Query performance: {} results in {:?} ({:.2} queries/sec)",
+        total_results,
+        duration,
+        queries_per_sec
+    );
     assert!(queries_per_sec > 50.0);
 }
 
@@ -132,7 +139,11 @@ async fn join_throughput() {
 
     let duration = start.elapsed();
     let joins_per_sec = 100.0 / duration.as_secs_f64();
-    log::info!("Join throughput: {} joins in {:?} ({:.2} joins/sec)", 
-               tokens.len(), duration, joins_per_sec);
+    log::info!(
+        "Join throughput: {} joins in {:?} ({:.2} joins/sec)",
+        tokens.len(),
+        duration,
+        joins_per_sec
+    );
     assert!(joins_per_sec > 50.0);
 }

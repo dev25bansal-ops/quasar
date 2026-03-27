@@ -50,8 +50,7 @@ impl HdrRenderTarget {
 }
 
 /// Tonemapping algorithm selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tonemapping {
     /// Reinhard: L = L / (1 + L). Simple but can flatten contrast.
     Reinhard,
@@ -61,7 +60,6 @@ pub enum Tonemapping {
     /// No tonemapping (passthrough).
     None,
 }
-
 
 /// Post-process pass for applying tonemapping.
 pub struct TonemappingPass {

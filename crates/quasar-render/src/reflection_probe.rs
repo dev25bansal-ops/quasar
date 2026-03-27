@@ -125,41 +125,40 @@ impl ReflectionProbeManager {
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("ReflectionProbe BGL"),
-                entries: &[
-                    // Cubemap array
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::CubeArray,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("ReflectionProbe BGL"),
+            entries: &[
+                // Cubemap array
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    // Sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                // Sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Probe metadata
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // Probe metadata
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ReflectionProbe BG"),
@@ -195,7 +194,11 @@ impl ReflectionProbeManager {
     ///
     /// Call once per frame (or when probes change).  Pass all
     /// `ReflectionProbe` components from the ECS query.
-    pub fn update_probes(&mut self, queue: &wgpu::Queue, probes: &mut [(Vec3, &mut ReflectionProbe)]) {
+    pub fn update_probes(
+        &mut self,
+        queue: &wgpu::Queue,
+        probes: &mut [(Vec3, &mut ReflectionProbe)],
+    ) {
         let count = probes.len().min(MAX_REFLECTION_PROBES);
         self.probe_count = count as u32;
 
@@ -230,11 +233,7 @@ impl ReflectionProbeManager {
             };
         }
 
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::cast_slice(&uniforms),
-        );
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&uniforms));
     }
 
     /// Get the six view matrices for rendering into a cubemap from `position`.
@@ -258,12 +257,7 @@ impl ReflectionProbeManager {
 
     /// Projection matrix for a single cubemap face (90° FoV, square).
     pub fn cubemap_projection() -> glam::Mat4 {
-        glam::Mat4::perspective_rh(
-            std::f32::consts::FRAC_PI_2,
-            1.0,
-            0.1,
-            1000.0,
-        )
+        glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, 0.1, 1000.0)
     }
 
     /// Create per-face `TextureView`s for writing into a probe's cubemap slot.
@@ -271,15 +265,16 @@ impl ReflectionProbeManager {
     /// Returns 6 views (one per face: +X, −X, +Y, −Y, +Z, −Z) at mip 0.
     pub fn face_views(&self, probe_slot: u32) -> [wgpu::TextureView; 6] {
         std::array::from_fn(|face| {
-            self.cubemap_array.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Probe Face View"),
-                dimension: Some(wgpu::TextureViewDimension::D2),
-                base_array_layer: probe_slot * 6 + face as u32,
-                array_layer_count: Some(1),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                ..Default::default()
-            })
+            self.cubemap_array
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Probe Face View"),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_array_layer: probe_slot * 6 + face as u32,
+                    array_layer_count: Some(1),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                })
         })
     }
 
@@ -297,9 +292,11 @@ impl ReflectionProbeManager {
         F: FnMut(&mut wgpu::CommandEncoder, &wgpu::TextureView, glam::Mat4, glam::Mat4),
     {
         let Some(slot) = probe.slot else {
-            return device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Reflection Probe Bake (no slot)"),
-            }).finish();
+            return device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Reflection Probe Bake (no slot)"),
+                })
+                .finish();
         };
         let face_views = self.face_views(slot as u32);
         let view_matrices = Self::cubemap_view_matrices(probe.position);

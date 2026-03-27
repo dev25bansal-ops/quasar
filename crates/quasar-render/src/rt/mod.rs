@@ -228,7 +228,8 @@ impl RtGiPass {
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let irradiance_view = irradiance_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let irradiance_view =
+            irradiance_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         let history_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rt_gi_history"),
@@ -276,7 +277,11 @@ impl RtGiPass {
 
         let irr = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rt_gi_irradiance"),
-            size: wgpu::Extent3d { width: half_w, height: half_h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: half_w,
+                height: half_h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -286,7 +291,11 @@ impl RtGiPass {
         });
         let hist = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("rt_gi_history"),
-            size: wgpu::Extent3d { width: half_w, height: half_h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: half_w,
+                height: half_h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -310,8 +319,12 @@ impl RtGiPass {
         if !self.rt_available {
             return;
         }
-        let Some(pipeline) = &self.pipeline else { return };
-        let Some(bind_group) = &self.bind_group else { return };
+        let Some(pipeline) = &self.pipeline else {
+            return;
+        };
+        let Some(bind_group) = &self.bind_group else {
+            return;
+        };
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("rt_gi_pass"),

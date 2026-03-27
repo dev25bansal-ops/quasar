@@ -24,11 +24,11 @@ pub struct DebugDrawColors {
 impl Default for DebugDrawColors {
     fn default() -> Self {
         Self {
-            collider: [0.0, 1.0, 0.0, 1.0],  // green
-            aabb: [1.0, 1.0, 0.0, 0.5],       // yellow translucent
-            joint: [0.0, 0.5, 1.0, 1.0],      // blue
-            contact: [1.0, 0.0, 0.0, 1.0],    // red
-            trigger: [1.0, 0.0, 1.0, 0.6],    // magenta translucent
+            collider: [0.0, 1.0, 0.0, 1.0], // green
+            aabb: [1.0, 1.0, 0.0, 0.5],     // yellow translucent
+            joint: [0.0, 0.5, 1.0, 1.0],    // blue
+            contact: [1.0, 0.0, 0.0, 1.0],  // red
+            trigger: [1.0, 0.0, 1.0, 0.6],  // magenta translucent
         }
     }
 }
@@ -183,9 +183,21 @@ impl PhysicsDebugDraw {
         }
         // Fallback: draw a small cross at the position.
         let s = 0.1;
-        lines.push(DebugLine { start: [pos[0] - s, pos[1], pos[2]], end: [pos[0] + s, pos[1], pos[2]], color });
-        lines.push(DebugLine { start: [pos[0], pos[1] - s, pos[2]], end: [pos[0], pos[1] + s, pos[2]], color });
-        lines.push(DebugLine { start: [pos[0], pos[1], pos[2] - s], end: [pos[0], pos[1], pos[2] + s], color });
+        lines.push(DebugLine {
+            start: [pos[0] - s, pos[1], pos[2]],
+            end: [pos[0] + s, pos[1], pos[2]],
+            color,
+        });
+        lines.push(DebugLine {
+            start: [pos[0], pos[1] - s, pos[2]],
+            end: [pos[0], pos[1] + s, pos[2]],
+            color,
+        });
+        lines.push(DebugLine {
+            start: [pos[0], pos[1], pos[2] - s],
+            end: [pos[0], pos[1], pos[2] + s],
+            color,
+        });
     }
 
     /// Wireframe axis-aligned bounding box.
@@ -202,13 +214,26 @@ impl PhysicsDebugDraw {
         ];
 
         let edges = [
-            (0, 1), (1, 2), (2, 3), (3, 0), // front
-            (4, 5), (5, 6), (6, 7), (7, 4), // back
-            (0, 4), (1, 5), (2, 6), (3, 7), // connecting
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 0), // front
+            (4, 5),
+            (5, 6),
+            (6, 7),
+            (7, 4), // back
+            (0, 4),
+            (1, 5),
+            (2, 6),
+            (3, 7), // connecting
         ];
 
         for (a, b) in edges {
-            lines.push(DebugLine { start: corners[a], end: corners[b], color });
+            lines.push(DebugLine {
+                start: corners[a],
+                end: corners[b],
+                color,
+            });
         }
     }
 
@@ -221,13 +246,27 @@ impl PhysicsDebugDraw {
         color: [f32; 4],
     ) {
         // Simplified: axis-aligned at position (ignoring rotation for line drawing performance).
-        let mins = [pos[0] - half_extents[0], pos[1] - half_extents[1], pos[2] - half_extents[2]];
-        let maxs = [pos[0] + half_extents[0], pos[1] + half_extents[1], pos[2] + half_extents[2]];
+        let mins = [
+            pos[0] - half_extents[0],
+            pos[1] - half_extents[1],
+            pos[2] - half_extents[2],
+        ];
+        let maxs = [
+            pos[0] + half_extents[0],
+            pos[1] + half_extents[1],
+            pos[2] + half_extents[2],
+        ];
         Self::wireframe_aabb(lines, mins, maxs, color);
     }
 
     /// Wireframe sphere approximation (3 orthogonal circles).
-    fn wireframe_sphere(lines: &mut Vec<DebugLine>, center: [f32; 3], radius: f32, color: [f32; 4], segments: u32) {
+    fn wireframe_sphere(
+        lines: &mut Vec<DebugLine>,
+        center: [f32; 3],
+        radius: f32,
+        color: [f32; 4],
+        segments: u32,
+    ) {
         Self::wireframe_circle_y(lines, center, radius, color, segments);
         // XY plane circle.
         let step = std::f32::consts::TAU / segments as f32;
@@ -235,8 +274,16 @@ impl PhysicsDebugDraw {
             let a0 = i as f32 * step;
             let a1 = (i + 1) as f32 * step;
             lines.push(DebugLine {
-                start: [center[0] + radius * a0.cos(), center[1] + radius * a0.sin(), center[2]],
-                end: [center[0] + radius * a1.cos(), center[1] + radius * a1.sin(), center[2]],
+                start: [
+                    center[0] + radius * a0.cos(),
+                    center[1] + radius * a0.sin(),
+                    center[2],
+                ],
+                end: [
+                    center[0] + radius * a1.cos(),
+                    center[1] + radius * a1.sin(),
+                    center[2],
+                ],
                 color,
             });
         }
@@ -245,53 +292,132 @@ impl PhysicsDebugDraw {
             let a0 = i as f32 * step;
             let a1 = (i + 1) as f32 * step;
             lines.push(DebugLine {
-                start: [center[0], center[1] + radius * a0.cos(), center[2] + radius * a0.sin()],
-                end: [center[0], center[1] + radius * a1.cos(), center[2] + radius * a1.sin()],
+                start: [
+                    center[0],
+                    center[1] + radius * a0.cos(),
+                    center[2] + radius * a0.sin(),
+                ],
+                end: [
+                    center[0],
+                    center[1] + radius * a1.cos(),
+                    center[2] + radius * a1.sin(),
+                ],
                 color,
             });
         }
     }
 
     /// Wireframe circle on the XZ plane at the given Y.
-    fn wireframe_circle_y(lines: &mut Vec<DebugLine>, center: [f32; 3], radius: f32, color: [f32; 4], segments: u32) {
+    fn wireframe_circle_y(
+        lines: &mut Vec<DebugLine>,
+        center: [f32; 3],
+        radius: f32,
+        color: [f32; 4],
+        segments: u32,
+    ) {
         let step = std::f32::consts::TAU / segments as f32;
         for i in 0..segments {
             let a0 = i as f32 * step;
             let a1 = (i + 1) as f32 * step;
             lines.push(DebugLine {
-                start: [center[0] + radius * a0.cos(), center[1], center[2] + radius * a0.sin()],
-                end: [center[0] + radius * a1.cos(), center[1], center[2] + radius * a1.sin()],
+                start: [
+                    center[0] + radius * a0.cos(),
+                    center[1],
+                    center[2] + radius * a0.sin(),
+                ],
+                end: [
+                    center[0] + radius * a1.cos(),
+                    center[1],
+                    center[2] + radius * a1.sin(),
+                ],
                 color,
             });
         }
     }
 
     /// Generate wireframe lines for a specific collider shape description.
-    pub fn lines_for_shape(shape: &ColliderShape, position: [f32; 3], color: [f32; 4]) -> Vec<DebugLine> {
+    pub fn lines_for_shape(
+        shape: &ColliderShape,
+        position: [f32; 3],
+        color: [f32; 4],
+    ) -> Vec<DebugLine> {
         let mut lines = Vec::new();
         match shape {
             ColliderShape::Box { half_extents } => {
-                Self::wireframe_box(&mut lines, position, [0.0, 0.0, 0.0, 1.0], *half_extents, color);
+                Self::wireframe_box(
+                    &mut lines,
+                    position,
+                    [0.0, 0.0, 0.0, 1.0],
+                    *half_extents,
+                    color,
+                );
             }
             ColliderShape::Sphere { radius } => {
                 Self::wireframe_sphere(&mut lines, position, *radius, color, 16);
             }
-            ColliderShape::Capsule { half_height, radius } => {
-                Self::wireframe_sphere(&mut lines, [position[0], position[1] + half_height, position[2]], *radius, color, 12);
-                Self::wireframe_sphere(&mut lines, [position[0], position[1] - half_height, position[2]], *radius, color, 12);
+            ColliderShape::Capsule {
+                half_height,
+                radius,
+            } => {
+                Self::wireframe_sphere(
+                    &mut lines,
+                    [position[0], position[1] + half_height, position[2]],
+                    *radius,
+                    color,
+                    12,
+                );
+                Self::wireframe_sphere(
+                    &mut lines,
+                    [position[0], position[1] - half_height, position[2]],
+                    *radius,
+                    color,
+                    12,
+                );
             }
-            ColliderShape::Cylinder { half_height, radius } => {
-                Self::wireframe_circle_y(&mut lines, [position[0], position[1] + half_height, position[2]], *radius, color, 16);
-                Self::wireframe_circle_y(&mut lines, [position[0], position[1] - half_height, position[2]], *radius, color, 16);
+            ColliderShape::Cylinder {
+                half_height,
+                radius,
+            } => {
+                Self::wireframe_circle_y(
+                    &mut lines,
+                    [position[0], position[1] + half_height, position[2]],
+                    *radius,
+                    color,
+                    16,
+                );
+                Self::wireframe_circle_y(
+                    &mut lines,
+                    [position[0], position[1] - half_height, position[2]],
+                    *radius,
+                    color,
+                    16,
+                );
             }
-            ColliderShape::Cone { half_height, radius } => {
-                Self::wireframe_circle_y(&mut lines, [position[0], position[1] - half_height, position[2]], *radius, color, 16);
+            ColliderShape::Cone {
+                half_height,
+                radius,
+            } => {
+                Self::wireframe_circle_y(
+                    &mut lines,
+                    [position[0], position[1] - half_height, position[2]],
+                    *radius,
+                    color,
+                    16,
+                );
                 // Apex
                 let apex = [position[0], position[1] + half_height, position[2]];
                 for i in 0..4 {
                     let angle = (i as f32) * std::f32::consts::FRAC_PI_2;
-                    let base = [position[0] + radius * angle.cos(), position[1] - half_height, position[2] + radius * angle.sin()];
-                    lines.push(DebugLine { start: base, end: apex, color });
+                    let base = [
+                        position[0] + radius * angle.cos(),
+                        position[1] - half_height,
+                        position[2] + radius * angle.sin(),
+                    ];
+                    lines.push(DebugLine {
+                        start: base,
+                        end: apex,
+                        color,
+                    });
                 }
             }
             ColliderShape::HalfSpace | ColliderShape::HeightField { .. } => {

@@ -139,24 +139,21 @@ pub fn load_gltf_morph_targets(path: impl AsRef<Path>) -> Result<Vec<Vec<MorphTa
             let reader = primitive.reader(|buf| Some(&buffers[buf.index()]));
 
             let morph_iter = reader.read_morph_targets();
-                for (ti, (positions, normals, tangents)) in morph_iter.enumerate() {
-                    let position_deltas: Vec<[f32; 3]> = positions
-                        .map(|iter| iter.collect())
-                        .unwrap_or_default();
-                    let normal_deltas: Vec<[f32; 3]> = normals
-                        .map(|iter| iter.collect())
-                        .unwrap_or_default();
-                    let tangent_deltas: Vec<[f32; 3]> = tangents
-                        .map(|iter| iter.collect())
-                        .unwrap_or_default();
+            for (ti, (positions, normals, tangents)) in morph_iter.enumerate() {
+                let position_deltas: Vec<[f32; 3]> =
+                    positions.map(|iter| iter.collect()).unwrap_or_default();
+                let normal_deltas: Vec<[f32; 3]> =
+                    normals.map(|iter| iter.collect()).unwrap_or_default();
+                let tangent_deltas: Vec<[f32; 3]> =
+                    tangents.map(|iter| iter.collect()).unwrap_or_default();
 
-                    targets.push(MorphTarget {
-                        name: format!("morph_{ti}"),
-                        position_deltas,
-                        normal_deltas,
-                        tangent_deltas,
-                    });
-                }
+                targets.push(MorphTarget {
+                    name: format!("morph_{ti}"),
+                    position_deltas,
+                    normal_deltas,
+                    tangent_deltas,
+                });
+            }
             all_targets.push(targets);
         }
     }
@@ -218,19 +215,24 @@ pub fn load_gltf_animations(path: impl AsRef<Path>) -> Result<Vec<GltfAnimationC
                 gltf::animation::Property::Translation => {
                     property = GltfChannelProperty::Translation;
                     let raw = read_accessor_f32(&buffers, &output_accessor);
-                    let v3: Vec<[f32; 3]> = raw.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                    let v3: Vec<[f32; 3]> =
+                        raw.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
                     values = GltfChannelValues::Vec3(v3);
                 }
                 gltf::animation::Property::Rotation => {
                     property = GltfChannelProperty::Rotation;
                     let raw = read_accessor_f32(&buffers, &output_accessor);
-                    let q: Vec<[f32; 4]> = raw.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
+                    let q: Vec<[f32; 4]> = raw
+                        .chunks_exact(4)
+                        .map(|c| [c[0], c[1], c[2], c[3]])
+                        .collect();
                     values = GltfChannelValues::Quat(q);
                 }
                 gltf::animation::Property::Scale => {
                     property = GltfChannelProperty::Scale;
                     let raw = read_accessor_f32(&buffers, &output_accessor);
-                    let v3: Vec<[f32; 3]> = raw.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+                    let v3: Vec<[f32; 3]> =
+                        raw.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
                     values = GltfChannelValues::Vec3(v3);
                 }
                 gltf::animation::Property::MorphTargetWeights => {
@@ -296,17 +298,13 @@ pub fn sample_vec3(channel: &GltfAnimationChannel, t: f32) -> [f32; 3] {
     let dt = (t1 - t0).max(1e-10);
     let u = ((t - t0) / dt).clamp(0.0, 1.0);
     match channel.interpolation {
-        GltfInterpolation::Step => {
-            vals[i]
-        }
-        GltfInterpolation::Linear => {
-            lerp3(vals[i], vals[i + 1], u)
-        }
+        GltfInterpolation::Step => vals[i],
+        GltfInterpolation::Linear => lerp3(vals[i], vals[i + 1], u),
         GltfInterpolation::CubicSpline => {
             // GLTF cubic spline: each keyframe stores [in_tangent, value, out_tangent].
             let v0 = vals[i * 3 + 1];
             let b0 = vals[i * 3 + 2]; // out-tangent
-            let a1 = vals[(i + 1) * 3];   // in-tangent
+            let a1 = vals[(i + 1) * 3]; // in-tangent
             let v1 = vals[(i + 1) * 3 + 1];
             hermite3(v0, b0, a1, v1, u, dt)
         }
@@ -357,7 +355,11 @@ pub fn sample_quat(channel: &GltfAnimationChannel, t: f32) -> [f32; 4] {
 }
 
 fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
 }
 
 /// Cubic Hermite interpolation for Vec3.  
@@ -406,16 +408,28 @@ fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let sin_theta = theta.sin();
     let wa = ((1.0 - t) * theta).sin() / sin_theta;
     let wb = (t * theta).sin() / sin_theta;
-    [a[0] * wa + b[0] * wb, a[1] * wa + b[1] * wb, a[2] * wa + b[2] * wb, a[3] * wa + b[3] * wb]
+    [
+        a[0] * wa + b[0] * wb,
+        a[1] * wa + b[1] * wb,
+        a[2] * wa + b[2] * wb,
+        a[3] * wa + b[3] * wb,
+    ]
 }
 
 fn lerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t]
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
 }
 
 fn normalize_quat(q: [f32; 4]) -> [f32; 4] {
     let len = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
-    if len < 1e-10 { return [0.0, 0.0, 0.0, 1.0]; }
+    if len < 1e-10 {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
     [q[0] / len, q[1] / len, q[2] / len, q[3] / len]
 }
 
@@ -447,7 +461,12 @@ fn read_accessor_f32(buffers: &[gltf::buffer::Data], accessor: &gltf::Accessor) 
         for c in 0..components {
             let start = base + c * component_size;
             if start + 4 <= buffer.len() {
-                let bytes = [buffer[start], buffer[start + 1], buffer[start + 2], buffer[start + 3]];
+                let bytes = [
+                    buffer[start],
+                    buffer[start + 1],
+                    buffer[start + 2],
+                    buffer[start + 3],
+                ];
                 result.push(f32::from_le_bytes(bytes));
             }
         }

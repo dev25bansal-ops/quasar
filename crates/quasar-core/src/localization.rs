@@ -223,6 +223,7 @@ pub struct Localization {
     /// String tables for each language.
     tables: HashMap<LanguageCode, StringTable>,
     /// Interpolation pattern (default: {name}).
+    #[allow(dead_code)]
     interpolation_pattern: String,
 }
 

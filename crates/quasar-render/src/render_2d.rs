@@ -8,9 +8,27 @@
 //! - Shape primitives (lines, rectangles, circles, polygons)
 //! - 9-slice scaling for UI elements
 
-use bytemuck::{Pod, Zeroable};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SpriteRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl SpriteRect {
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Sprite Animation
@@ -255,11 +273,13 @@ pub struct Tilemap {
 
 impl Tilemap {
     pub fn new(tileset: Tileset, chunk_size: usize) -> Self {
+        let tile_width = tileset.tile_width as f32;
+        let tile_height = tileset.tile_height as f32;
         Self {
             tileset,
             chunk_size,
-            tile_width: tileset.tile_width as f32,
-            tile_height: tileset.tile_height as f32,
+            tile_width,
+            tile_height,
             chunks: HashMap::new(),
         }
     }
@@ -281,9 +301,8 @@ impl Tilemap {
 
     pub fn get_tile(&self, tile_x: i32, tile_y: i32) -> Option<&Tile> {
         let (chunk_x, chunk_y, local_x, local_y) = self.tile_to_chunk(tile_x, tile_y);
-        self.chunks
-            .get(&(chunk_x, chunk_y))?
-            .get_tile(local_x, local_y, self.chunk_size)
+        let chunk = self.chunks.get(&(chunk_x, chunk_y))?;
+        Some(chunk.get_tile(local_x, local_y, self.chunk_size))
     }
 
     pub fn set_tile(&mut self, tile_x: i32, tile_y: i32, tile: Tile) {
@@ -582,11 +601,12 @@ pub struct ParticleEmitter2D {
 
 impl ParticleEmitter2D {
     pub fn new(position: glam::Vec2, config: ParticleEmitterConfig) -> Self {
+        let max_particles = config.max_particles;
         Self {
             position,
             config,
             active: true,
-            particles: Vec::with_capacity(config.max_particles),
+            particles: Vec::with_capacity(max_particles),
             emission_accumulator: 0.0,
         }
     }
@@ -926,10 +946,10 @@ mod tests {
 
         animator.play("test");
         animator.update(50.0);
-        assert_eq!(animator.current_frame.unwrap().texture_rect.x, 0.0);
+        assert_eq!(animator.current_frame().unwrap().texture_rect.x, 0.0);
 
         animator.update(60.0); // Total 110ms > 100ms
-        assert_eq!(animator.current_frame.unwrap().texture_rect.x, 0.5);
+        assert_eq!(animator.current_frame().unwrap().texture_rect.x, 0.5);
     }
 
     #[test]

@@ -22,12 +22,12 @@ impl quasar_core::platform::AssetLoader for AssetManager {
         let path_str = path.to_string_lossy().into_owned();
         self.read_asset(&path_str)
     }
-    
+
     fn asset_exists(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy().into_owned();
         self.asset_exists(&path_str)
     }
-    
+
     fn list_assets(&self, path: &Path) -> Result<Vec<String>, String> {
         let path_str = path.to_string_lossy().into_owned();
         self.list_assets(&path_str)
@@ -44,7 +44,10 @@ impl AssetManager {
     ///
     /// The JNIEnv must be valid and attached to the current thread.
     /// The AssetManager Java object must be valid for the lifetime of the app.
-    pub unsafe fn init(env: JNIEnv<'static>, asset_manager: JObject<'static>) -> Result<(), String> {
+    pub unsafe fn init(
+        env: JNIEnv<'static>,
+        asset_manager: JObject<'static>,
+    ) -> Result<(), String> {
         let manager = Self { env, asset_manager };
         ASSET_MANAGER
             .set(manager)
@@ -113,10 +116,7 @@ impl AssetManager {
             .map_err(|e| e.to_string())?;
 
         // Create a 4KB buffer
-        let buffer = self
-            .env
-            .new_byte_array(4096)
-            .map_err(|e| e.to_string())?;
+        let buffer = self.env.new_byte_array(4096).map_err(|e| e.to_string())?;
 
         let buffer_obj = JObject::from(buffer);
 
@@ -161,7 +161,10 @@ impl AssetManager {
             .map_err(|e| e.to_string())?;
 
         // Convert to Rust Vec<u8>
-        let len = self.env.get_array_length(&result).map_err(|e| e.to_string())?;
+        let len = self
+            .env
+            .get_array_length(&result)
+            .map_err(|e| e.to_string())?;
         let mut bytes = vec![0u8; len as usize];
         self.env
             .get_byte_array_region(result, 0, &mut unsafe {
@@ -196,12 +199,12 @@ impl AssetManager {
             )
             .map_err(|e| format!("Failed to list assets: {}", e))?;
 
-        let array: jni::objects::JObjectArray = result
-            .l()
-            .map_err(|e| e.to_string())?
-            .into();
+        let array: jni::objects::JObjectArray = result.l().map_err(|e| e.to_string())?.into();
 
-        let len = self.env.get_array_length(&array).map_err(|e| e.to_string())?;
+        let len = self
+            .env
+            .get_array_length(&array)
+            .map_err(|e| e.to_string())?;
         let mut names = Vec::with_capacity(len as usize);
 
         for i in 0..len {
@@ -322,16 +325,18 @@ pub unsafe fn init_asset_manager() -> Result<(), String> {
         env: env_static,
         asset_manager: asset_manager_static,
     };
-    
+
     ASSET_MANAGER
         .set(manager)
         .map_err(|_| "AssetManager already initialized".to_string())?;
-    
+
     // Register with quasar-core
     let manager_ref = ASSET_MANAGER.get().unwrap();
-    quasar_core::platform::register_asset_loader(Box::new(AssetLoaderAdapter(manager_ref as *const AssetManager)))
-        .map_err(|_| "Failed to register asset loader")?;
-    
+    quasar_core::platform::register_asset_loader(Box::new(AssetLoaderAdapter(
+        manager_ref as *const AssetManager,
+    )))
+    .map_err(|_| "Failed to register asset loader")?;
+
     Ok(())
 }
 
@@ -342,11 +347,11 @@ impl quasar_core::platform::AssetLoader for AssetLoaderAdapter {
     async fn read_asset(&self, path: &Path) -> Result<Vec<u8>, String> {
         unsafe { (*self.0).read_asset(&path.to_string_lossy()) }
     }
-    
+
     fn asset_exists(&self, path: &Path) -> bool {
         unsafe { (*self.0).asset_exists(&path.to_string_lossy()) }
     }
-    
+
     fn list_assets(&self, path: &Path) -> Result<Vec<String>, String> {
         unsafe { (*self.0).list_assets(&path.to_string_lossy()) }
     }

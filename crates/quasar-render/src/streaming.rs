@@ -5,10 +5,10 @@
 //! When the budget is exceeded the least-recently-used assets are evicted
 //! and replaced with low-resolution fallbacks.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::cmp::Ordering;
 
 /// Default texture memory budget (512 MiB).
 pub const DEFAULT_TEXTURE_BUDGET: u64 = 512 * 1024 * 1024;
@@ -158,9 +158,7 @@ impl StreamingPool {
     pub fn request(&mut self, req: &StreamingRequest) {
         if let Some(entry) = self.entries.get_mut(&req.path) {
             entry.last_used_frame = self.frame;
-            if entry.state == ResidencyState::Resident
-                || entry.state == ResidencyState::Loading
-            {
+            if entry.state == ResidencyState::Resident || entry.state == ResidencyState::Loading {
                 return;
             }
         }

@@ -138,7 +138,155 @@ impl HotReloadSystem {
     }
 }
 
-impl Default for HotReloadSystem {
+/// Scene hot-reload handler.
+pub struct SceneHotReloader {
+    scene_paths: HashMap<PathBuf, String>,
+    prefab_paths: HashMap<PathBuf, String>,
+    reload_count: u64,
+}
+
+impl SceneHotReloader {
+    pub fn new() -> Self {
+        Self {
+            scene_paths: HashMap::new(),
+            prefab_paths: HashMap::new(),
+            reload_count: 0,
+        }
+    }
+
+    pub fn track_scene(&mut self, path: PathBuf, scene_name: String) {
+        self.scene_paths.insert(path, scene_name);
+    }
+
+    pub fn track_prefab(&mut self, path: PathBuf, prefab_name: String) {
+        self.prefab_paths.insert(path, prefab_name);
+    }
+
+    pub fn process_reload(&mut self, event: &AssetReloadedEvent) -> Option<ReloadAction> {
+        match event.kind {
+            ReloadKind::Scene => self.reload_scene(event),
+            ReloadKind::Prefab => self.reload_prefab(event),
+            _ => None,
+        }
+    }
+
+    fn reload_scene(&mut self, event: &AssetReloadedEvent) -> Option<ReloadAction> {
+        let path = &event.path;
+        let scene_name = self.scene_paths.get(path)?.clone();
+
+        let json = std::fs::read_to_string(path).ok()?;
+        let new_hash = blake3::hash(json.as_bytes());
+
+        self.reload_count += 1;
+        log::info!(
+            "Hot-reload: scene '{}' reloaded from {:?}",
+            scene_name,
+            path
+        );
+
+        Some(ReloadAction::ReloadScene {
+            name: scene_name,
+            json,
+            hash: new_hash.to_hex().to_string(),
+        })
+    }
+
+    fn reload_prefab(&mut self, event: &AssetReloadedEvent) -> Option<ReloadAction> {
+        let path = &event.path;
+        let prefab_name = self.prefab_paths.get(path)?.clone();
+
+        let json = std::fs::read_to_string(path).ok()?;
+        let new_hash = blake3::hash(json.as_bytes());
+
+        self.reload_count += 1;
+        log::info!(
+            "Hot-reload: prefab '{}' reloaded from {:?}",
+            prefab_name,
+            path
+        );
+
+        Some(ReloadAction::ReloadPrefab {
+            name: prefab_name,
+            json,
+            hash: new_hash.to_hex().to_string(),
+        })
+    }
+
+    pub fn reload_count(&self) -> u64 {
+        self.reload_count
+    }
+}
+
+impl Default for SceneHotReloader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ReloadAction {
+    ReloadScene {
+        name: String,
+        json: String,
+        hash: String,
+    },
+    ReloadPrefab {
+        name: String,
+        json: String,
+        hash: String,
+    },
+    ReloadShader {
+        path: PathBuf,
+        source: String,
+    },
+    ReloadTexture {
+        path: PathBuf,
+    },
+}
+
+pub struct HotReloadManager {
+    shader_reloader: HotReloadSystem,
+    scene_reloader: SceneHotReloader,
+    pending_actions: Vec<ReloadAction>,
+}
+
+impl HotReloadManager {
+    pub fn new() -> Self {
+        Self {
+            shader_reloader: HotReloadSystem::new(),
+            scene_reloader: SceneHotReloader::new(),
+            pending_actions: Vec::new(),
+        }
+    }
+
+    pub fn track_shader(&mut self, path: PathBuf, source: String) {
+        self.shader_reloader.track_shader(path, source);
+    }
+
+    pub fn track_scene(&mut self, path: PathBuf, name: String) {
+        self.scene_reloader.track_scene(path, name);
+    }
+
+    pub fn track_prefab(&mut self, path: PathBuf, name: String) {
+        self.scene_reloader.track_prefab(path, name);
+    }
+
+    pub fn process_event(&mut self, event: &AssetReloadedEvent) {
+        if let Some(action) = self.scene_reloader.process_reload(event) {
+            self.pending_actions.push(action);
+        }
+    }
+
+    pub fn drain_actions(&mut self) -> Vec<ReloadAction> {
+        std::mem::take(&mut self.pending_actions)
+    }
+
+    pub fn total_reloads(&self) -> u64 {
+        self.shader_reloader.reload_count + self.scene_reloader.reload_count()
+    }
+}
+
+impl Default for HotReloadManager {
     fn default() -> Self {
         Self::new()
     }

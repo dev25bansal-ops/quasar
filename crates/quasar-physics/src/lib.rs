@@ -16,28 +16,27 @@ pub mod rigidbody;
 pub mod rollback;
 pub mod world;
 
+pub use async_step::{AsyncPhysicsStepper, InterpolationSnapshot, PhysicsCommand};
 pub use character_controller::{
-    CharacterControllerComponent,
-    CharacterControllerConfig,
-    CharacterMovementResult,
+    CharacterControllerComponent, CharacterControllerConfig, CharacterMovementResult,
 };
 pub use collider::{ColliderComponent, ColliderShape, PendingCollider};
-pub use debug_draw::{DebugLine, DebugDrawColors, PhysicsDebugDraw};
+pub use debug_draw::{DebugDrawColors, DebugLine, PhysicsDebugDraw};
 pub use events::{
-    CollisionEvent, CollisionEventType, CollisionStartEvent, CollisionStopEvent,
-    SensorEnterEvent, SensorExitEvent,
-    TriggerEnterEvent, TriggerStayEvent, TriggerExitEvent, TriggerTracker,
+    CollisionEvent, CollisionEventType, CollisionStartEvent, CollisionStopEvent, SensorEnterEvent,
+    SensorExitEvent, TriggerEnterEvent, TriggerExitEvent, TriggerStayEvent, TriggerTracker,
 };
 pub use extras::{
-    CcdEnabled, SensorComponent, PendingSensor,
-    PhysicsMaterial,
-    CompoundColliderComponent, PendingCompoundCollider,
+    CcdEnabled, CompoundColliderComponent, PendingCompoundCollider, PendingSensor, PhysicsMaterial,
+    SensorComponent,
 };
-pub use joints::{JointComponent, JointKind, JointMotor, MotorMode, apply_motor_to_joint, set_joint_motor_velocity, set_joint_motor_position};
+pub use joints::{
+    apply_motor_to_joint, set_joint_motor_position, set_joint_motor_velocity, JointComponent,
+    JointKind, JointMotor, MotorMode,
+};
 pub use plugin::{PhysicsPlugin, PhysicsResource};
 pub use rigidbody::{BodyType, RigidBodyComponent};
+pub use rollback::{ColliderState, JointState, PhysicsSnapshot, RigidBodyState, RollbackManager};
 pub use world::PhysicsWorld;
-pub use async_step::{AsyncPhysicsStepper, InterpolationSnapshot, PhysicsCommand};
-pub use rollback::{PhysicsSnapshot, RigidBodyState, ColliderState, JointState, RollbackManager};
 
 pub use rapier3d;

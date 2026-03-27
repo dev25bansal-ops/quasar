@@ -104,8 +104,15 @@ impl AnimationClip {
             return None;
         }
 
-        let time = if self.looped {
-            time % self.duration
+        let time = if self.looped && self.duration > 0.0 {
+            let t = time % self.duration;
+            if t < 0.0 {
+                t + self.duration
+            } else if t == 0.0 && time > 0.0 {
+                self.duration
+            } else {
+                t
+            }
         } else {
             time.clamp(0.0, self.duration)
         };
@@ -893,5 +900,424 @@ mod tests {
     fn clip_with_duration() {
         let clip = AnimationClip::new("test").with_duration(5.0);
         assert_eq!(clip.duration, 5.0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Animation Compression
+// ---------------------------------------------------------------------------
+
+pub mod compression {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    pub const COMPRESSION_VERSION: u32 = 1;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum CompressionMethod {
+        None = 0,
+        Quantized8 = 1,
+        Quantized16 = 2,
+        KeyReduction = 3,
+        CurveFitting = 4,
+    }
+
+    impl Default for CompressionMethod {
+        fn default() -> Self {
+            Self::Quantized16
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CompressedAnimationClip {
+        pub name: String,
+        pub duration: f32,
+        pub looped: bool,
+        pub compression_method: CompressionMethod,
+        pub position_keys: Vec<CompressedVec3Track>,
+        pub rotation_keys: Vec<CompressedQuatTrack>,
+        pub scale_keys: Vec<CompressedVec3Track>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CompressedVec3Track {
+        pub times: Vec<f32>,
+        pub values: Vec<QuantizedVec3>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct CompressedQuatTrack {
+        pub times: Vec<f32>,
+        pub values: Vec<QuantizedQuat>,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub struct QuantizedVec3 {
+        pub x: i16,
+        pub y: i16,
+        pub z: i16,
+    }
+
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+    pub struct QuantizedQuat {
+        pub largest: u8,
+        pub a: i16,
+        pub b: i16,
+        pub c: i16,
+    }
+
+    pub struct QuantizationSettings {
+        pub position_range: f32,
+        pub scale_range: f32,
+        pub rotation_bits: u32,
+    }
+
+    impl Default for QuantizationSettings {
+        fn default() -> Self {
+            Self {
+                position_range: 1000.0,
+                scale_range: 100.0,
+                rotation_bits: 16,
+            }
+        }
+    }
+
+    impl AnimationClip {
+        pub fn compress(&self, settings: &QuantizationSettings) -> CompressedAnimationClip {
+            let mut pos_keys = Vec::new();
+            let mut rot_keys = Vec::new();
+            let mut scale_keys = Vec::new();
+
+            let mut times: Vec<f32> = self.keyframes.iter().map(|kf| kf.time).collect();
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            times.dedup_by(|a, b| (*a - *b).abs() < 0.0001);
+
+            let mut positions: Vec<Vec3> = Vec::with_capacity(times.len());
+            let mut rotations: Vec<Quat> = Vec::with_capacity(times.len());
+            let mut scales: Vec<Vec3> = Vec::with_capacity(times.len());
+
+            for &t in &times {
+                if let Some(tf) = self.sample(t) {
+                    positions.push(tf.position);
+                    rotations.push(tf.rotation);
+                    scales.push(tf.scale);
+                }
+            }
+
+            if !positions.is_empty() {
+                pos_keys.push(CompressedVec3Track {
+                    times: times.clone(),
+                    values: positions
+                        .iter()
+                        .map(|&p| quantize_vec3(p, settings.position_range))
+                        .collect(),
+                });
+            }
+
+            if !rotations.is_empty() {
+                rot_keys.push(CompressedQuatTrack {
+                    times: times.clone(),
+                    values: rotations.iter().map(|&r| quantize_quat(r)).collect(),
+                });
+            }
+
+            if !scales.is_empty() {
+                scale_keys.push(CompressedVec3Track {
+                    times,
+                    values: scales
+                        .iter()
+                        .map(|&s| quantize_vec3(s, settings.scale_range))
+                        .collect(),
+                });
+            }
+
+            CompressedAnimationClip {
+                name: self.name.clone(),
+                duration: self.duration,
+                looped: self.looped,
+                compression_method: CompressionMethod::Quantized16,
+                position_keys: pos_keys,
+                rotation_keys: rot_keys,
+                scale_keys: scale_keys,
+            }
+        }
+
+        pub fn compress_key_reduction(&self, threshold: f32) -> CompressedAnimationClip {
+            let mut compressed = self.compress(&QuantizationSettings::default());
+            compressed.compression_method = CompressionMethod::KeyReduction;
+
+            for track in &mut compressed.position_keys {
+                track.times = reduce_keys(&track.times, threshold);
+                track.values.truncate(track.times.len());
+            }
+
+            for track in &mut compressed.rotation_keys {
+                track.times = reduce_keys(&track.times, threshold);
+                track.values.truncate(track.times.len());
+            }
+
+            for track in &mut compressed.scale_keys {
+                track.times = reduce_keys(&track.times, threshold);
+                track.values.truncate(track.times.len());
+            }
+
+            compressed
+        }
+
+        pub fn compressed_size(&self, settings: &QuantizationSettings) -> usize {
+            let compressed = self.compress(settings);
+            std::mem::size_of_val(&compressed.name)
+                + std::mem::size_of::<f32>() * 2
+                + std::mem::size_of::<bool>()
+                + compressed.position_keys.len() * std::mem::size_of::<CompressedVec3Track>()
+                + compressed.rotation_keys.len() * std::mem::size_of::<CompressedQuatTrack>()
+                + compressed.scale_keys.len() * std::mem::size_of::<CompressedVec3Track>()
+        }
+
+        pub fn compression_ratio(&self, settings: &QuantizationSettings) -> f32 {
+            let original_size = std::mem::size_of::<AnimationClip>()
+                + self.keyframes.len() * std::mem::size_of::<TransformKeyframe>();
+            let compressed_size = self.compressed_size(settings);
+
+            if compressed_size == 0 {
+                0.0
+            } else {
+                original_size as f32 / compressed_size as f32
+            }
+        }
+    }
+
+    impl CompressedAnimationClip {
+        pub fn decompress(&self, settings: &QuantizationSettings) -> AnimationClip {
+            let mut clip = AnimationClip::new(&self.name)
+                .with_duration(self.duration)
+                .looped(self.looped);
+
+            let mut all_times: Vec<f32> = Vec::new();
+            for track in &self.position_keys {
+                for &t in &track.times {
+                    if !all_times.iter().any(|&x| (x - t).abs() < 0.0001) {
+                        all_times.push(t);
+                    }
+                }
+            }
+            for track in &self.rotation_keys {
+                for &t in &track.times {
+                    if !all_times.iter().any(|&x| (x - t).abs() < 0.0001) {
+                        all_times.push(t);
+                    }
+                }
+            }
+            for track in &self.scale_keys {
+                for &t in &track.times {
+                    if !all_times.iter().any(|&x| (x - t).abs() < 0.0001) {
+                        all_times.push(t);
+                    }
+                }
+            }
+
+            all_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+            for &t in &all_times {
+                let position = self
+                    .position_keys
+                    .first()
+                    .and_then(|track| {
+                        let idx = find_closest_key(&track.times, t)?;
+                        Some(dequantize_vec3(track.values[idx], settings.position_range))
+                    })
+                    .unwrap_or(Vec3::ZERO);
+
+                let rotation = self
+                    .rotation_keys
+                    .first()
+                    .and_then(|track| {
+                        let idx = find_closest_key(&track.times, t)?;
+                        Some(dequantize_quat(track.values[idx]))
+                    })
+                    .unwrap_or(Quat::IDENTITY);
+
+                let scale = self
+                    .scale_keys
+                    .first()
+                    .and_then(|track| {
+                        let idx = find_closest_key(&track.times, t)?;
+                        Some(dequantize_vec3(track.values[idx], settings.scale_range))
+                    })
+                    .unwrap_or(Vec3::ONE);
+
+                clip = clip.add_keyframe(TransformKeyframe {
+                    time: t,
+                    position,
+                    rotation,
+                    scale,
+                });
+            }
+
+            clip
+        }
+    }
+
+    fn quantize_vec3(v: Vec3, range: f32) -> QuantizedVec3 {
+        let scale = 32767.0 / range;
+        QuantizedVec3 {
+            x: (v.x * scale).clamp(-32767.0, 32767.0) as i16,
+            y: (v.y * scale).clamp(-32767.0, 32767.0) as i16,
+            z: (v.z * scale).clamp(-32767.0, 32767.0) as i16,
+        }
+    }
+
+    fn dequantize_vec3(q: QuantizedVec3, range: f32) -> Vec3 {
+        let scale = range / 32767.0;
+        Vec3::new(q.x as f32 * scale, q.y as f32 * scale, q.z as f32 * scale)
+    }
+
+    fn quantize_quat(q: Quat) -> QuantizedQuat {
+        let vals = [q.x, q.y, q.z, q.w];
+        let mut largest = 0;
+        let mut largest_val = vals[0].abs();
+
+        for (i, &v) in vals.iter().enumerate() {
+            if v.abs() > largest_val {
+                largest = i;
+                largest_val = v.abs();
+            }
+        }
+
+        let sign = if vals[largest] >= 0.0 { 1.0 } else { -1.0 };
+
+        let mut remaining = [0.0f32; 3];
+        let mut idx = 0;
+        for (i, &v) in vals.iter().enumerate() {
+            if i != largest {
+                remaining[idx] = v * sign;
+                idx += 1;
+            }
+        }
+
+        let scale = 32767.0 / 0.7071067811865476;
+        QuantizedQuat {
+            largest: largest as u8,
+            a: (remaining[0] * scale).clamp(-32767.0, 32767.0) as i16,
+            b: (remaining[1] * scale).clamp(-32767.0, 32767.0) as i16,
+            c: (remaining[2] * scale).clamp(-32767.0, 32767.0) as i16,
+        }
+    }
+
+    fn dequantize_quat(q: QuantizedQuat) -> Quat {
+        let scale = 0.7071067811865476 / 32767.0;
+        let a = q.a as f32 * scale;
+        let b = q.b as f32 * scale;
+        let c = q.c as f32 * scale;
+
+        let largest_sq = 1.0 - (a * a + b * b + c * c);
+        let largest = largest_sq.max(0.0).sqrt();
+
+        match q.largest {
+            0 => Quat::from_xyzw(largest, a, b, c),
+            1 => Quat::from_xyzw(a, largest, b, c),
+            2 => Quat::from_xyzw(a, b, largest, c),
+            _ => Quat::from_xyzw(a, b, c, largest),
+        }
+    }
+
+    fn reduce_keys(times: &[f32], threshold: f32) -> Vec<f32> {
+        if times.len() <= 2 {
+            return times.to_vec();
+        }
+
+        let mut result = vec![times[0]];
+        let mut last_time = times[0];
+
+        for &t in &times[1..times.len() - 1] {
+            if t - last_time >= threshold {
+                result.push(t);
+                last_time = t;
+            }
+        }
+
+        result.push(times[times.len() - 1]);
+        result
+    }
+
+    fn find_closest_key(times: &[f32], target: f32) -> Option<usize> {
+        for (i, &t) in times.iter().enumerate() {
+            if (t - target).abs() < 0.001 {
+                return Some(i);
+            }
+            if t > target && i > 0 {
+                return Some(i - 1);
+            }
+        }
+        times.len().checked_sub(1)
+    }
+
+    #[cfg(test)]
+    mod compression_tests {
+        use super::*;
+
+        #[test]
+        fn quantize_dequantize_vec3() {
+            let settings = QuantizationSettings::default();
+            let v = Vec3::new(10.0, -5.0, 3.14);
+            let q = quantize_vec3(v, settings.position_range);
+            let decoded = dequantize_vec3(q, settings.position_range);
+
+            assert!((decoded.x - v.x).abs() < 0.1);
+            assert!((decoded.y - v.y).abs() < 0.1);
+            assert!((decoded.z - v.z).abs() < 0.1);
+        }
+
+        #[test]
+        fn quantize_dequantize_quat() {
+            let q = Quat::from_rotation_y(std::f32::consts::FRAC_PI_4);
+            let compressed = quantize_quat(q);
+            let decoded = dequantize_quat(compressed);
+
+            assert!((decoded.x - q.x).abs() < 0.01);
+            assert!((decoded.y - q.y).abs() < 0.01);
+            assert!((decoded.z - q.z).abs() < 0.01);
+            assert!((decoded.w - q.w).abs() < 0.01);
+        }
+
+        #[test]
+        fn compress_decompress_clip() {
+            let settings = QuantizationSettings::default();
+            let clip = AnimationClip::new("test")
+                .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::ZERO))
+                .add_keyframe(TransformKeyframe::at_position(
+                    1.0,
+                    Vec3::new(10.0, 5.0, 0.0),
+                ));
+
+            let compressed = clip.compress(&settings);
+            let decompressed = compressed.decompress(&settings);
+
+            assert_eq!(decompressed.name, "test");
+
+            let sample0 = decompressed.sample(0.0).unwrap();
+            let sample1 = decompressed.sample(1.0).unwrap();
+
+            assert!((sample0.position.x).abs() < 1.0);
+            assert!((sample1.position.x - 10.0).abs() < 1.0);
+        }
+
+        #[test]
+        fn compression_ratio_positive() {
+            let settings = QuantizationSettings::default();
+            let clip = AnimationClip::new("test")
+                .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::ZERO))
+                .add_keyframe(TransformKeyframe::at_position(
+                    0.5,
+                    Vec3::new(5.0, 0.0, 0.0),
+                ))
+                .add_keyframe(TransformKeyframe::at_position(
+                    1.0,
+                    Vec3::new(10.0, 0.0, 0.0),
+                ));
+
+            let ratio = clip.compression_ratio(&settings);
+            assert!(ratio > 0.0);
+        }
     }
 }

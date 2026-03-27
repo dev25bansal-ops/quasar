@@ -146,11 +146,7 @@ impl InterestManager {
     }
 
     /// Check whether a single entity is relevant to a client.
-    pub fn is_relevant(
-        &self,
-        client_id: &ClientId,
-        entity_id: &NetworkEntityId,
-    ) -> bool {
+    pub fn is_relevant(&self, client_id: &ClientId, entity_id: &NetworkEntityId) -> bool {
         let aoi = match self.client_aois.get(client_id) {
             Some(a) => a,
             None => return false,

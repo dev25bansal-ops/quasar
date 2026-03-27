@@ -135,8 +135,7 @@ impl VolumetricFogPass {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let scatter_view = scatter_texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -527,11 +526,7 @@ impl VolumetricFogPass {
     }
 
     /// Rebuild the bind group when the depth texture changes (e.g. resize).
-    pub fn rebuild_bind_group(
-        &mut self,
-        device: &wgpu::Device,
-        depth_view: &wgpu::TextureView,
-    ) {
+    pub fn rebuild_bind_group(&mut self, device: &wgpu::Device, depth_view: &wgpu::TextureView) {
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Volumetric BG"),
             layout: &self.bind_group_layout,
@@ -580,8 +575,7 @@ impl VolumetricFogPass {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING
-                | wgpu::TextureUsages::TEXTURE_BINDING,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         self.scatter_view = self
@@ -620,11 +614,7 @@ impl VolumetricFogPass {
             cpass.set_pipeline(&self.froxel_accum_pipeline);
             cpass.set_bind_group(0, &self.froxel_bind_group, &[]);
             // Each workgroup handles one column (x, y) iterating over depth.
-            cpass.dispatch_workgroups(
-                FROXEL_WIDTH.div_ceil(8),
-                FROXEL_HEIGHT.div_ceil(8),
-                1,
-            );
+            cpass.dispatch_workgroups(FROXEL_WIDTH.div_ceil(8), FROXEL_HEIGHT.div_ceil(8), 1);
         }
     }
 }

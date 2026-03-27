@@ -1629,6 +1629,7 @@ impl NetworkTransportResource {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn validate_message(&mut self, msg: &NetworkMessage) -> Result<(), NetworkError> {
         self.validate_message_enhanced(
             msg,

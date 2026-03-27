@@ -11,14 +11,13 @@
 //! Server listens on `http://localhost:8080` by default.
 
 use quasar_lobby::{
-    JoinInfo, LobbyError, PlayerId, PlayerInfo, Session, SessionConfig,
-    SessionId, SessionState,
+    JoinInfo, LobbyError, PlayerId, PlayerInfo, Session, SessionConfig, SessionId, SessionState,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::net::tcp::OwnedWriteHalf;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
 
 /// In-memory session storage.
@@ -148,7 +147,10 @@ async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
     }
 }
 
-async fn handle_get_session(session_id_str: &str, sessions: SessionStore) -> Result<String, LobbyError> {
+async fn handle_get_session(
+    session_id_str: &str,
+    sessions: SessionStore,
+) -> Result<String, LobbyError> {
     let session_id: u64 = session_id_str
         .parse()
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
@@ -178,7 +180,10 @@ async fn handle_create_session(body: &str, sessions: SessionStore) -> Result<Str
     let session_id = generate_session_id();
     let player = PlayerInfo {
         id: request.player_id.clone(),
-        name: format!("Player-{}", request.player_id.0.chars().take(6).collect::<String>()),
+        name: format!(
+            "Player-{}",
+            request.player_id.0.chars().take(6).collect::<String>()
+        ),
         team: None,
         is_ready: false,
         metadata: HashMap::new(),
@@ -248,7 +253,10 @@ async fn handle_join_session(
 
     let player = PlayerInfo {
         id: request.player_id.clone(),
-        name: format!("Player-{}", request.player_id.0.chars().take(6).collect::<String>()),
+        name: format!(
+            "Player-{}",
+            request.player_id.0.chars().take(6).collect::<String>()
+        ),
         team: None,
         is_ready: false,
         metadata: HashMap::new(),

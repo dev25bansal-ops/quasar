@@ -6,13 +6,15 @@ use super::camera::{Camera, CameraUniform};
 use super::light::LightsUniform;
 use super::material::{Material, MaterialOverride};
 use super::mesh::Mesh;
-use super::occlusion::{DrawIndexedIndirectArgs, GpuCullPass, IndirectDrawManager, MeshDrawCommand};
-use super::pipeline;
-use super::taa::TaaPass;
-use super::ssgi::SsgiPass;
-use super::texture::Texture;
 #[cfg(feature = "meshlet")]
 use super::meshlet::{MeshletGpuBuffers, MESHLET_CULL_WGSL};
+use super::occlusion::{
+    DrawIndexedIndirectArgs, GpuCullPass, IndirectDrawManager, MeshDrawCommand,
+};
+use super::pipeline;
+use super::ssgi::SsgiPass;
+use super::taa::TaaPass;
+use super::texture::Texture;
 
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
@@ -51,14 +53,14 @@ impl UniformRingBuffer {
     pub fn allocate(&mut self, size: u64, alignment: u64) -> u64 {
         let aligned_offset = (self.offset + alignment - 1) / alignment * alignment;
         let end = aligned_offset + size;
-        
+
         if end > self.capacity {
             // Wrap around
             self.offset = 0;
             self.frame_offsets.clear();
             return 0;
         }
-        
+
         self.offset = end;
         self.frame_offsets.push(aligned_offset);
         aligned_offset
@@ -203,7 +205,7 @@ impl Renderer {
         // Create the rendering surface from the window.
         let surface = instance
             .create_surface(window.clone())
-            .map_err(|e| QuasarError::Render(format!("Failed to create surface: {e}")))?;
+            .map_err(|e| QuasarError::render(format!("Failed to create surface: {e}")))?;
 
         // Request a GPU adapter compatible with our surface.
         let adapter = instance
@@ -213,7 +215,7 @@ impl Renderer {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| QuasarError::Render("No suitable GPU adapter found".into()))?;
+            .ok_or_else(|| QuasarError::render("No suitable GPU adapter found".to_string()))?;
 
         log::info!("GPU adapter: {:?}", adapter.get_info().name);
 
@@ -235,7 +237,7 @@ impl Renderer {
                 None,
             )
             .await
-            .map_err(|e| QuasarError::Render(format!("Failed to request device: {e}")))?;
+            .map_err(|e| QuasarError::render(format!("Failed to request device: {e}")))?;
 
         // Configure the surface.
         let surface_caps = surface.get_capabilities(&adapter);
@@ -301,7 +303,8 @@ impl Renderer {
         });
 
         // -- Depth texture --
-        let (depth_texture, depth_view) = Self::create_depth_texture(&device, width, height, render_config.msaa_sample_count);
+        let (depth_texture, depth_view) =
+            Self::create_depth_texture(&device, width, height, render_config.msaa_sample_count);
 
         // -- Create merged material + texture bind group layout --
         let material_texture_bind_group_layout =
@@ -451,7 +454,7 @@ impl Renderer {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        
+
         // -- Create dummy shadow resources for bindings 1-6 --
         // Shadow uniform buffer (binding 1)
         // Size: mat4x4<f32> (64 bytes) + vec4<f32> (16 bytes) = 80 bytes
@@ -536,7 +539,7 @@ impl Renderer {
             let identity = glam::Mat4::IDENTITY.to_cols_array_2d();
             for cascade in 0..4 {
                 let offset = cascade * 80; // 80 bytes per cascade
-                // Write matrix (64 bytes)
+                                           // Write matrix (64 bytes)
                 for i in 0..4 {
                     for j in 0..4 {
                         let byte_offset = offset + (i * 4 + j) * 4;
@@ -545,7 +548,8 @@ impl Renderer {
                     }
                 }
                 // Write split_depth (16 bytes from offset 64): set to large value so shadows work
-                data[offset + 64..offset + 68].copy_from_slice(&10000.0f32.to_ne_bytes()); // split_depth
+                data[offset + 64..offset + 68].copy_from_slice(&10000.0f32.to_ne_bytes());
+                // split_depth
             }
             data
         };
@@ -619,9 +623,8 @@ impl Renderer {
             ],
         });
 
-// -- Default 1×1 white texture --
-        let default_texture =
-            Texture::white(&device, &queue, &texture_bind_group_layout);
+        // -- Default 1×1 white texture --
+        let default_texture = Texture::white(&device, &queue, &texture_bind_group_layout);
 
         // -- Default material (white, roughness=0.5, metallic=0) --
         let default_material = Material::new(
@@ -642,12 +645,12 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-    // Note: Instance data is currently not used in the basic shader.
-    // This bind group layout is reserved for future GPU-driven rendering features.
-    let instance_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Instance Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
+        // Note: Instance data is currently not used in the basic shader.
+        // This bind group layout is reserved for future GPU-driven rendering features.
+        let instance_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Instance Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
@@ -656,9 +659,8 @@ impl Renderer {
                         min_binding_size: None,
                     },
                     count: None,
-                },
-            ],
-        });
+                }],
+            });
 
         let instance_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Instance Bind Group"),
@@ -691,38 +693,36 @@ impl Renderer {
         queue.write_buffer(&light_buffer, 0, bytemuck::cast_slice(&[light_uniform]));
 
         // Create combined material + texture bind group for default material and texture
-        let default_material_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Default Material + Texture Bind Group"),
-            layout: &material_texture_bind_group_layout,
-            entries: &[
-                // Material uniform (binding 0)
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &default_material.buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                // Albedo texture (binding 1)
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&default_texture.view),
-                },
-                // Albedo sampler (binding 2)
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&default_texture.sampler),
-                },
-            ],
-        });
+        let default_material_texture_bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Default Material + Texture Bind Group"),
+                layout: &material_texture_bind_group_layout,
+                entries: &[
+                    // Material uniform (binding 0)
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &default_material.buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    // Albedo texture (binding 1)
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&default_texture.view),
+                    },
+                    // Albedo sampler (binding 2)
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&default_texture.sampler),
+                    },
+                ],
+            });
 
         // Create ring buffer before moving device
-        let uniform_ring_buffer = UniformRingBuffer::new(
-            &device,
-            UNIFORM_RING_SIZE,
-            Some("Uniform Ring Buffer"),
-        );
+        let uniform_ring_buffer =
+            UniformRingBuffer::new(&device, UNIFORM_RING_SIZE, Some("Uniform Ring Buffer"));
 
         let mut result = Ok(Self {
             device,
@@ -772,12 +772,8 @@ impl Renderer {
             if renderer.render_config.taa_enabled {
                 let w = renderer.config.width;
                 let h = renderer.config.height;
-                renderer.taa_pass = Some(TaaPass::new(
-                    &renderer.device,
-                    w,
-                    h,
-                    renderer.config.format,
-                ));
+                renderer.taa_pass =
+                    Some(TaaPass::new(&renderer.device, w, h, renderer.config.format));
                 let (mv_tex, mv_view) = Self::create_motion_vector_texture(&renderer.device, w, h);
                 renderer.motion_vector_texture = Some(mv_tex);
                 renderer.motion_vector_view = Some(mv_view);
@@ -800,7 +796,12 @@ impl Renderer {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
 
-        let (depth_texture, depth_view) = Self::create_depth_texture(&self.device, width, height, self.render_config.msaa_sample_count);
+        let (depth_texture, depth_view) = Self::create_depth_texture(
+            &self.device,
+            width,
+            height,
+            self.render_config.msaa_sample_count,
+        );
         self.depth_texture = depth_texture;
         self.depth_view = depth_view;
 
@@ -837,7 +838,8 @@ impl Renderer {
     pub fn init_gpu_particles(&mut self) {
         if self.gpu_particle_system.is_none() {
             use crate::particle::GpuParticleSystem;
-            self.gpu_particle_system = Some(GpuParticleSystem::new(&self.device, self.config.format));
+            self.gpu_particle_system =
+                Some(GpuParticleSystem::new(&self.device, self.config.format));
         }
     }
 
@@ -1041,7 +1043,10 @@ impl Renderer {
     }
 
     /// Add a texture from a file path.
-    pub fn add_texture_from_file(&mut self, path: impl AsRef<std::path::Path>) -> Result<u32, String> {
+    pub fn add_texture_from_file(
+        &mut self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<u32, String> {
         let texture = Texture::from_file(
             &self.device,
             &self.queue,
@@ -1072,8 +1077,14 @@ impl Renderer {
     /// presentation.
     pub fn begin_frame(
         &self,
-    ) -> Result<(wgpu::SurfaceTexture, wgpu::TextureView, wgpu::CommandEncoder), wgpu::SurfaceError>
-    {
+    ) -> Result<
+        (
+            wgpu::SurfaceTexture,
+            wgpu::TextureView,
+            wgpu::CommandEncoder,
+        ),
+        wgpu::SurfaceError,
+    > {
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -1111,12 +1122,12 @@ impl Renderer {
 
         if !objects.is_empty() {
             let total = aligned_size * objects.len();
-            
+
             // Ensure staging buffer is large enough
             if self.uniform_staging.len() < total {
                 self.uniform_staging.resize(total, 0);
             }
-            
+
             // Write uniform data to staging buffer
             let data = &mut self.uniform_staging[..total];
             for (i, (_, model, _, _)) in objects.iter().enumerate() {
@@ -1126,7 +1137,8 @@ impl Renderer {
                 let offset = i * aligned_size;
                 data[offset..offset + uniform_size].copy_from_slice(bytes);
             }
-            self.queue.write_buffer(&self.camera_buffer, 0, &data[..total]);
+            self.queue
+                .write_buffer(&self.camera_buffer, 0, &data[..total]);
         }
 
         {
@@ -1164,7 +1176,7 @@ impl Renderer {
             for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
                 let dyn_offset = (i * aligned_size) as u32;
                 pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
-                
+
                 // Use the combined material + texture bind group
                 let material_texture_bg = if mat_bg.is_some() || tex_index.is_some() {
                     // For now, we'll use the default combined bind group
@@ -1174,7 +1186,7 @@ impl Renderer {
                     &self.default_material_texture_bind_group
                 };
                 pass.set_bind_group(1, material_texture_bg, &[]);
-                
+
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1217,9 +1229,10 @@ impl Renderer {
 
         // ── GPU-driven indirect rendering path ──
         if self.render_config.gpu_driven_culling {
-            if let (Some(cull_pass), Some(mgr)) =
-                (self.gpu_cull_pass.as_ref(), self.indirect_draw_manager.as_mut())
-            {
+            if let (Some(cull_pass), Some(mgr)) = (
+                self.gpu_cull_pass.as_ref(),
+                self.indirect_draw_manager.as_mut(),
+            ) {
                 mgr.clear();
                 for (mesh, model, _, _) in objects.iter() {
                     let (scale, _, translation) = model.to_scale_rotation_translation();
@@ -1254,7 +1267,10 @@ impl Renderer {
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: 0.05, g: 0.05, b: 0.08, a: 1.0,
+                                    r: 0.05,
+                                    g: 0.05,
+                                    b: 0.08,
+                                    a: 1.0,
                                 }),
                                 store: wgpu::StoreOp::Store,
                             },
@@ -1272,19 +1288,22 @@ impl Renderer {
                     });
 
                     pass.set_pipeline(&self.render_pipeline);
-            pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+                    pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
                     let stride = std::mem::size_of::<DrawIndexedIndirectArgs>() as u64;
-for (i, (mesh, _, _mat_bg, _tex_index)) in objects.iter().enumerate() {
+                    for (i, (mesh, _, _mat_bg, _tex_index)) in objects.iter().enumerate() {
                         let dyn_offset = (i * aligned_size) as u32;
                         pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
-                        
-// Use the combined material + texture bind group
-let material_texture_bg = &self.default_material_texture_bind_group;
+
+                        // Use the combined material + texture bind group
+                        let material_texture_bg = &self.default_material_texture_bind_group;
                         pass.set_bind_group(1, material_texture_bg, &[]);
-                        
+
                         pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                        pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                        pass.set_index_buffer(
+                            mesh.index_buffer.slice(..),
+                            wgpu::IndexFormat::Uint32,
+                        );
                         pass.draw_indexed_indirect(&cull_pass.indirect_buffer, i as u64 * stride);
                     }
                 }
@@ -1292,32 +1311,35 @@ let material_texture_bg = &self.default_material_texture_bind_group;
             return;
         }
 
-type BatchKey = (usize, usize, usize);
-#[allow(dead_code)]
-struct Batch {
-mesh: &'static Mesh,
-indices: Vec<usize>,
-material: Option<&'static wgpu::BindGroup>,
-texture: &'static wgpu::BindGroup,
-}
+        type BatchKey = (usize, usize, usize);
+        #[allow(dead_code)]
+        struct Batch {
+            mesh: &'static Mesh,
+            indices: Vec<usize>,
+            material: Option<&'static wgpu::BindGroup>,
+            texture: &'static wgpu::BindGroup,
+        }
 
         let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
 
         for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
             let mesh_key = *mesh as *const Mesh as usize;
-            let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
+            let mat_key = mat_bg
+                .map(|bg| bg as *const wgpu::BindGroup as usize)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
-            let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
-                let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
-                Batch {
-                    mesh: unsafe { &*(*mesh as *const Mesh) },
-                    indices: Vec::new(),
-                    material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
-                    texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
-                }
-            });
+            let entry = batches
+                .entry((mesh_key, mat_key, tex_key))
+                .or_insert_with(|| {
+                    let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                    Batch {
+                        mesh: unsafe { &*(*mesh as *const Mesh) },
+                        indices: Vec::new(),
+                        material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
+                        texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
+                    }
+                });
             entry.indices.push(i);
         }
 
@@ -1353,11 +1375,11 @@ texture: &'static wgpu::BindGroup,
 
             pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
-        for batch in batches.values() {
-            // Use the combined material + texture bind group
-            pass.set_bind_group(1, &self.default_material_texture_bind_group, &[]);
-            pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
-            pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            for batch in batches.values() {
+                // Use the combined material + texture bind group
+                pass.set_bind_group(1, &self.default_material_texture_bind_group, &[]);
+                pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
                 for &idx in &batch.indices {
                     let dyn_offset = (idx * aligned_size) as u32;
@@ -1401,7 +1423,12 @@ texture: &'static wgpu::BindGroup,
                         view: &gbuffer.albedo_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }),
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     }),
@@ -1409,7 +1436,12 @@ texture: &'static wgpu::BindGroup,
                         view: &gbuffer.normal_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.5, b: 1.0, a: 1.0 }),
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 1.0,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     }),
@@ -1417,7 +1449,12 @@ texture: &'static wgpu::BindGroup,
                         view: &gbuffer.roughness_metallic_view,
                         resolve_target: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.5, g: 0.0, b: 0.0, a: 1.0 }),
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.5,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     }),
@@ -1448,11 +1485,7 @@ texture: &'static wgpu::BindGroup,
     }
 
     /// Submit the encoder and present the frame.
-    pub fn finish_frame(
-        &self,
-        encoder: wgpu::CommandEncoder,
-        output: wgpu::SurfaceTexture,
-    ) {
+    pub fn finish_frame(&self, encoder: wgpu::CommandEncoder, output: wgpu::SurfaceTexture) {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
@@ -1596,20 +1629,25 @@ texture: &'static wgpu::BindGroup,
 
         for (mesh, model, mat_bg, tex_index) in objects.iter() {
             let mesh_key = *mesh as *const Mesh as usize;
-            let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
+            let mat_key = mat_bg
+                .map(|bg| bg as *const wgpu::BindGroup as usize)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
-            let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
-                let texture_bg: *const wgpu::BindGroup = self.get_texture_bind_group(tex_index.unwrap_or(0));
-                let mat_ptr: Option<*const wgpu::BindGroup> = mat_bg.map(|bg| bg as *const wgpu::BindGroup);
-                Batch {
-                    mesh: *mesh as *const Mesh,
-                    materials: Vec::new(),
-                    material: mat_ptr,
-                    texture: texture_bg,
-                }
-            });
+            let entry = batches
+                .entry((mesh_key, mat_key, tex_key))
+                .or_insert_with(|| {
+                    let texture_bg: *const wgpu::BindGroup =
+                        self.get_texture_bind_group(tex_index.unwrap_or(0));
+                    let mat_ptr: Option<*const wgpu::BindGroup> =
+                        mat_bg.map(|bg| bg as *const wgpu::BindGroup);
+                    Batch {
+                        mesh: *mesh as *const Mesh,
+                        materials: Vec::new(),
+                        material: mat_ptr,
+                        texture: texture_bg,
+                    }
+                });
             entry.materials.push(*model);
         }
 
@@ -1646,18 +1684,25 @@ texture: &'static wgpu::BindGroup,
             render_pass.set_bind_group(4, &self.instance_bind_group, &[]);
 
             for batch in batches.values() {
-                let material_bg = batch.material.unwrap_or(&self.default_material.bind_group as *const wgpu::BindGroup);
+                let material_bg = batch
+                    .material
+                    .unwrap_or(&self.default_material.bind_group as *const wgpu::BindGroup);
                 render_pass.set_bind_group(1, unsafe { &*material_bg }, &[]);
                 render_pass.set_bind_group(3, unsafe { &*batch.texture }, &[]);
                 render_pass.set_vertex_buffer(0, unsafe { &(*batch.mesh).vertex_buffer }.slice(..));
-                render_pass.set_index_buffer(unsafe { &(*batch.mesh).index_buffer }.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.set_index_buffer(
+                    unsafe { &(*batch.mesh).index_buffer }.slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
 
                 if !batch.materials.is_empty() {
-                    let matrix_bytes: Vec<u8> = batch.materials
+                    let matrix_bytes: Vec<u8> = batch
+                        .materials
                         .iter()
                         .flat_map(|m| bytemuck::bytes_of(m).iter().copied())
                         .collect();
-                    self.queue.write_buffer(&self.instance_buffer, 0, &matrix_bytes);
+                    self.queue
+                        .write_buffer(&self.instance_buffer, 0, &matrix_bytes);
 
                     render_pass.draw_indexed(
                         0..unsafe { (*batch.mesh).index_count },
@@ -1753,19 +1798,23 @@ texture: &'static wgpu::BindGroup,
 
                 for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
                     let mesh_key = *mesh as *const Mesh as usize;
-                    let mat_key = mat_bg.map(|bg| bg as *const wgpu::BindGroup as usize)
+                    let mat_key = mat_bg
+                        .map(|bg| bg as *const wgpu::BindGroup as usize)
                         .unwrap_or(usize::MAX);
                     let tex_key = tex_index.unwrap_or(0) as usize;
 
-                    let entry = batches.entry((mesh_key, mat_key, tex_key)).or_insert_with(|| {
-                        let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
-                        Batch {
-                            mesh: unsafe { &*(*mesh as *const Mesh) },
-                            indices: Vec::new(),
-                            material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
-                            texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
-                        }
-                    });
+                    let entry = batches
+                        .entry((mesh_key, mat_key, tex_key))
+                        .or_insert_with(|| {
+                            let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
+                            Batch {
+                                mesh: unsafe { &*(*mesh as *const Mesh) },
+                                indices: Vec::new(),
+                                material: mat_bg
+                                    .map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
+                                texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
+                            }
+                        });
                     entry.indices.push(i);
                 }
 
@@ -1775,7 +1824,10 @@ texture: &'static wgpu::BindGroup,
                     render_pass.set_bind_group(2, &self.lighting_bind_group, &[]);
                     render_pass.set_bind_group(3, batch.texture, &[]);
                     render_pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.set_index_buffer(
+                        batch.mesh.index_buffer.slice(..),
+                        wgpu::IndexFormat::Uint32,
+                    );
 
                     for &idx in &batch.indices {
                         let dyn_offset = (idx * aligned_size) as u32;
@@ -1794,7 +1846,8 @@ texture: &'static wgpu::BindGroup,
                     let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
                     render_pass.set_bind_group(3, texture_bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass
+                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
@@ -1894,7 +1947,7 @@ texture: &'static wgpu::BindGroup,
         hdr_view: &wgpu::TextureView,
         output_view: &wgpu::TextureView,
     ) -> Result<wgpu::CommandBuffer, wgpu::SurfaceError> {
-        use super::render_graph::{RenderGraph, RenderContext, PassId, AttachmentId, Attachment};
+        use super::render_graph::{Attachment, AttachmentId, PassId, RenderContext, RenderGraph};
 
         let align = self.uniform_alignment as usize;
         let uniform_size = std::mem::size_of::<CameraUniform>();
@@ -1916,13 +1969,16 @@ texture: &'static wgpu::BindGroup,
         let mut graph = RenderGraph::new();
 
         let hdr_att = AttachmentId(0);
-        graph.add_attachment(hdr_att, Attachment {
-            name: "HDR Color".into(),
-            format: wgpu::TextureFormat::Rgba16Float,
-            size: (self.config.width, self.config.height),
-            texture: None,
-            view: None,
-        });
+        graph.add_attachment(
+            hdr_att,
+            Attachment {
+                name: "HDR Color".into(),
+                format: wgpu::TextureFormat::Rgba16Float,
+                size: (self.config.width, self.config.height),
+                texture: None,
+                view: None,
+            },
+        );
 
         let context = RenderContext {
             screen_size: (self.config.width, self.config.height),
@@ -1934,25 +1990,32 @@ texture: &'static wgpu::BindGroup,
         };
 
         let opaque_pass = PassId(1);
-        let draw_data: Vec<OpaqueDrawData> = objects.iter().map(|(m, _, _, _)| OpaqueDrawData {
-            vertex_buffer: m.vertex_buffer.clone(),
-            index_buffer: m.index_buffer.clone(),
-            index_count: m.index_count,
-        }).collect();
-        
-        graph.add_pass(opaque_pass, Box::new(OpaqueGraphPass {
-            objects: draw_data,
-            camera_bind_group: self.camera_bind_group.clone(),
-            material_bind_group: self.default_material_texture_bind_group.clone(),
-            lighting_bind_group: self.lighting_bind_group.clone(),
-            pipeline: self.render_pipeline.clone(),
-            uniform_alignment: self.uniform_alignment,
-        }));
+        let draw_data: Vec<OpaqueDrawData> = objects
+            .iter()
+            .map(|(m, _, _, _)| OpaqueDrawData {
+                vertex_buffer: m.vertex_buffer.clone(),
+                index_buffer: m.index_buffer.clone(),
+                index_count: m.index_count,
+            })
+            .collect();
+
+        graph.add_pass(
+            opaque_pass,
+            Box::new(OpaqueGraphPass {
+                objects: draw_data,
+                camera_bind_group: self.camera_bind_group.clone(),
+                material_bind_group: self.default_material_texture_bind_group.clone(),
+                lighting_bind_group: self.lighting_bind_group.clone(),
+                pipeline: self.render_pipeline.clone(),
+                uniform_alignment: self.uniform_alignment,
+            }),
+        );
         graph.add_output(opaque_pass, hdr_att);
 
         graph.compile().map_err(|_e| wgpu::SurfaceError::Lost)?;
 
-        graph.execute(&self.device, &self.queue, &context)
+        graph
+            .execute(&self.device, &self.queue, &context)
             .map_err(|_| wgpu::SurfaceError::Lost)
     }
 
@@ -1973,56 +2036,60 @@ texture: &'static wgpu::BindGroup,
             mapped_at_creation: false,
         });
 
-        let cull_shader = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Meshlet Cull"),
-            source: wgpu::ShaderSource::Wgsl(MESHLET_CULL_WGSL.into()),
-        });
+        let cull_shader = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Meshlet Cull"),
+                source: wgpu::ShaderSource::Wgsl(MESHLET_CULL_WGSL.into()),
+            });
 
-        let cull_bind_group_layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Meshlet Cull BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
+        let cull_bind_group_layout =
+            self.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Meshlet Cull BGL"),
+                    entries: &[
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: None,
+                            },
+                            count: None,
+                        },
+                    ],
+                });
 
         let cull_uniforms = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Meshlet Cull Uniforms"),
@@ -2037,33 +2104,50 @@ texture: &'static wgpu::BindGroup,
             camera_pos: [camera.position.x, camera.position.y, camera.position.z],
             meshlet_count: meshlet_buffers.meshlet_count,
         };
-        self.queue.write_buffer(&cull_uniforms, 0, bytemuck::bytes_of(&cull_data));
+        self.queue
+            .write_buffer(&cull_uniforms, 0, bytemuck::bytes_of(&cull_data));
 
         let cull_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Meshlet Cull BG"),
             layout: &cull_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: cull_uniforms.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: meshlet_buffers.meshlet_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: meshlet_buffers.bounds_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: visibility_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: cull_uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: meshlet_buffers.meshlet_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: meshlet_buffers.bounds_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: visibility_buffer.as_entire_binding(),
+                },
             ],
         });
 
-        let cull_pipeline_layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Meshlet Cull Pipeline Layout"),
-            bind_group_layouts: &[&cull_bind_group_layout],
-            push_constant_ranges: &[],
-        });
+        let cull_pipeline_layout =
+            self.device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Meshlet Cull Pipeline Layout"),
+                    bind_group_layouts: &[&cull_bind_group_layout],
+                    push_constant_ranges: &[],
+                });
 
-        let cull_pipeline = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Meshlet Cull Pipeline"),
-            layout: Some(&cull_pipeline_layout),
-            module: &cull_shader,
-            entry_point: Some("cs_meshlet_cull"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
+        let cull_pipeline = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("Meshlet Cull Pipeline"),
+                layout: Some(&cull_pipeline_layout),
+                module: &cull_shader,
+                entry_point: Some("cs_meshlet_cull"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
 
         {
             let mut cull_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -2154,7 +2238,12 @@ impl super::render_graph::RenderPass for OpaqueGraphPass {
                 view: hdr_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.05, g: 0.05, b: 0.08, a: 1.0 }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.05,
+                        g: 0.05,
+                        b: 0.08,
+                        a: 1.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
             })],

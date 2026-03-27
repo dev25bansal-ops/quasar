@@ -1,7 +1,7 @@
 //! Additional physics components - sensors, CCD, materials, compound colliders.
 
-use rapier3d::prelude::*;
 use crate::world::PhysicsWorld;
+use rapier3d::prelude::*;
 
 /// Marker component enabling Continuous Collision Detection.
 #[derive(Debug, Clone, Copy, Default)]
@@ -39,7 +39,7 @@ impl PendingSensor {
             position: [0.0; 3],
         }
     }
-    
+
     pub fn with_body(mut self, body: RigidBodyHandle) -> Self {
         self.parent_body = Some(body);
         self
@@ -55,19 +55,45 @@ pub struct PhysicsMaterial {
 
 impl Default for PhysicsMaterial {
     fn default() -> Self {
-        Self { restitution: 0.3, friction: 0.5 }
+        Self {
+            restitution: 0.3,
+            friction: 0.5,
+        }
     }
 }
 
 impl PhysicsMaterial {
     pub fn new(restitution: f32, friction: f32) -> Self {
-        Self { restitution, friction }
+        Self {
+            restitution,
+            friction,
+        }
     }
-    
-    pub fn ice() -> Self { Self { restitution: 0.1, friction: 0.02 } }
-    pub fn rubber() -> Self { Self { restitution: 0.85, friction: 0.9 } }
-    pub fn mud() -> Self { Self { restitution: 0.0, friction: 1.5 } }
-    pub fn concrete() -> Self { Self { restitution: 0.3, friction: 0.7 } }
+
+    pub fn ice() -> Self {
+        Self {
+            restitution: 0.1,
+            friction: 0.02,
+        }
+    }
+    pub fn rubber() -> Self {
+        Self {
+            restitution: 0.85,
+            friction: 0.9,
+        }
+    }
+    pub fn mud() -> Self {
+        Self {
+            restitution: 0.0,
+            friction: 1.5,
+        }
+    }
+    pub fn concrete() -> Self {
+        Self {
+            restitution: 0.3,
+            friction: 0.7,
+        }
+    }
 }
 
 /// Component for compound colliders.
@@ -92,8 +118,12 @@ impl PendingCompoundCollider {
             material: PhysicsMaterial::default(),
         }
     }
-    
-    pub fn add_shape(mut self, shape: crate::collider::ColliderShape, translation: [f32; 3]) -> Self {
+
+    pub fn add_shape(
+        mut self,
+        shape: crate::collider::ColliderShape,
+        translation: [f32; 3],
+    ) -> Self {
         let iso = Isometry::new(
             nalgebra::vector![translation[0], translation[1], translation[2]],
             nalgebra::zero(),
@@ -115,17 +145,20 @@ impl PhysicsWorld {
             nalgebra::vector![position[0], position[1], position[2]],
             nalgebra::zero(),
         );
-        
+
         let builder = ColliderBuilder::new(rapier_shape)
             .sensor(true)
             .position(iso);
-        
+
         match parent_body {
-            Some(body) => self.colliders.insert_with_parent(builder.build(), body, &mut self.bodies),
+            Some(body) => {
+                self.colliders
+                    .insert_with_parent(builder.build(), body, &mut self.bodies)
+            }
             None => self.colliders.insert(builder.build()),
         }
     }
-    
+
     pub fn add_compound_collider(
         &mut self,
         shapes: &[(Isometry<f32>, crate::collider::ColliderShape)],
@@ -136,16 +169,17 @@ impl PhysicsWorld {
             .iter()
             .map(|(iso, shape)| (*iso, shape.to_rapier()))
             .collect();
-        
+
         let compound = SharedShape::compound(rapier_shapes);
-        
+
         let builder = ColliderBuilder::new(compound)
             .restitution(material.restitution)
             .friction(material.friction);
-        
-        self.colliders.insert_with_parent(builder.build(), parent_body, &mut self.bodies)
+
+        self.colliders
+            .insert_with_parent(builder.build(), parent_body, &mut self.bodies)
     }
-    
+
     pub fn enable_ccd(&mut self, body_handle: RigidBodyHandle, enable: bool) {
         if let Some(body) = self.bodies.get_mut(body_handle) {
             body.enable_ccd(enable);

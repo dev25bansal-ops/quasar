@@ -37,7 +37,8 @@ fn main() {
     let mut ped_tf = Transform::IDENTITY;
     ped_tf.position = Vec3::new(0.0, -0.25, 0.0);
     app.world.insert(pedestal, ped_tf);
-    app.world.insert(pedestal, MeshShape::Cylinder { segments: 24 });
+    app.world
+        .insert(pedestal, MeshShape::Cylinder { segments: 24 });
     scene.set_name(pedestal, "Pedestal");
 
     // Spinning cube on pedestal.
@@ -58,8 +59,13 @@ fn main() {
         tf.position = Vec3::new(radius * angle.cos(), 0.0, radius * angle.sin());
         tf.scale = Vec3::splat(0.6 + 0.2 * (i as f32 / 6.0));
         app.world.insert(sphere, tf);
-        app.world
-            .insert(sphere, MeshShape::Sphere { sectors: 32, stacks: 16 });
+        app.world.insert(
+            sphere,
+            MeshShape::Sphere {
+                sectors: 32,
+                stacks: 16,
+            },
+        );
         scene.set_name(sphere, format!("Sphere_{i}"));
     }
 
@@ -94,12 +100,7 @@ fn main() {
         // Spin the central cube.
         if let Some(cube) = scene.find_by_name("SpinningCube") {
             if let Some(tf) = world.get_mut::<Transform>(cube) {
-                tf.rotation = Quat::from_euler(
-                    EulerRot::YXZ,
-                    elapsed * 1.5,
-                    elapsed * 0.4,
-                    0.0,
-                );
+                tf.rotation = Quat::from_euler(EulerRot::YXZ, elapsed * 1.5, elapsed * 0.4, 0.0);
             }
         }
 
@@ -125,12 +126,8 @@ fn main() {
                     tf.position.x = 5.0 * orbit.cos();
                     tf.position.z = 5.0 * orbit.sin();
                     tf.position.y = 0.5 + 0.2 * (elapsed * 1.5 + base_angle).sin();
-                    tf.rotation = Quat::from_euler(
-                        EulerRot::YXZ,
-                        elapsed * 2.0,
-                        elapsed * 1.0,
-                        0.0,
-                    );
+                    tf.rotation =
+                        Quat::from_euler(EulerRot::YXZ, elapsed * 2.0, elapsed * 1.0, 0.0);
                 }
             }
         }

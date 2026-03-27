@@ -6,6 +6,8 @@
 //! - Decorator nodes for modifying child behavior
 //! - Builder patterns for constructing nodes
 
+#![allow(dead_code)]
+
 use super::behavior_tree::{Node, NodeResult};
 use super::blackboard::{Blackboard, BlackboardValue};
 use crate::ecs::{Entity, World};

@@ -35,10 +35,11 @@ mod behavior_tree;
 mod blackboard;
 mod nodes;
 
-pub use behavior_tree::{BehaviorTree, Node, NodeResult, BehaviorTreeRunner, BehaviorTreeSystem, BehaviorTreePlugin};
+pub use behavior_tree::{
+    BehaviorTree, BehaviorTreePlugin, BehaviorTreeRunner, BehaviorTreeSystem, Node, NodeResult,
+};
 pub use blackboard::{Blackboard, BlackboardValue};
 pub use nodes::{
-    ActionNode, ConditionNode, DecoratorNode,
-    WaitForNode, InverterNode, RepeaterNode, TimeoutNode,
-    ParallelNode, RandomSelectorNode,
+    ActionNode, ConditionNode, DecoratorNode, InverterNode, ParallelNode, RandomSelectorNode,
+    RepeaterNode, TimeoutNode, WaitForNode,
 };

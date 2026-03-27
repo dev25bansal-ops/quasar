@@ -68,11 +68,11 @@ pub struct MeshletMesh {
 /// Uses a simple greedy algorithm: scan triangles, growing the current
 /// meshlet until it reaches the vertex or triangle limit, then start a
 /// new one.
-pub fn build_meshlets(
-    positions: &[[f32; 3]],
-    indices: &[u32],
-) -> MeshletMesh {
-    assert!(indices.len().is_multiple_of(3), "index count must be a multiple of 3");
+pub fn build_meshlets(positions: &[[f32; 3]], indices: &[u32]) -> MeshletMesh {
+    assert!(
+        indices.len().is_multiple_of(3),
+        "index count must be a multiple of 3"
+    );
 
     let mut meshlets = Vec::new();
     let mut bounds_vec = Vec::new();
@@ -84,13 +84,13 @@ pub fn build_meshlets(
     let mut vert_map: std::collections::HashMap<u32, u8> = std::collections::HashMap::new();
 
     let flush = |local_verts: &mut Vec<u32>,
-                     local_tris: &mut Vec<u8>,
-                     vert_map: &mut std::collections::HashMap<u32, u8>,
-                     vertex_indices: &mut Vec<u32>,
-                     triangle_indices: &mut Vec<u8>,
-                     meshlets: &mut Vec<MeshletData>,
-                     bounds_vec: &mut Vec<MeshletBounds>,
-                     positions: &[[f32; 3]]| {
+                 local_tris: &mut Vec<u8>,
+                 vert_map: &mut std::collections::HashMap<u32, u8>,
+                 vertex_indices: &mut Vec<u32>,
+                 triangle_indices: &mut Vec<u8>,
+                 meshlets: &mut Vec<MeshletData>,
+                 bounds_vec: &mut Vec<MeshletBounds>,
+                 positions: &[[f32; 3]]| {
         if local_verts.is_empty() {
             return;
         }

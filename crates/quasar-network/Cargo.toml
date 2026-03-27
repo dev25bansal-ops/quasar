@@ -24,3 +24,7 @@ quinn-transport = ["dep:quinn", "dep:rustls", "dep:tokio", "dep:rcgen"]
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
+
+[[bench]]
+name = "network_bench"
+harness = false

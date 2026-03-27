@@ -82,8 +82,7 @@ impl Prefab {
     /// Load a prefab from a file.
     pub fn load(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Self::from_json(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Save a prefab to a file.
@@ -210,7 +209,12 @@ impl PrefabInstance {
         }
     }
 
-    pub fn with_override(mut self, component_type: &str, field_path: &str, value: serde_json::Value) -> Self {
+    pub fn with_override(
+        mut self,
+        component_type: &str,
+        field_path: &str,
+        value: serde_json::Value,
+    ) -> Self {
         self.overrides.push(ComponentOverride {
             component_type: component_type.to_string(),
             field_path: field_path.to_string(),
@@ -228,21 +232,58 @@ pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[Component
         if ovr.component_type == "Transform" {
             if let Some(t) = world.get_mut::<Transform>(entity) {
                 match ovr.field_path.as_str() {
-                    "position.x" => if let Some(v) = ovr.value.as_f64() { t.position.x = v as f32; },
-                    "position.y" => if let Some(v) = ovr.value.as_f64() { t.position.y = v as f32; },
-                    "position.z" => if let Some(v) = ovr.value.as_f64() { t.position.z = v as f32; },
-                    "scale.x" => if let Some(v) = ovr.value.as_f64() { t.scale.x = v as f32; },
-                    "scale.y" => if let Some(v) = ovr.value.as_f64() { t.scale.y = v as f32; },
-                    "scale.z" => if let Some(v) = ovr.value.as_f64() { t.scale.z = v as f32; },
-                    "rotation.x" => if let Some(v) = ovr.value.as_f64() { t.rotation.x = v as f32; },
-                    "rotation.y" => if let Some(v) = ovr.value.as_f64() { t.rotation.y = v as f32; },
-                    "rotation.z" => if let Some(v) = ovr.value.as_f64() { t.rotation.z = v as f32; },
-                    "rotation.w" => if let Some(v) = ovr.value.as_f64() { t.rotation.w = v as f32; },
+                    "position.x" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.position.x = v as f32;
+                        }
+                    }
+                    "position.y" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.position.y = v as f32;
+                        }
+                    }
+                    "position.z" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.position.z = v as f32;
+                        }
+                    }
+                    "scale.x" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.scale.x = v as f32;
+                        }
+                    }
+                    "scale.y" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.scale.y = v as f32;
+                        }
+                    }
+                    "scale.z" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.scale.z = v as f32;
+                        }
+                    }
+                    "rotation.x" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.rotation.x = v as f32;
+                        }
+                    }
+                    "rotation.y" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.rotation.y = v as f32;
+                        }
+                    }
+                    "rotation.z" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.rotation.z = v as f32;
+                        }
+                    }
+                    "rotation.w" => {
+                        if let Some(v) = ovr.value.as_f64() {
+                            t.rotation.w = v as f32;
+                        }
+                    }
                     _ => {
-                        log::warn!(
-                            "Unknown override path '{}' for Transform",
-                            ovr.field_path
-                        );
+                        log::warn!("Unknown override path '{}' for Transform", ovr.field_path);
                     }
                 }
             }
@@ -253,12 +294,7 @@ pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[Component
     // We collect handler function pointers first to avoid borrowing issues.
     let handlers: Vec<(String, OverrideHandlerFn)> = world
         .resource::<OverrideRegistry>()
-        .map(|reg| {
-            reg.handlers
-                .iter()
-                .map(|(k, v)| (k.clone(), *v))
-                .collect()
-        })
+        .map(|reg| reg.handlers.iter().map(|(k, v)| (k.clone(), *v)).collect())
         .unwrap_or_default();
 
     for ovr in overrides {
@@ -411,10 +447,15 @@ pub fn diff_instance_transform(
 
 /// Returns `true` if the given `(component_type, field_path)` pair is
 /// covered by an explicit override in the [`PrefabInstance`].
-pub fn is_field_overridden(instance: &PrefabInstance, component_type: &str, field_path: &str) -> bool {
-    instance.overrides.iter().any(|o| {
-        o.component_type == component_type && o.field_path == field_path
-    })
+pub fn is_field_overridden(
+    instance: &PrefabInstance,
+    component_type: &str,
+    field_path: &str,
+) -> bool {
+    instance
+        .overrides
+        .iter()
+        .any(|o| o.component_type == component_type && o.field_path == field_path)
 }
 
 /// Propagate base prefab changes to all instances in the world.
@@ -456,16 +497,36 @@ pub fn propagate_prefab_changes(world: &mut World) {
 
         // Re-apply non-overridden Transform fields from the base.
         if let Some(t) = world.get_mut::<Transform>(*entity) {
-            if !is_field_overridden(inst, "Transform", "position.x") { t.position.x = base.transform.position.x; }
-            if !is_field_overridden(inst, "Transform", "position.y") { t.position.y = base.transform.position.y; }
-            if !is_field_overridden(inst, "Transform", "position.z") { t.position.z = base.transform.position.z; }
-            if !is_field_overridden(inst, "Transform", "scale.x") { t.scale.x = base.transform.scale.x; }
-            if !is_field_overridden(inst, "Transform", "scale.y") { t.scale.y = base.transform.scale.y; }
-            if !is_field_overridden(inst, "Transform", "scale.z") { t.scale.z = base.transform.scale.z; }
-            if !is_field_overridden(inst, "Transform", "rotation.x") { t.rotation.x = base.transform.rotation.x; }
-            if !is_field_overridden(inst, "Transform", "rotation.y") { t.rotation.y = base.transform.rotation.y; }
-            if !is_field_overridden(inst, "Transform", "rotation.z") { t.rotation.z = base.transform.rotation.z; }
-            if !is_field_overridden(inst, "Transform", "rotation.w") { t.rotation.w = base.transform.rotation.w; }
+            if !is_field_overridden(inst, "Transform", "position.x") {
+                t.position.x = base.transform.position.x;
+            }
+            if !is_field_overridden(inst, "Transform", "position.y") {
+                t.position.y = base.transform.position.y;
+            }
+            if !is_field_overridden(inst, "Transform", "position.z") {
+                t.position.z = base.transform.position.z;
+            }
+            if !is_field_overridden(inst, "Transform", "scale.x") {
+                t.scale.x = base.transform.scale.x;
+            }
+            if !is_field_overridden(inst, "Transform", "scale.y") {
+                t.scale.y = base.transform.scale.y;
+            }
+            if !is_field_overridden(inst, "Transform", "scale.z") {
+                t.scale.z = base.transform.scale.z;
+            }
+            if !is_field_overridden(inst, "Transform", "rotation.x") {
+                t.rotation.x = base.transform.rotation.x;
+            }
+            if !is_field_overridden(inst, "Transform", "rotation.y") {
+                t.rotation.y = base.transform.rotation.y;
+            }
+            if !is_field_overridden(inst, "Transform", "rotation.z") {
+                t.rotation.z = base.transform.rotation.z;
+            }
+            if !is_field_overridden(inst, "Transform", "rotation.w") {
+                t.rotation.w = base.transform.rotation.w;
+            }
         }
 
         // Re-apply explicit overrides (they win over the base).

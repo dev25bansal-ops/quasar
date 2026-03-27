@@ -1,9 +1,9 @@
 //! Character controller - wraps Rapier KinematicCharacterController
 //! for smooth player movement with ground detection and step climbing.
 
+use crate::world::PhysicsWorld;
 use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
-use crate::world::PhysicsWorld;
 
 /// Configuration for a character controller.
 #[derive(Debug, Clone)]
@@ -64,19 +64,25 @@ impl CharacterControllerComponent {
             ground_normal: None,
         }
     }
-    
+
     pub fn with_config(mut self, config: CharacterControllerConfig) -> Self {
         self.config = config;
         self
     }
-    
+
     pub fn set_velocity(&mut self, velocity: [f32; 3]) {
         self.desired_velocity = velocity;
     }
-    
-    pub fn is_grounded(&self) -> bool { self.grounded }
-    pub fn ground_normal(&self) -> Option<[f32; 3]> { self.ground_normal }
-    pub fn effective_velocity(&self) -> [f32; 3] { self.effective_velocity }
+
+    pub fn is_grounded(&self) -> bool {
+        self.grounded
+    }
+    pub fn ground_normal(&self) -> Option<[f32; 3]> {
+        self.ground_normal
+    }
+    pub fn effective_velocity(&self) -> [f32; 3] {
+        self.effective_velocity
+    }
 }
 
 impl PhysicsWorld {
@@ -92,7 +98,7 @@ impl PhysicsWorld {
             self.query_pipeline.update(&self.colliders);
             self.query_pipeline_dirty = false;
         }
-        
+
         let controller = KinematicCharacterController {
             max_slope_climb_angle: config.max_slope_climb_angle,
             min_slope_slide_angle: config.min_slope_slide_angle,
@@ -106,15 +112,15 @@ impl PhysicsWorld {
             }),
             ..Default::default()
         };
-        
+
         let desired = nalgebra::vector![
             desired_translation[0],
             desired_translation[1],
             desired_translation[2]
         ];
-        
+
         let filter = QueryFilter::default().exclude_rigid_body(body_handle);
-        
+
         let result = controller.move_shape(
             dt,
             &self.bodies,
@@ -134,16 +140,16 @@ impl PhysicsWorld {
             filter,
             |_collision| {},
         );
-        
+
         let grounded = result.grounded;
         let t = result.translation;
-        
+
         if let Some(rb) = self.bodies.get_mut(body_handle) {
             let mut pos = *rb.position();
             pos.translation.vector += t;
             rb.set_next_kinematic_translation(pos.translation.vector);
         }
-        
+
         CharacterMovementResult {
             effective_translation: [t.x, t.y, t.z],
             grounded,

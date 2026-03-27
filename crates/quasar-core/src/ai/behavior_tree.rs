@@ -42,9 +42,11 @@ impl NodeResult {
 }
 
 /// Action function type for custom behavior.
+#[allow(dead_code)]
 pub type ActionFn = fn(&mut Blackboard, &World, Entity) -> NodeResult;
 
 /// Condition function type for custom checks.
+#[allow(dead_code)]
 pub type ConditionFn = fn(&Blackboard, &World, Entity) -> bool;
 
 /// A node in the behavior tree.

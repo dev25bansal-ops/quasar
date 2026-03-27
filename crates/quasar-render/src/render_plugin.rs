@@ -5,11 +5,10 @@ use quasar_core::ecs::World;
 use quasar_core::AssetServer;
 
 use crate::mesh::MeshShape;
-use crate::ParticleEmitter;
 use crate::render_graph::{
-    Attachment, RenderContext, RenderGraph, RenderPass,
-    attachment_ids, pass_ids,
+    attachment_ids, pass_ids, Attachment, RenderContext, RenderGraph, RenderPass,
 };
+use crate::ParticleEmitter;
 
 /// Staging resource written by [`RenderSyncSystem`] each frame.
 ///
@@ -32,10 +31,7 @@ impl System for RenderSyncSystem {
 
         // Collect model matrices from all entities with MeshShape + Transform.
         let pairs = world.query2::<MeshShape, Transform>();
-        let transforms: Vec<glam::Mat4> = pairs
-            .iter()
-            .map(|(_, _shape, t)| t.matrix())
-            .collect();
+        let transforms: Vec<glam::Mat4> = pairs.iter().map(|(_, _shape, t)| t.matrix()).collect();
 
         world.insert_resource(RenderSyncOutput {
             instance_transforms: transforms,
@@ -152,8 +148,8 @@ impl Default for RenderPlugin {
 // `Arc<dyn Any>` downcasting.  The runner is responsible for populating
 // the context before the graph is executed.
 
-use crate::shadow::ShadowMap;
 use crate::hdr::TonemappingPass;
+use crate::shadow::ShadowMap;
 
 /// Resource key constants for `RenderContext::resources`.
 pub mod resource_keys {
@@ -183,8 +179,16 @@ pub struct MeshDrawList {
 
 struct ShadowRenderPass;
 impl RenderPass for ShadowRenderPass {
-    fn name(&self) -> &str { "shadow" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "shadow"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &RenderContext,
+    ) {
         // Retrieve the ShadowMap from the resource context.
         let shadow_map = match ctx.resources.get(resource_keys::SHADOW_MAP) {
             Some(res) => res,
@@ -237,8 +241,16 @@ impl RenderPass for ShadowRenderPass {
 
 struct OpaqueRenderPass;
 impl RenderPass for OpaqueRenderPass {
-    fn name(&self) -> &str { "opaque" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "opaque"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &RenderContext,
+    ) {
         let hdr_view = match ctx.hdr_texture.as_ref() {
             Some(v) => v,
             None => {
@@ -273,7 +285,10 @@ impl RenderPass for OpaqueRenderPass {
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.05, g: 0.05, b: 0.08, a: 1.0,
+                        r: 0.05,
+                        g: 0.05,
+                        b: 0.08,
+                        a: 1.0,
                     }),
                     store: wgpu::StoreOp::Store,
                 },
@@ -302,14 +317,25 @@ impl RenderPass for OpaqueRenderPass {
             pass.draw_indexed(0..item.index_count, 0, 0..1);
         }
 
-        log::trace!("OpaquePass::execute — {} items drawn", draw_list.opaque.len());
+        log::trace!(
+            "OpaquePass::execute — {} items drawn",
+            draw_list.opaque.len()
+        );
     }
 }
 
 struct TransparentRenderPass;
 impl RenderPass for TransparentRenderPass {
-    fn name(&self) -> &str { "transparent" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "transparent"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &RenderContext,
+    ) {
         let hdr_view = match ctx.hdr_texture.as_ref() {
             Some(v) => v,
             None => return,
@@ -372,14 +398,25 @@ impl RenderPass for TransparentRenderPass {
             pass.draw_indexed(0..item.index_count, 0, 0..1);
         }
 
-        log::trace!("TransparentPass::execute — {} items drawn", draw_list.transparent.len());
+        log::trace!(
+            "TransparentPass::execute — {} items drawn",
+            draw_list.transparent.len()
+        );
     }
 }
 
 struct PostProcessRenderPass;
 impl RenderPass for PostProcessRenderPass {
-    fn name(&self) -> &str { "post_process" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "post_process"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &RenderContext,
+    ) {
         let post = match ctx.resources.get(resource_keys::POST_PROCESS) {
             Some(res) => match res.downcast_ref::<crate::post_process::PostProcessPass>() {
                 Some(pp) => pp,
@@ -400,8 +437,16 @@ impl RenderPass for PostProcessRenderPass {
 
 struct TonemapRenderPass;
 impl RenderPass for TonemapRenderPass {
-    fn name(&self) -> &str { "tonemap" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "tonemap"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        ctx: &RenderContext,
+    ) {
         let tonemap = match ctx.resources.get(resource_keys::TONEMAPPING) {
             Some(res) => match res.downcast_ref::<TonemappingPass>() {
                 Some(tp) => tp,
@@ -433,8 +478,16 @@ impl RenderPass for TonemapRenderPass {
 
 struct UiRenderPass;
 impl RenderPass for UiRenderPass {
-    fn name(&self) -> &str { "ui" }
-    fn execute(&self, _device: &wgpu::Device, _queue: &wgpu::Queue, _encoder: &mut wgpu::CommandEncoder, _ctx: &RenderContext) {
+    fn name(&self) -> &str {
+        "ui"
+    }
+    fn execute(
+        &self,
+        _device: &wgpu::Device,
+        _queue: &wgpu::Queue,
+        _encoder: &mut wgpu::CommandEncoder,
+        _ctx: &RenderContext,
+    ) {
         // UI is rendered through egui/editor overlay in the runner.
         // This pass serves as a graph placeholder for dependency ordering.
         log::trace!("UiPass::execute — handled by editor overlay");
@@ -528,28 +581,66 @@ impl quasar_core::Plugin for RenderPlugin {
 
         // ── Override registry for prefab system ────────────────
         {
-            if app.world.resource::<quasar_core::OverrideRegistry>().is_none() {
-                app.world.insert_resource(quasar_core::OverrideRegistry::new());
-            }
-            let Some(registry) = app
+            if app
                 .world
-                .resource_mut::<quasar_core::OverrideRegistry>()
-            else {
+                .resource::<quasar_core::OverrideRegistry>()
+                .is_none()
+            {
+                app.world
+                    .insert_resource(quasar_core::OverrideRegistry::new());
+            }
+            let Some(registry) = app.world.resource_mut::<quasar_core::OverrideRegistry>() else {
                 return;
             };
 
             registry.register("PointLight", |world, entity, field, value| {
                 if let Some(light) = world.get_mut::<crate::light::PointLight>(entity) {
                     match field {
-                        "intensity" => if let Some(v) = value.as_f64() { light.intensity = v as f32; },
-                        "range" => if let Some(v) = value.as_f64() { light.range = v as f32; },
-                        "falloff" => if let Some(v) = value.as_f64() { light.falloff = v as f32; },
-                        "color.r" => if let Some(v) = value.as_f64() { light.color.x = v as f32; },
-                        "color.g" => if let Some(v) = value.as_f64() { light.color.y = v as f32; },
-                        "color.b" => if let Some(v) = value.as_f64() { light.color.z = v as f32; },
-                        "position.x" => if let Some(v) = value.as_f64() { light.position.x = v as f32; },
-                        "position.y" => if let Some(v) = value.as_f64() { light.position.y = v as f32; },
-                        "position.z" => if let Some(v) = value.as_f64() { light.position.z = v as f32; },
+                        "intensity" => {
+                            if let Some(v) = value.as_f64() {
+                                light.intensity = v as f32;
+                            }
+                        }
+                        "range" => {
+                            if let Some(v) = value.as_f64() {
+                                light.range = v as f32;
+                            }
+                        }
+                        "falloff" => {
+                            if let Some(v) = value.as_f64() {
+                                light.falloff = v as f32;
+                            }
+                        }
+                        "color.r" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.x = v as f32;
+                            }
+                        }
+                        "color.g" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.y = v as f32;
+                            }
+                        }
+                        "color.b" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.z = v as f32;
+                            }
+                        }
+                        "position.x" => {
+                            if let Some(v) = value.as_f64() {
+                                light.position.x = v as f32;
+                            }
+                        }
+                        "position.y" => {
+                            if let Some(v) = value.as_f64() {
+                                light.position.y = v as f32;
+                            }
+                        }
+                        "position.z" => {
+                            if let Some(v) = value.as_f64() {
+                                light.position.z = v as f32;
+                            }
+                        }
                         _ => log::warn!("Unknown override path '{}' for PointLight", field),
                     }
                 }
@@ -558,13 +649,41 @@ impl quasar_core::Plugin for RenderPlugin {
             registry.register("DirectionalLight", |world, entity, field, value| {
                 if let Some(light) = world.get_mut::<crate::light::DirectionalLight>(entity) {
                     match field {
-                        "intensity" => if let Some(v) = value.as_f64() { light.intensity = v as f32; },
-                        "color.r" => if let Some(v) = value.as_f64() { light.color.x = v as f32; },
-                        "color.g" => if let Some(v) = value.as_f64() { light.color.y = v as f32; },
-                        "color.b" => if let Some(v) = value.as_f64() { light.color.z = v as f32; },
-                        "direction.x" => if let Some(v) = value.as_f64() { light.direction.x = v as f32; },
-                        "direction.y" => if let Some(v) = value.as_f64() { light.direction.y = v as f32; },
-                        "direction.z" => if let Some(v) = value.as_f64() { light.direction.z = v as f32; },
+                        "intensity" => {
+                            if let Some(v) = value.as_f64() {
+                                light.intensity = v as f32;
+                            }
+                        }
+                        "color.r" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.x = v as f32;
+                            }
+                        }
+                        "color.g" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.y = v as f32;
+                            }
+                        }
+                        "color.b" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.z = v as f32;
+                            }
+                        }
+                        "direction.x" => {
+                            if let Some(v) = value.as_f64() {
+                                light.direction.x = v as f32;
+                            }
+                        }
+                        "direction.y" => {
+                            if let Some(v) = value.as_f64() {
+                                light.direction.y = v as f32;
+                            }
+                        }
+                        "direction.z" => {
+                            if let Some(v) = value.as_f64() {
+                                light.direction.z = v as f32;
+                            }
+                        }
                         _ => log::warn!("Unknown override path '{}' for DirectionalLight", field),
                     }
                 }
@@ -573,13 +692,41 @@ impl quasar_core::Plugin for RenderPlugin {
             registry.register("SpotLight", |world, entity, field, value| {
                 if let Some(light) = world.get_mut::<crate::light::SpotLight>(entity) {
                     match field {
-                        "intensity" => if let Some(v) = value.as_f64() { light.intensity = v as f32; },
-                        "range" => if let Some(v) = value.as_f64() { light.range = v as f32; },
-                        "inner_angle" => if let Some(v) = value.as_f64() { light.inner_angle = v as f32; },
-                        "outer_angle" => if let Some(v) = value.as_f64() { light.outer_angle = v as f32; },
-                        "color.r" => if let Some(v) = value.as_f64() { light.color.x = v as f32; },
-                        "color.g" => if let Some(v) = value.as_f64() { light.color.y = v as f32; },
-                        "color.b" => if let Some(v) = value.as_f64() { light.color.z = v as f32; },
+                        "intensity" => {
+                            if let Some(v) = value.as_f64() {
+                                light.intensity = v as f32;
+                            }
+                        }
+                        "range" => {
+                            if let Some(v) = value.as_f64() {
+                                light.range = v as f32;
+                            }
+                        }
+                        "inner_angle" => {
+                            if let Some(v) = value.as_f64() {
+                                light.inner_angle = v as f32;
+                            }
+                        }
+                        "outer_angle" => {
+                            if let Some(v) = value.as_f64() {
+                                light.outer_angle = v as f32;
+                            }
+                        }
+                        "color.r" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.x = v as f32;
+                            }
+                        }
+                        "color.g" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.y = v as f32;
+                            }
+                        }
+                        "color.b" => {
+                            if let Some(v) = value.as_f64() {
+                                light.color.z = v as f32;
+                            }
+                        }
                         _ => log::warn!("Unknown override path '{}' for SpotLight", field),
                     }
                 }

@@ -93,8 +93,17 @@ impl TriggerTracker {
     /// Returns (enter_events, stay_events, exit_events).
     pub fn update(
         &mut self,
-        current_pairs: &[(Entity, Entity, rapier3d::prelude::ColliderHandle, rapier3d::prelude::ColliderHandle)],
-    ) -> (Vec<TriggerEnterEvent>, Vec<TriggerStayEvent>, Vec<TriggerExitEvent>) {
+        current_pairs: &[(
+            Entity,
+            Entity,
+            rapier3d::prelude::ColliderHandle,
+            rapier3d::prelude::ColliderHandle,
+        )],
+    ) -> (
+        Vec<TriggerEnterEvent>,
+        Vec<TriggerStayEvent>,
+        Vec<TriggerExitEvent>,
+    ) {
         let mut enters = Vec::new();
         let mut stays = Vec::new();
         let mut exits = Vec::new();

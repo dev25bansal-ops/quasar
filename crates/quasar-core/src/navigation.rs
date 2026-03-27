@@ -8,8 +8,8 @@
 use crate::ecs::{Entity, System, World};
 use crate::TimeSnapshot;
 use quasar_math::{Transform, Vec3};
-use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap};
 
 // ---------------------------------------------------------------------------
 // NavMesh data structure
@@ -471,13 +471,14 @@ impl DynamicNavMesh {
             .polygons
             .iter()
             .filter(|poly| {
-                !active_obstacles.iter().any(|obs| obs.contains(poly.centroid))
+                !active_obstacles
+                    .iter()
+                    .any(|obs| obs.contains(poly.centroid))
             })
             .map(|poly| poly.indices.clone())
             .collect();
 
-        self.carved_mesh =
-            NavMesh::from_polygons(self.base_mesh.vertices.clone(), kept_indices);
+        self.carved_mesh = NavMesh::from_polygons(self.base_mesh.vertices.clone(), kept_indices);
     }
 
     /// Find a path on the current carved mesh.

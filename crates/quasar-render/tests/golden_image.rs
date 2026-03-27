@@ -39,7 +39,13 @@ fn rmse(a: &[u8], b: &[u8]) -> f64 {
 ///
 /// Returns `Ok(())` if within threshold, or `Err(rmse)` on mismatch.
 /// If no reference exists (or `QUASAR_UPDATE_GOLDEN=1`), writes a new one.
-fn compare_golden(name: &str, rendered: &[u8], width: u32, height: u32, threshold: f64) -> Result<(), f64> {
+fn compare_golden(
+    name: &str,
+    rendered: &[u8],
+    width: u32,
+    height: u32,
+    threshold: f64,
+) -> Result<(), f64> {
     let dir = golden_dir();
     std::fs::create_dir_all(&dir).ok();
 

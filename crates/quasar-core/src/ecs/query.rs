@@ -882,6 +882,7 @@ impl<A: Component, B: Component> Default for CachedQueryState2<A, B> {
 ///
 /// This iterator does not allocate when iterating. It stores a reference
 /// to cached archetype IDs and iterates them lazily.
+#[allow(dead_code)]
 pub struct ZeroAllocQueryIter<'w, T: Component> {
     world: &'w World,
     type_id: TypeId,
@@ -936,6 +937,7 @@ impl<'w, T: Component> Iterator for ZeroAllocQueryIter<'w, T> {
 }
 
 /// Zero-allocation two-component query iterator.
+#[allow(dead_code)]
 pub struct ZeroAllocQuery2Iter<'w, A: Component, B: Component> {
     world: &'w World,
     type_a: TypeId,
@@ -1004,6 +1006,7 @@ impl<T: Component> CachedQueryState<T> {
     /// Create a zero-allocation iterator over matching entities.
     ///
     /// Unlike `iter()`, this method does not allocate any heap memory.
+    #[allow(dead_code)]
     pub fn iter_zero_alloc<'w>(&'w self, world: &'w World) -> ZeroAllocQueryIter<'w, T> {
         ZeroAllocQueryIter::new(world, self.archetypes(world))
     }
@@ -1013,6 +1016,7 @@ impl<A: Component, B: Component> CachedQueryState2<A, B> {
     /// Create a zero-allocation iterator over matching entities.
     ///
     /// Unlike `iter()`, this method does not allocate any heap memory.
+    #[allow(dead_code)]
     pub fn iter_zero_alloc<'w>(&'w self, world: &'w World) -> ZeroAllocQuery2Iter<'w, A, B> {
         ZeroAllocQuery2Iter::new(world, self.archetypes(world))
     }
@@ -1027,6 +1031,7 @@ impl<A: Component, B: Component> CachedQueryState2<A, B> {
 /// This is useful when the query is run infrequently or when the set of
 /// matching archetypes changes frequently.
 pub struct LazyArchetypeIter<'w, T: Component> {
+    #[allow(dead_code)]
     world: &'w World,
     type_id: TypeId,
     arch_iter: std::collections::hash_map::Iter<'w, super::ArchetypeId, super::Archetype>,

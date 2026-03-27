@@ -19,21 +19,21 @@ pub const TAA_JITTER_SAMPLES: usize = 16;
 
 /// Pre-computed Halton(2,3) jitter offsets in [-0.5, 0.5].
 const HALTON_SEQUENCE: [(f32, f32); TAA_JITTER_SAMPLES] = [
-    ( 0.000000, -0.333333),
-    (-0.500000,  0.333333),
-    ( 0.250000, -0.111111),
+    (0.000000, -0.333333),
+    (-0.500000, 0.333333),
+    (0.250000, -0.111111),
     (-0.250000, -0.444444),
-    ( 0.375000,  0.222222),
+    (0.375000, 0.222222),
     (-0.125000, -0.222222),
-    ( 0.187500,  0.444444),
+    (0.187500, 0.444444),
     (-0.312500, -0.037037),
-    ( 0.062500, -0.370370),
-    (-0.437500,  0.296296),
-    ( 0.312500, -0.148148),
+    (0.062500, -0.370370),
+    (-0.437500, 0.296296),
+    (0.312500, -0.148148),
     (-0.187500, -0.481481),
-    ( 0.437500,  0.185185),
+    (0.437500, 0.185185),
     (-0.062500, -0.259259),
-    ( 0.156250,  0.407407),
+    (0.156250, 0.407407),
     (-0.343750, -0.074074),
 ];
 
@@ -93,69 +93,71 @@ impl TaaPass {
             })
         };
 
-        let history = [create_history("TAA History 0"), create_history("TAA History 1")];
+        let history = [
+            create_history("TAA History 0"),
+            create_history("TAA History 1"),
+        ];
         let history_views = [
             history[0].create_view(&wgpu::TextureViewDescriptor::default()),
             history[1].create_view(&wgpu::TextureViewDescriptor::default()),
         ];
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("TAA BGL"),
-                entries: &[
-                    // 0: current colour
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TAA BGL"),
+            entries: &[
+                // 0: current colour
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    // 1: history
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+                    count: None,
+                },
+                // 1: history
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    // 2: motion vectors
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
+                    count: None,
+                },
+                // 2: motion vectors
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
                     },
-                    // 3: sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                // 3: sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // 4: uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // 4: uniforms
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("TAA Shader"),

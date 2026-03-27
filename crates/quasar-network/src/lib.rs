@@ -74,7 +74,12 @@ pub trait QuicTransportBackend {
     fn connect(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
     fn listen(&mut self, addr: SocketAddr) -> Result<(), NetworkError>;
     fn poll(&mut self) -> Vec<QuicEvent>;
-    fn send(&mut self, addr: SocketAddr, channel: QuicChannel, data: &[u8]) -> Result<(), NetworkError>;
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: QuicChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError>;
     fn peer_count(&self) -> usize;
     fn disconnect(&mut self, addr: SocketAddr);
 }
@@ -162,22 +167,48 @@ pub struct NetworkMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkPayload {
-    ConnectionRequest { client_id: ClientId },
-    ConnectionAccepted { client_id: ClientId },
-    ConnectionDenied { reason: String },
-    Disconnect { client_id: ClientId },
-    EntitySpawn { entity_id: NetworkEntityId, components: Vec<ComponentData> },
-    EntityDespawn { entity_id: NetworkEntityId },
-    EntityUpdate { entity_id: NetworkEntityId, components: Vec<ComponentData> },
+    ConnectionRequest {
+        client_id: ClientId,
+    },
+    ConnectionAccepted {
+        client_id: ClientId,
+    },
+    ConnectionDenied {
+        reason: String,
+    },
+    Disconnect {
+        client_id: ClientId,
+    },
+    EntitySpawn {
+        entity_id: NetworkEntityId,
+        components: Vec<ComponentData>,
+    },
+    EntityDespawn {
+        entity_id: NetworkEntityId,
+    },
+    EntityUpdate {
+        entity_id: NetworkEntityId,
+        components: Vec<ComponentData>,
+    },
     EntityTransform {
         entity_id: NetworkEntityId,
         position: [f32; 3],
         rotation: [f32; 4],
         scale: [f32; 3],
     },
-    Input { client_id: ClientId, inputs: Vec<InputData> },
-    StateSnapshot { frame: u64, entities: Vec<EntitySnapshot> },
-    Rpc { entity_id: NetworkEntityId, method: String, args: Vec<u8> },
+    Input {
+        client_id: ClientId,
+        inputs: Vec<InputData>,
+    },
+    StateSnapshot {
+        frame: u64,
+        entities: Vec<EntitySnapshot>,
+    },
+    Rpc {
+        entity_id: NetworkEntityId,
+        method: String,
+        args: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,7 +296,10 @@ impl NetworkState {
     }
 
     pub fn is_server(&self) -> bool {
-        matches!(self.config.role, NetworkRole::Server | NetworkRole::ListenServer)
+        matches!(
+            self.config.role,
+            NetworkRole::Server | NetworkRole::ListenServer
+        )
     }
 
     pub fn is_client(&self) -> bool {
@@ -364,7 +398,12 @@ impl Transport for UdpTransport {
         events
     }
 
-    fn send(&mut self, addr: SocketAddr, _channel: SendChannel, data: &[u8]) -> Result<(), NetworkError> {
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        _channel: SendChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError> {
         self.socket.send_to(data, addr)?;
         Ok(())
     }
@@ -392,13 +431,15 @@ pub fn validate_message(message: &NetworkMessage) -> Result<(), NetworkError> {
     if encoded.len() < MIN_MESSAGE_SIZE {
         return Err(NetworkError(format!(
             "Message too small: {} < {}",
-            encoded.len(), MIN_MESSAGE_SIZE
+            encoded.len(),
+            MIN_MESSAGE_SIZE
         )));
     }
     if encoded.len() > MAX_MESSAGE_SIZE {
         return Err(NetworkError(format!(
             "Message too large: {} > {}",
-            encoded.len(), MAX_MESSAGE_SIZE
+            encoded.len(),
+            MAX_MESSAGE_SIZE
         )));
     }
     match &message.payload {
@@ -406,16 +447,18 @@ pub fn validate_message(message: &NetworkMessage) -> Result<(), NetworkError> {
             if entities.len() > MAX_ENTITIES_PER_SNAPSHOT {
                 return Err(NetworkError(format!(
                     "Snapshot has too many entities: {} > {}",
-                    entities.len(), MAX_ENTITIES_PER_SNAPSHOT
+                    entities.len(),
+                    MAX_ENTITIES_PER_SNAPSHOT
                 )));
             }
         }
-        NetworkPayload::EntitySpawn { components, .. } |
-        NetworkPayload::EntityUpdate { components, .. } => {
+        NetworkPayload::EntitySpawn { components, .. }
+        | NetworkPayload::EntityUpdate { components, .. } => {
             if components.len() > MAX_COMPONENTS_PER_ENTITY {
                 return Err(NetworkError(format!(
                     "Entity has too many components: {} > {}",
-                    components.len(), MAX_COMPONENTS_PER_ENTITY
+                    components.len(),
+                    MAX_COMPONENTS_PER_ENTITY
                 )));
             }
         }
@@ -475,7 +518,8 @@ mod tests {
     fn test_network_role_serialization() {
         let role = NetworkRole::Server;
         let json = serde_json::to_string(&role).expect("Serialization failed");
-        let deserialized: NetworkRole = serde_json::from_str(&json).expect("Deserialization failed");
+        let deserialized: NetworkRole =
+            serde_json::from_str(&json).expect("Deserialization failed");
         assert_eq!(role, deserialized);
     }
 
@@ -585,11 +629,12 @@ mod tests {
                 }],
             },
         };
-        
+
         let config = bincode::config::standard();
         let encoded = bincode::serde::encode_to_vec(&msg, config).expect("Encoding failed");
-        let (decoded, _): (NetworkMessage, _) = bincode::serde::decode_from_slice(&encoded, config).expect("Decoding failed");
-        
+        let (decoded, _): (NetworkMessage, _) =
+            bincode::serde::decode_from_slice(&encoded, config).expect("Decoding failed");
+
         assert_eq!(msg.sequence, decoded.sequence);
         assert_eq!(msg.timestamp, decoded.timestamp);
     }
@@ -603,11 +648,12 @@ mod tests {
             scale: [1.0, 1.0, 1.0],
             frame: 100,
         };
-        
+
         let config = bincode::config::standard();
         let encoded = bincode::serde::encode_to_vec(&snapshot, config).expect("Encoding failed");
-        let (decoded, _): (EntitySnapshot, _) = bincode::serde::decode_from_slice(&encoded, config).expect("Decoding failed");
-        
+        let (decoded, _): (EntitySnapshot, _) =
+            bincode::serde::decode_from_slice(&encoded, config).expect("Decoding failed");
+
         assert_eq!(snapshot.entity_id, decoded.entity_id);
         assert_eq!(snapshot.position, decoded.position);
     }
@@ -634,18 +680,29 @@ mod tests {
     #[test]
     fn test_network_payload_variants() {
         let payloads = vec![
-            NetworkPayload::ConnectionRequest { client_id: ClientId(1) },
-            NetworkPayload::ConnectionAccepted { client_id: ClientId(1) },
-            NetworkPayload::ConnectionDenied { reason: "Full".to_string() },
-            NetworkPayload::Disconnect { client_id: ClientId(1) },
-            NetworkPayload::EntitySpawn { entity_id: NetworkEntityId(1), components: vec![] },
+            NetworkPayload::ConnectionRequest {
+                client_id: ClientId(1),
+            },
+            NetworkPayload::ConnectionAccepted {
+                client_id: ClientId(1),
+            },
+            NetworkPayload::ConnectionDenied {
+                reason: "Full".to_string(),
+            },
+            NetworkPayload::Disconnect {
+                client_id: ClientId(1),
+            },
+            NetworkPayload::EntitySpawn {
+                entity_id: NetworkEntityId(1),
+                components: vec![],
+            },
             NetworkPayload::Rpc {
                 entity_id: NetworkEntityId(1),
                 method: "test".to_string(),
                 args: vec![],
             },
         ];
-        
+
         for payload in payloads {
             let msg = NetworkMessage {
                 sequence: 1,
@@ -663,7 +720,10 @@ mod tests {
         let msg = NetworkMessage {
             sequence: 0,
             timestamp: 0,
-            payload: NetworkPayload::Input { client_id: ClientId(0), inputs: vec![] },
+            payload: NetworkPayload::Input {
+                client_id: ClientId(0),
+                inputs: vec![],
+            },
         };
         let result = validate_message(&msg);
         assert!(result.is_err());

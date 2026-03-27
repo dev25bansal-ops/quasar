@@ -13,6 +13,86 @@ use quasar_render::{Camera, MeshCache, MeshShape, RenderConfig, Renderer};
 
 use std::sync::Arc;
 
+const SHADER_SOURCE: &str = r#"
+struct Uniforms {
+    mvp: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>, @location(1) normal: vec3<f32>) -> VertexOutput {
+    var out: VertexOutput;
+    out.position = uniforms.mvp * vec4<f32>(position, 1.0);
+    out.color = normal * 0.5 + vec3<f32>(0.5, 0.5, 0.5);
+    return out;
+}
+
+@fragment
+fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(color, 1.0);
+}
+"#;
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct Uniforms {
+    mvp: [[f32; 4]; 4],
+}
+
+fn create_cube_vertices() -> Vec<Vertex> {
+    let positions = [
+        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
+        [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5,  0.5,  0.5], [-0.5,  0.5,  0.5],
+    ];
+    let normals = [
+        [ 0.0,  0.0, -1.0],
+        [ 0.0,  0.0,  1.0],
+        [ 0.0, -1.0,  0.0],
+        [ 0.0,  1.0,  0.0],
+        [-1.0,  0.0,  0.0],
+        [ 1.0,  0.0,  0.0],
+    ];
+    let faces: [(usize, usize, usize, usize); 6] = [
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (2, 6, 7, 3),
+        (0, 3, 7, 4),
+        (1, 5, 6, 2),
+    ];
+    let normal_indices = [0, 1, 2, 3, 4, 5];
+
+    let mut vertices = Vec::with_capacity(36);
+    for (fi, &(i0, i1, i2, i3)) in faces.iter().enumerate() {
+        let n = normals[normal_indices[fi]];
+        let v = [
+            positions[i0], positions[i1], positions[i2], positions[i3],
+        ];
+        vertices.extend_from_slice(&[
+            Vertex { position: v[0], normal: n },
+            Vertex { position: v[1], normal: n },
+            Vertex { position: v[2], normal: n },
+            Vertex { position: v[0], normal: n },
+            Vertex { position: v[2], normal: n },
+            Vertex { position: v[3], normal: n },
+        ]);
+    }
+    vertices
+}
+
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
@@ -34,7 +114,6 @@ pub async fn start() -> Result<(), JsValue> {
 
     log::info!("Canvas acquired ({}x{}), creating wgpu surface...", width, height);
 
-    // Create wgpu instance targeting WebGPU backend.
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
         ..Default::default()
@@ -87,9 +166,116 @@ pub async fn start() -> Result<(), JsValue> {
 
     log::info!("WebGPU surface configured — format {:?}", format);
 
-    // Build minimal app with a spinning cube.
-    let mut app = App::new();
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Cube Shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADER_SOURCE.into()),
+    });
 
+    let vertices = create_cube_vertices();
+    let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Cube Vertices"),
+        size: (vertices.len() * std::mem::size_of::<Vertex>()) as u64,
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+
+    let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Uniforms"),
+        size: std::mem::size_of::<Uniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("Bind Group Layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Bind Group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Pipeline Layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Cube Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[
+                wgpu::VertexBufferLayout {
+                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            offset: 0,
+                            shader_location: 0,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                        wgpu::VertexAttribute {
+                            offset: std::mem::size_of::<[f32; 3]>() as u64,
+                            shader_location: 1,
+                            format: wgpu::VertexFormat::Float32x3,
+                        },
+                    ],
+                },
+            ],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState {
+            count: 1,
+            mask: !0,
+            alpha_to_coverage_enabled: false,
+        },
+        multiview: None,
+        cache: None,
+    });
+
+    let mut app = App::new();
     let cube = app.world.spawn();
     app.world.insert(cube, Transform::IDENTITY);
     app.world.insert(cube, MeshShape::Cube);
@@ -108,37 +294,64 @@ pub async fn start() -> Result<(), JsValue> {
 
     log::info!("App configured — WebGPU rendering active!");
 
-    // Run a simple render loop via requestAnimationFrame.
-    // The actual per-frame render pass uses the device + surface directly.
-    use wasm_bindgen::closure::Closure;
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    let camera = Camera::new(width, height);
-    let mesh_cache = Rc::new(RefCell::new(MeshCache::new()));
+    let state = Rc::new(RefCell::new((
+        app,
+        device,
+        queue,
+        surface,
+        format,
+        width,
+        height,
+        vertex_buffer,
+        uniform_buffer,
+        bind_group,
+        pipeline,
+        0.0f32,
+    )));
 
-    // Ensure cube mesh is uploaded.
-    mesh_cache.borrow_mut().get_or_create(&device, MeshShape::Cube);
-
-    let state = Rc::new(RefCell::new((app, camera, device, queue, surface, format, width, height)));
-    let mc = mesh_cache.clone();
     let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
     let g = f.clone();
 
     *g.borrow_mut() = Some(Closure::new(move || {
         let mut s = state.borrow_mut();
-        let (ref mut app, ref camera, ref device, ref queue, ref surface, format, w, h) = *s;
-        let _ = (w, h);
+        let (
+            ref mut app,
+            ref device,
+            ref queue,
+            ref surface,
+            _format,
+            width,
+            height,
+            ref vertex_buffer,
+            ref uniform_buffer,
+            ref bind_group,
+            ref pipeline,
+            ref mut time,
+        ) = *s;
 
         app.tick();
+        *time += 1.0 / 60.0;
 
-        // Collect meshes.
-        let transforms: Vec<glam::Mat4> = app.world.query::<Transform>()
-            .into_iter()
-            .map(|(_, t)| t.matrix())
-            .collect();
+        let aspect = width as f32 / height as f32;
+        let projection = glam::Mat4::perspective_rh(std::f32::consts::FRAC_PI_4, aspect, 0.1, 100.0);
+        let view = glam::Mat4::look_at_rh(
+            glam::Vec3::new(0.0, 2.0, 5.0),
+            glam::Vec3::ZERO,
+            glam::Vec3::Y,
+        );
+        let rotation = glam::Quat::from_rotation_y(*time * 1.2)
+            * glam::Quat::from_rotation_x(*time * 0.4);
+        let model = glam::Mat4::from_quat(rotation);
+        let mvp = projection * view * model;
 
-        // Render frame.
+        let uniforms = Uniforms {
+            mvp: mvp.to_cols_array_2d(),
+        };
+        queue.write_buffer(uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+
         match surface.get_current_texture() {
             Ok(output) => {
                 let view = output.texture.create_view(&Default::default());
@@ -146,7 +359,7 @@ pub async fn start() -> Result<(), JsValue> {
                     &wgpu::CommandEncoderDescriptor { label: Some("web frame") },
                 );
                 {
-                    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("web clear"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &view,
@@ -162,6 +375,10 @@ pub async fn start() -> Result<(), JsValue> {
                         timestamp_writes: None,
                         occlusion_query_set: None,
                     });
+                    pass.set_pipeline(pipeline);
+                    pass.set_bind_group(0, bind_group, &[]);
+                    pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+                    pass.draw(0..36, 0..1);
                 }
                 queue.submit(std::iter::once(encoder.finish()));
                 output.present();
@@ -169,14 +386,12 @@ pub async fn start() -> Result<(), JsValue> {
             Err(e) => log::warn!("web frame error: {e:?}"),
         }
 
-        // Request next frame.
         let window = web_sys::window().unwrap();
         let _ = window.request_animation_frame(
             f.borrow().as_ref().unwrap().as_ref().unchecked_ref()
         );
     }));
 
-    // Kick off first frame.
     let window = web_sys::window().unwrap();
     let _ = window.request_animation_frame(
         g.borrow().as_ref().unwrap().as_ref().unchecked_ref()

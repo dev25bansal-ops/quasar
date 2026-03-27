@@ -752,7 +752,7 @@ fn create_ssao_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     _kernel_layout: &wgpu::BindGroupLayout,
-    shader: &wgpu::ShaderModule,
+    _shader: &wgpu::ShaderModule,
 ) -> wgpu::RenderPipeline {
     // Create a simplified SSAO shader that only uses group(0)
     // The actual SSAO will need to be fixed later

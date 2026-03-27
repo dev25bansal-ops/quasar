@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact: quasar-windows-x64
+            ext: .exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: quasar-linux-x64
+            ext: ""
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: quasar-macos-x64
+            ext: ""
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: quasar-macos-arm64
+            ext: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p spinning-cube -p showcase -p physics-sandbox -p audio-demo -p scripting-demo
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/spinning-cube.exe dist/
+          cp target/${{ matrix.target }}/release/showcase.exe dist/
+          cp target/${{ matrix.target }}/release/physics-sandbox.exe dist/
+          cp target/${{ matrix.target }}/release/audio-demo.exe dist/
+          cp target/${{ matrix.target }}/release/scripting-demo.exe dist/
+          cd dist && 7z a -tzip ../${{ matrix.artifact }}.zip *
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/release/spinning-cube dist/
+          cp target/${{ matrix.target }}/release/showcase dist/
+          cp target/${{ matrix.target }}/release/physics-sandbox dist/
+          cp target/${{ matrix.target }}/release/audio-demo dist/
+          cp target/${{ matrix.target }}/release/scripting-demo dist/
+          tar -czvf ${{ matrix.artifact }}.tar.gz -C dist .
+
+      - name: Upload Artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+      - name: Upload Artifact (Unix)
+        if: matrix.os != 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.tar.gz
+
+  wasm:
+    name: Build WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install trunk
+        run: cargo install trunk
+
+      - name: Build WASM
+        run: |
+          cd examples/web_demo
+          trunk build --release
+
+      - name: Package
+        run: |
+          cd examples/web_demo
+          tar -czvf ../../quasar-wasm.tar.gz dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quasar-wasm
+          path: quasar-wasm.tar.gz
+
+  release:
+    name: Create Release
+    needs: [build, wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/quasar-windows-x64/quasar-windows-x64.zip
+            artifacts/quasar-linux-x64/quasar-linux-x64.tar.gz
+            artifacts/quasar-macos-x64/quasar-macos-x64.tar.gz
+            artifacts/quasar-macos-arm64/quasar-macos-arm64.tar.gz
+            artifacts/quasar-wasm/quasar-wasm.tar.gz
+          body: |
+            ## Quasar Engine ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows**: `quasar-windows-x64.zip`
+            - **Linux**: `quasar-linux-x64.tar.gz`
+            - **macOS (Intel)**: `quasar-macos-x64.tar.gz`
+            - **macOS (Apple Silicon)**: `quasar-macos-arm64.tar.gz`
+            - **Web**: `quasar-wasm.tar.gz`
+
+            ### Included Examples
+            - `spinning-cube` - Basic 3D rendering demo
+            - `showcase` - Multi-feature demo with physics
+            - `physics-sandbox` - Physics simulation demo
+            - `audio-demo` - Audio playback demo
+            - `scripting-demo` - Lua scripting demo
+          draft: false
+          prerelease: false

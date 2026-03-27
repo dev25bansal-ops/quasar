@@ -1,8 +1,7 @@
 //! Lobby client implementation.
 
 use crate::{
-    JoinInfo, LobbyError, Session, SessionConfig, SessionFilters, SessionId, PlayerId,
-    protocol::*,
+    protocol::*, JoinInfo, LobbyError, PlayerId, Session, SessionConfig, SessionFilters, SessionId,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -80,17 +79,18 @@ impl LobbyClient {
             player_id: player_id.clone(),
         };
 
-        let response: CreateSessionResponse = self
-            .http_client
-            .post("/api/sessions", &request)
-            .await?;
+        let response: CreateSessionResponse =
+            self.http_client.post("/api/sessions", &request).await?;
 
-        Ok((response.session.clone(), JoinInfo {
-            session: response.session,
-            connection_token: response.connection_token,
-            server_address: response.server_address,
-            player_id,
-        }))
+        Ok((
+            response.session.clone(),
+            JoinInfo {
+                session: response.session,
+                connection_token: response.connection_token,
+                server_address: response.server_address,
+                player_id,
+            },
+        ))
     }
 
     /// Find sessions matching the given filters.
@@ -275,7 +275,8 @@ impl HttpClient {
         }
 
         let _body_str = if let Some(b) = body {
-            let json = serde_json::to_string(b).map_err(|e| LobbyError::Serialization(e.to_string()))?;
+            let json =
+                serde_json::to_string(b).map_err(|e| LobbyError::Serialization(e.to_string()))?;
             request.push_str(&format!("Content-Length: {}\r\n", json.len()));
             request.push_str("\r\n");
             request.push_str(&json);
@@ -315,12 +316,15 @@ impl HttpClient {
         }
 
         // Parse status line
-        let status_line = response_lines.first().ok_or_else(|| {
-            LobbyError::Network("Empty response".to_string())
-        })?;
+        let status_line = response_lines
+            .first()
+            .ok_or_else(|| LobbyError::Network("Empty response".to_string()))?;
         let parts: Vec<&str> = status_line.split_whitespace().collect();
         if parts.len() < 2 {
-            return Err(LobbyError::Network(format!("Invalid status line: {}", status_line)));
+            return Err(LobbyError::Network(format!(
+                "Invalid status line: {}",
+                status_line
+            )));
         }
 
         let status_code: u16 = parts[1]
@@ -382,7 +386,10 @@ mod url_parser {
         };
 
         // Split on first '/' to get host:port
-        let host_port = without_protocol.split('/').next().unwrap_or(without_protocol);
+        let host_port = without_protocol
+            .split('/')
+            .next()
+            .unwrap_or(without_protocol);
 
         // Split host and port
         if host_port.contains(':') {
@@ -427,7 +434,11 @@ fn build_query_string(filters: &SessionFilters) -> String {
     }
 
     for (key, value) in &filters.metadata {
-        params.push(format!("metadata[{}]={}", url_encode(key), url_encode(value)));
+        params.push(format!(
+            "metadata[{}]={}",
+            url_encode(key),
+            url_encode(value)
+        ));
     }
 
     params.join("&")
@@ -459,34 +470,45 @@ fn uuid_v4() -> String {
 
 /// Generate a secure session token for authentication.
 /// Uses HMAC-SHA256 with a secret key for token generation.
-pub fn generate_session_token(session_id: SessionId, player_id: &PlayerId, secret: &[u8]) -> String {
+pub fn generate_session_token(
+    session_id: SessionId,
+    player_id: &PlayerId,
+    secret: &[u8],
+) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     let mut hasher = blake3::Hasher::new();
     hasher.update(&session_id.0.to_le_bytes());
     hasher.update(player_id.0.as_bytes());
     hasher.update(secret);
-    hasher.update(&SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .to_le_bytes());
-    
+    hasher.update(
+        &SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .to_le_bytes(),
+    );
+
     let hash = hasher.finalize();
     format!("sess_{}_{}", session_id, hash.to_hex())
 }
 
 /// Validate a session token.
 /// Returns Ok((session_id, player_id)) if valid, Err otherwise.
-pub fn validate_session_token(token: &str, _secret: &[u8], _max_age_secs: u64) -> Result<(SessionId, PlayerId), LobbyError> {
+pub fn validate_session_token(
+    token: &str,
+    _secret: &[u8],
+    _max_age_secs: u64,
+) -> Result<(SessionId, PlayerId), LobbyError> {
     let parts: Vec<&str> = token.splitn(3, '_').collect();
     if parts.len() != 3 || parts[0] != "sess" {
         return Err(LobbyError::InvalidPassword);
     }
-    
-    let session_id: SessionId = parts[1].parse()
+
+    let session_id: SessionId = parts[1]
+        .parse()
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
-    
+
     // In a real implementation, we'd verify the HMAC and check expiration
     // For now, just parse the token format
     Ok((session_id, PlayerId(uuid_v4())))
@@ -522,7 +544,7 @@ impl LobbyClient {
             ..Default::default()
         })
     }
-    
+
     /// Generate an auth token for the given session and player.
     pub fn create_auth_token(&self, session_id: SessionId, player_id: &PlayerId) -> Option<String> {
         // In production, this would use the configured secret

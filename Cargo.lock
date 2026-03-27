@@ -3493,6 +3493,7 @@ name = "quasar-audio"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "criterion",
  "kira",
  "log",
  "quasar-core",
@@ -3527,6 +3528,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "crossbeam-channel",
+ "flate2",
  "log",
  "notify",
  "parking_lot",
@@ -3665,6 +3667,7 @@ dependencies = [
 name = "quasar-physics"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "crossbeam",
  "glam",
  "log",
@@ -3678,6 +3681,7 @@ dependencies = [
 name = "quasar-render"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "bytemuck",
  "criterion",
  "fontdue",
@@ -3687,6 +3691,7 @@ dependencies = [
  "log",
  "quasar-core",
  "quasar-math",
+ "quasar-physics",
  "rand 0.8.5",
  "rayon",
  "serde",
@@ -3718,6 +3723,7 @@ name = "quasar-ui"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "criterion",
  "fontdue",
  "log",
  "quasar-core",
@@ -3731,6 +3737,8 @@ version = "0.1.0"
 dependencies = [
  "log",
  "quasar-core",
+ "serde",
+ "serde_json",
  "winit",
 ]
 

@@ -364,7 +364,8 @@ impl FontAtlas {
             });
 
             self.texture = Some(texture);
-            self.texture_view = self.texture
+            self.texture_view = self
+                .texture
                 .as_ref()
                 .map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         }

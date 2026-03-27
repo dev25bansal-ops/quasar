@@ -1,12 +1,20 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use quasar_core::ecs::World;
 
 // Lightweight test components.
 #[derive(Debug, Clone, Copy)]
-struct Position { x: f32, y: f32, z: f32 }
+struct Position {
+    x: f32,
+    y: f32,
+    z: f32,
+}
 
 #[derive(Debug, Clone, Copy)]
-struct Velocity { dx: f32, dy: f32, dz: f32 }
+struct Velocity {
+    dx: f32,
+    dy: f32,
+    dz: f32,
+}
 
 #[derive(Debug, Clone, Copy)]
 struct Health(f32);
@@ -21,8 +29,22 @@ fn bench_spawn(c: &mut Criterion) {
                 let mut world = World::new();
                 for i in 0..n {
                     let e = world.spawn();
-                    world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
-                    world.insert(e, Velocity { dx: 1.0, dy: 0.0, dz: 0.0 });
+                    world.insert(
+                        e,
+                        Position {
+                            x: i as f32,
+                            y: 0.0,
+                            z: 0.0,
+                        },
+                    );
+                    world.insert(
+                        e,
+                        Velocity {
+                            dx: 1.0,
+                            dy: 0.0,
+                            dz: 0.0,
+                        },
+                    );
                 }
                 black_box(&world);
             });
@@ -39,8 +61,22 @@ fn bench_query_iter(c: &mut Criterion) {
         let mut world = World::new();
         for i in 0..count {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
-            world.insert(e, Velocity { dx: 1.0, dy: 0.0, dz: 0.0 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            );
+            world.insert(
+                e,
+                Velocity {
+                    dx: 1.0,
+                    dy: 0.0,
+                    dz: 0.0,
+                },
+            );
         }
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
@@ -61,8 +97,22 @@ fn bench_query2_iter(c: &mut Criterion) {
         let mut world = World::new();
         for i in 0..count {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
-            world.insert(e, Velocity { dx: 1.0, dy: 0.0, dz: 0.0 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            );
+            world.insert(
+                e,
+                Velocity {
+                    dx: 1.0,
+                    dy: 0.0,
+                    dz: 0.0,
+                },
+            );
         }
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
@@ -83,7 +133,14 @@ fn bench_for_each_mut(c: &mut Criterion) {
         let mut world = World::new();
         for i in 0..count {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: 0.0,
+                    z: 0.0,
+                },
+            );
         }
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
@@ -109,7 +166,14 @@ fn bench_despawn(c: &mut Criterion) {
                     let mut entities = Vec::with_capacity(n);
                     for i in 0..n {
                         let e = world.spawn();
-                        world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
+                        world.insert(
+                            e,
+                            Position {
+                                x: i as f32,
+                                y: 0.0,
+                                z: 0.0,
+                            },
+                        );
                         entities.push(e);
                     }
                     (world, entities)
@@ -134,9 +198,23 @@ fn bench_fragmented_query(c: &mut Criterion) {
     // Create entities with varied component combos to fragment archetypes.
     for i in 0..10_000u32 {
         let e = world.spawn();
-        world.insert(e, Position { x: i as f32, y: 0.0, z: 0.0 });
+        world.insert(
+            e,
+            Position {
+                x: i as f32,
+                y: 0.0,
+                z: 0.0,
+            },
+        );
         if i % 2 == 0 {
-            world.insert(e, Velocity { dx: 1.0, dy: 0.0, dz: 0.0 });
+            world.insert(
+                e,
+                Velocity {
+                    dx: 1.0,
+                    dy: 0.0,
+                    dz: 0.0,
+                },
+            );
         }
         if i % 3 == 0 {
             world.insert(e, Health(100.0));

@@ -20,8 +20,7 @@ use crate::vertex::Vertex;
 /// Supports `v`, `vt`, `vn`, and triangulated `f` directives.  Faces with
 /// more than 3 vertices are fan-triangulated.
 pub fn load_obj(path: impl AsRef<Path>) -> Result<MeshData, String> {
-    let contents =
-        std::fs::read_to_string(path.as_ref()).map_err(|e| format!("IO error: {e}"))?;
+    let contents = std::fs::read_to_string(path.as_ref()).map_err(|e| format!("IO error: {e}"))?;
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
@@ -74,10 +73,7 @@ pub fn load_obj(path: impl AsRef<Path>) -> Result<MeshData, String> {
                         if let Some(&idx) = vertex_map.get(&key) {
                             indices.push(idx);
                         } else {
-                            let pos = positions
-                                .get(vi.0)
-                                .copied()
-                                .unwrap_or([0.0; 3]);
+                            let pos = positions.get(vi.0).copied().unwrap_or([0.0; 3]);
                             let normal = if vi.2 > 0 {
                                 normals.get(vi.2 - 1).copied().unwrap_or([0.0, 1.0, 0.0])
                             } else {
@@ -127,11 +123,23 @@ fn parse_face_vertex(token: &str) -> Result<(usize, usize, usize), String> {
     let vi = v.checked_sub(1).ok_or("Face index 0 is invalid")?;
     let vt = parts
         .get(1)
-        .and_then(|s| if s.is_empty() { None } else { s.parse::<usize>().ok() })
+        .and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                s.parse::<usize>().ok()
+            }
+        })
         .unwrap_or(0);
     let vn = parts
         .get(2)
-        .and_then(|s| if s.is_empty() { None } else { s.parse::<usize>().ok() })
+        .and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                s.parse::<usize>().ok()
+            }
+        })
         .unwrap_or(0);
     Ok((vi, vt, vn))
 }

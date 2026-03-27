@@ -111,7 +111,10 @@ impl GpuMemoryTracker {
         if self.total_bytes > self.peak_bytes {
             self.peak_bytes = self.total_bytes;
         }
-        *self.category_totals.entry(category.to_string()).or_insert(0) += size;
+        *self
+            .category_totals
+            .entry(category.to_string())
+            .or_insert(0) += size;
 
         self.check_budget();
         id
@@ -125,7 +128,8 @@ impl GpuMemoryTracker {
                 *cat_total = cat_total.saturating_sub(alloc.size);
             }
             if self.budget.limit_bytes > 0
-                && (self.total_bytes as f32) < self.budget.limit_bytes as f32 * self.budget.warning_threshold
+                && (self.total_bytes as f32)
+                    < self.budget.limit_bytes as f32 * self.budget.warning_threshold
             {
                 self.warning_fired = false;
             }

@@ -524,7 +524,266 @@ impl crate::Plugin for ProfilerPlugin {
 
     fn build(&self, app: &mut crate::App) {
         app.world.insert_resource(Profiler::new());
+        app.world.insert_resource(ui::ProfilerUIState::new());
         log::info!("ProfilerPlugin loaded — profiling active");
+    }
+}
+
+pub mod ui {
+    use super::*;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ProfilerSnapshot {
+        pub frame_index: u64,
+        pub frame_time_ms: f32,
+        pub fps: f32,
+        pub scopes: Vec<ScopeSnapshot>,
+        pub network_stats: Option<NetworkStatsSnapshot>,
+        pub memory_stats: Option<MemoryStatsSnapshot>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ScopeSnapshot {
+        pub name: String,
+        pub duration_ms: f32,
+        pub depth: u32,
+        pub children: Vec<ScopeSnapshot>,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct NetworkStatsSnapshot {
+        pub rtt_ms: f32,
+        pub packet_loss: f32,
+        pub bytes_sent: u64,
+        pub bytes_received: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct MemoryStatsSnapshot {
+        pub allocations: u64,
+        pub deallocations: u64,
+        pub bytes_allocated: u64,
+        pub bytes_freed: u64,
+        pub peak_bytes: u64,
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct ProfilerUIConfig {
+        pub visible: bool,
+        pub paused: bool,
+        pub show_gpu: bool,
+        pub show_network: bool,
+        pub show_memory: bool,
+        pub frame_history_count: usize,
+        pub time_scale: TimeScale,
+        pub scope_filter: String,
+    }
+
+    impl Default for ProfilerUIConfig {
+        fn default() -> Self {
+            Self {
+                visible: false,
+                paused: false,
+                show_gpu: true,
+                show_network: true,
+                show_memory: true,
+                frame_history_count: 300,
+                time_scale: TimeScale::Milliseconds,
+                scope_filter: String::new(),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    pub enum TimeScale {
+        Microseconds,
+        Milliseconds,
+        Seconds,
+    }
+
+    impl TimeScale {
+        pub fn format_duration(&self, duration: Duration) -> String {
+            match self {
+                TimeScale::Microseconds => format!("{:.2} μs", duration.as_nanos() as f64 / 1000.0),
+                TimeScale::Milliseconds => {
+                    format!("{:.2} ms", duration.as_nanos() as f64 / 1_000_000.0)
+                }
+                TimeScale::Seconds => format!("{:.4} s", duration.as_secs_f64()),
+            }
+        }
+
+        pub fn to_seconds_factor(&self) -> f32 {
+            match self {
+                TimeScale::Microseconds => 0.000_001,
+                TimeScale::Milliseconds => 0.001,
+                TimeScale::Seconds => 1.0,
+            }
+        }
+    }
+
+    pub struct ProfilerUIState {
+        pub config: ProfilerUIConfig,
+        pub frame_history: Vec<f32>,
+        pub scope_timings: HashMap<String, ScopeTiming>,
+        pub selected_scope: Option<String>,
+        pub frame_index: u64,
+    }
+
+    #[derive(Debug, Clone, Default)]
+    pub struct ScopeTiming {
+        pub total_duration: Duration,
+        pub call_count: u64,
+        pub min_duration: Duration,
+        pub max_duration: Duration,
+        pub average_duration: Duration,
+    }
+
+    impl ProfilerUIState {
+        pub fn new() -> Self {
+            Self {
+                config: ProfilerUIConfig::default(),
+                frame_history: Vec::with_capacity(300),
+                scope_timings: HashMap::new(),
+                selected_scope: None,
+                frame_index: 0,
+            }
+        }
+
+        pub fn update(&mut self, profiler: &Profiler) {
+            if self.config.paused {
+                return;
+            }
+
+            self.frame_index += 1;
+
+            if let Some(frame) = profiler.frame_data.back() {
+                if self.frame_history.len() >= self.config.frame_history_count {
+                    self.frame_history.remove(0);
+                }
+                self.frame_history
+                    .push(frame.frame_time.as_secs_f32() * 1000.0);
+
+                for scope in &frame.scopes {
+                    self.update_scope_timing(scope);
+                }
+            }
+        }
+
+        fn update_scope_timing(&mut self, scope: &ProfileScope) {
+            let timing = self.scope_timings.entry(scope.name.clone()).or_default();
+            timing.total_duration += scope.duration;
+            timing.call_count += 1;
+
+            if timing.min_duration == Duration::ZERO || scope.duration < timing.min_duration {
+                timing.min_duration = scope.duration;
+            }
+            if scope.duration > timing.max_duration {
+                timing.max_duration = scope.duration;
+            }
+
+            timing.average_duration = Duration::from_nanos(
+                (timing.total_duration.as_nanos() / timing.call_count as u128) as u64,
+            );
+        }
+
+        pub fn get_snapshot(&self, profiler: &Profiler) -> ProfilerSnapshot {
+            let stats = profiler.get_frame_stats();
+            let frame = profiler.frame_data.back();
+
+            ProfilerSnapshot {
+                frame_index: self.frame_index,
+                frame_time_ms: stats.avg_frame_time.as_secs_f32() * 1000.0,
+                fps: stats.fps,
+                scopes: frame
+                    .map(|f| f.scopes.iter().map(|s| self.scope_to_snapshot(s)).collect())
+                    .unwrap_or_default(),
+                network_stats: frame.map(|f| NetworkStatsSnapshot {
+                    rtt_ms: f.network_rtt_ms,
+                    packet_loss: f.network_packet_loss,
+                    bytes_sent: f.network_bytes_sent,
+                    bytes_received: f.network_bytes_received,
+                }),
+                memory_stats: None,
+            }
+        }
+
+        fn scope_to_snapshot(&self, scope: &ProfileScope) -> ScopeSnapshot {
+            ScopeSnapshot {
+                name: scope.name.clone(),
+                duration_ms: scope.duration.as_secs_f32() * 1000.0,
+                depth: scope.depth,
+                children: scope
+                    .children
+                    .iter()
+                    .map(|s| self.scope_to_snapshot(s))
+                    .collect(),
+            }
+        }
+
+        pub fn get_frame_graph_data(&self) -> (Vec<f32>, f32, f32) {
+            if self.frame_history.is_empty() {
+                return (Vec::new(), 0.0, 0.0);
+            }
+
+            let max = self.frame_history.iter().cloned().fold(0.0, f32::max);
+            let avg = self.frame_history.iter().sum::<f32>() / self.frame_history.len() as f32;
+
+            (self.frame_history.clone(), max, avg)
+        }
+
+        pub fn get_top_scopes(&self, count: usize) -> Vec<(&String, &ScopeTiming)> {
+            let mut scopes: Vec<_> = self.scope_timings.iter().collect();
+            scopes.sort_by(|a, b| b.1.total_duration.cmp(&a.1.total_duration));
+            scopes.into_iter().take(count).collect()
+        }
+
+        pub fn reset(&mut self) {
+            self.frame_history.clear();
+            self.scope_timings.clear();
+            self.frame_index = 0;
+        }
+
+        pub fn toggle(&mut self) {
+            self.config.visible = !self.config.visible;
+        }
+
+        pub fn pause(&mut self) {
+            self.config.paused = true;
+        }
+
+        pub fn resume(&mut self) {
+            self.config.paused = false;
+        }
+    }
+
+    impl Default for ProfilerUIState {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    pub fn format_duration_human(duration: Duration) -> String {
+        let micros = duration.as_micros();
+        if micros < 1000 {
+            format!("{} μs", micros)
+        } else if micros < 1_000_000 {
+            format!("{:.2} ms", micros as f64 / 1000.0)
+        } else {
+            format!("{:.2} s", duration.as_secs_f64())
+        }
+    }
+
+    pub fn calculate_percentile(values: &[f32], percentile: f32) -> f32 {
+        if values.is_empty() {
+            return 0.0;
+        }
+
+        let mut sorted = values.to_vec();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let index = ((sorted.len() - 1) as f32 * percentile / 100.0).round() as usize;
+        sorted[index.min(sorted.len() - 1)]
     }
 }
 

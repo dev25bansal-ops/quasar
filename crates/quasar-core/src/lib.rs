@@ -16,6 +16,7 @@
 //! - **Localization**: Internationalization (i18n) support
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod ai;
 pub mod animation;
@@ -29,9 +30,9 @@ pub mod event;
 pub mod interest;
 pub mod localization;
 pub mod navigation;
-pub mod network;
 #[cfg(feature = "quinn-transport")]
 pub mod net_quinn;
+pub mod network;
 pub mod plugin;
 pub mod prediction;
 pub mod prefab;
@@ -41,6 +42,8 @@ pub mod save_load;
 pub mod scene;
 pub mod scene_serde;
 pub mod time;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm_platform;
 
 pub use ai::{
     BehaviorTree, BehaviorTreePlugin, BehaviorTreeRunner, BehaviorTreeSystem, Blackboard,
@@ -52,27 +55,48 @@ pub use animation::{
     AnimationTransition, BlendTreeNode, SkeletalAnimationClip, TransformKeyframe,
     TransitionCondition,
 };
-pub use app::{App, SimulationState, TimeSnapshot, simulation_active};
+pub use app::{simulation_active, App, SimulationState, TimeSnapshot};
 pub use asset_server::{
     AssetError, AssetEvent, AssetHandle as NetworkAssetHandle, AssetPlugin, AssetReloadSystem,
     AssetReloadedEvent, AssetServer, HotReloadHandlerSystem, ReloadKind,
 };
 // Unified asset manager is accessible via AssetServer::manager()
-pub use asset::{Asset, AssetHandle, AssetManager, AsyncHandle, AsyncState, LoadingState, ContentHash, AssetDepGraph};
-pub use ecs::{Component, Entity, EntityBuilder, World, flush_commands, QueryState, WorldQuery, QueryFilter};
+pub use asset::{
+    Asset, AssetDepGraph, AssetHandle, AssetManager, AsyncHandle, AsyncState, ContentHash,
+    LoadingState,
+};
+pub use ecs::{
+    flush_commands, Component, Entity, EntityBuilder, QueryFilter, QueryState, World, WorldQuery,
+};
 pub use error::{QuasarError, QuasarResult};
 pub use event::{Events, EventsChannel};
 pub use interest::InterestManager;
 pub use localization::{
-    Localization, LocalizationPlugin, LocalizationResource, LocalizedString, PluralForms,
-    StringTable, plural_category,
+    plural_category, Localization, LocalizationPlugin, LocalizationResource, LocalizedString,
+    PluralForms, StringTable,
 };
-pub use network::{NetworkConfig, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState, TickAccumulator, SnapshotInterpolation, DeltaCompressor, InputHistory, Misprediction, DeltaFlags, EncodedDelta, TransportProtocol, TransportType, Transport, TransportEvent, SendChannel, ConnectionMetrics, NetworkMetrics, QuicConfig, QuicChannel, QuicTransport, QuicTransportBackend, QuicEvent, ReplicationResource, Replicated, replication_system, PendingServerSnapshot, rollback_system, ReplicationMode, ReplicatedField, ReplicateDescriptor, HistoryBuffer, LagCompensationManager, RelayServerConfig, RelayServer, RelaySession, UdpTransport};
-pub use navigation::{NavMesh, NavMeshAgent, NavMeshAgentSystem, NavPoly, NavObstacle, NavObstacleShape, DynamicNavMesh, find_path, path_to_waypoints};
+pub use navigation::{
+    find_path, path_to_waypoints, DynamicNavMesh, NavMesh, NavMeshAgent, NavMeshAgentSystem,
+    NavObstacle, NavObstacleShape, NavPoly,
+};
+pub use network::{
+    replication_system, rollback_system, ConnectionMetrics, DeltaCompressor, DeltaFlags,
+    EncodedDelta, HistoryBuffer, InputHistory, LagCompensationManager, Misprediction,
+    NetworkConfig, NetworkMetrics, NetworkPlugin, NetworkReplication, NetworkRole, NetworkState,
+    PendingServerSnapshot, QuicChannel, QuicConfig, QuicEvent, QuicTransport, QuicTransportBackend,
+    RelayServer, RelayServerConfig, RelaySession, ReplicateDescriptor, Replicated, ReplicatedField,
+    ReplicationMode, ReplicationResource, SendChannel, SnapshotInterpolation, TickAccumulator,
+    Transport, TransportEvent, TransportProtocol, TransportType, UdpTransport,
+};
 pub use plugin::Plugin;
-pub use prefab::{ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab, PrefabEntity, PrefabFieldDiff, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties, PrefabProperty, apply_overrides, diff_instance_transform, instantiate_prefab, is_field_overridden, propagate_prefab_changes};
+pub use prefab::{
+    apply_overrides, diff_instance_transform, instantiate_prefab, is_field_overridden,
+    propagate_prefab_changes, ComponentOverride, OverrideHandlerFn, OverrideRegistry, Prefab,
+    PrefabEntity, PrefabFieldDiff, PrefabInstance, PrefabLibrary, PrefabMeshTag, PrefabProperties,
+    PrefabProperty,
+};
 pub use profiler::{AllocTracker, FrameBudget, FrameStats, Profiler, ProfilerPlugin};
+pub use save_load::{capture_game_save, load_game_save, GameSave, SaveMeta, SavedEntity};
 pub use scene::{Scene, SceneGraph};
-pub use save_load::{GameSave, SaveMeta, SavedEntity, capture_game_save, load_game_save};
 pub use scene_serde::{EntityData, SceneData};
 pub use time::{FixedUpdateAccumulator, Time};

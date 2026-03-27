@@ -330,7 +330,6 @@ fn importance_sample_ggx(xi: (f32, f32), roughness: f32) -> glam::Vec3 {
     let cos_theta = ((1.0 - xi.1) / (1.0 + (a * a - 1.0) * xi.1)).sqrt();
     let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
 
-    
     glam::Vec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), cos_theta)
 }
 

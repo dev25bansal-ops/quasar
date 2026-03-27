@@ -11,8 +11,8 @@ use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
 
 use crate::{
-    ConnectionMetrics, NetworkError, QuicChannel, QuicEvent, QuicTransportBackend,
-    SendChannel, Transport, TransportEvent,
+    ConnectionMetrics, NetworkError, QuicChannel, QuicEvent, QuicTransportBackend, SendChannel,
+    Transport, TransportEvent,
 };
 
 /// A self-signed TLS certificate + private key generated with `rcgen`.
@@ -71,8 +71,7 @@ impl QuinnBackend {
 
     fn build_server_config() -> Result<ServerConfig, NetworkError> {
         let ss = generate_self_signed();
-        let key =
-            rustls::pki_types::PrivatePkcs8KeyDer::from(ss.key_der).into();
+        let key = rustls::pki_types::PrivatePkcs8KeyDer::from(ss.key_der).into();
         let certs = vec![rustls::pki_types::CertificateDer::from(ss.cert_der)];
 
         let mut server_crypto = rustls::ServerConfig::builder()
@@ -94,17 +93,14 @@ impl QuinnBackend {
             .with_no_client_auth();
 
         #[allow(clippy::expect_used)]
-        let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .expect("quinn client config");
-        
+        let quic_config =
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+
         ClientConfig::new(Arc::new(quic_config))
     }
 
     /// Spawn a background task that accepts new incoming connections.
-    fn spawn_accept_loop(
-        endpoint: Endpoint,
-        tx: mpsc::UnboundedSender<QuicEvent>,
-    ) {
+    fn spawn_accept_loop(endpoint: Endpoint, tx: mpsc::UnboundedSender<QuicEvent>) {
         tokio::spawn(async move {
             while let Some(incoming) = endpoint.accept().await {
                 let tx = tx.clone();
@@ -157,10 +153,7 @@ impl QuinnBackend {
                 while let Ok(mut recv) = conn.accept_uni().await {
                     let tx = tx.clone();
                     tokio::spawn(async move {
-                        let buf = recv
-                            .read_to_end(1024 * 1024)
-                            .await
-                            .unwrap_or_default();
+                        let buf = recv.read_to_end(1024 * 1024).await.unwrap_or_default();
                         if !buf.is_empty() {
                             let _ = tx.send(QuicEvent::Data {
                                 from: addr,
@@ -206,10 +199,7 @@ impl QuicTransportBackend for QuinnBackend {
                     }
                 },
                 Err(e) => {
-                    let _ = tx.send(QuicEvent::Disconnected(
-                        addr,
-                        format!("connect error: {e}"),
-                    ));
+                    let _ = tx.send(QuicEvent::Disconnected(addr, format!("connect error: {e}")));
                 }
             }
         });
@@ -356,19 +346,32 @@ impl Transport for QuinnBackend {
             .map(|e| match e {
                 QuicEvent::Connected(addr) => TransportEvent::Connected(addr),
                 QuicEvent::Disconnected(addr, reason) => TransportEvent::Disconnected(addr, reason),
-                QuicEvent::Data { from, channel, payload } => {
+                QuicEvent::Data {
+                    from,
+                    channel,
+                    payload,
+                } => {
                     let ch = match channel {
                         QuicChannel::Unreliable => SendChannel::Unreliable,
                         QuicChannel::Reliable => SendChannel::Reliable,
                         QuicChannel::BulkTransfer => SendChannel::Bulk,
                     };
-                    TransportEvent::Data { from, channel: ch, payload }
+                    TransportEvent::Data {
+                        from,
+                        channel: ch,
+                        payload,
+                    }
                 }
             })
             .collect()
     }
 
-    fn send(&mut self, addr: SocketAddr, channel: SendChannel, data: &[u8]) -> Result<(), NetworkError> {
+    fn send(
+        &mut self,
+        addr: SocketAddr,
+        channel: SendChannel,
+        data: &[u8],
+    ) -> Result<(), NetworkError> {
         let ch = match channel {
             SendChannel::Unreliable => QuicChannel::Unreliable,
             SendChannel::Reliable => QuicChannel::Reliable,
@@ -385,7 +388,7 @@ impl Transport for QuinnBackend {
         QuicTransportBackend::disconnect(self, addr)
     }
 
-      fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
+    fn metrics(&self, addr: SocketAddr) -> Option<ConnectionMetrics> {
         self.peers.get(&addr).map(|peer| {
             let stats = peer.connection.stats();
             let path = &stats.path;
@@ -406,7 +409,10 @@ impl Transport for QuinnBackend {
     fn local_addr(&self) -> Result<SocketAddr, NetworkError> {
         self.endpoint
             .as_ref()
-            .map(|e| e.local_addr().map_err(|e| NetworkError(format!("local_addr: {e}"))))
+            .map(|e| {
+                e.local_addr()
+                    .map_err(|e| NetworkError(format!("local_addr: {e}")))
+            })
             .unwrap_or_else(|| {
                 #[allow(clippy::unwrap_used)]
                 {

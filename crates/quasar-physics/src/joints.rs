@@ -93,10 +93,7 @@ fn na_unit(v: [f32; 3]) -> nalgebra::Unit<nalgebra::Vector3<f32>> {
 
 pub(crate) fn build_rapier_joint(kind: &JointKind) -> GenericJoint {
     match kind {
-        JointKind::Fixed {
-            anchor_a,
-            anchor_b,
-        } => {
+        JointKind::Fixed { anchor_a, anchor_b } => {
             let mut j = FixedJointBuilder::new()
                 .local_anchor1(na_point(*anchor_a))
                 .local_anchor2(na_point(*anchor_b))
@@ -136,10 +133,7 @@ pub(crate) fn build_rapier_joint(kind: &JointKind) -> GenericJoint {
             j.set_contacts_enabled(false);
             j.into()
         }
-        JointKind::Spherical {
-            anchor_a,
-            anchor_b,
-        } => {
+        JointKind::Spherical { anchor_a, anchor_b } => {
             let mut j = SphericalJointBuilder::new()
                 .local_anchor1(na_point(*anchor_a))
                 .local_anchor2(na_point(*anchor_b))
@@ -244,10 +238,14 @@ pub fn apply_motor_to_joint(
         };
         match motor.mode {
             MotorMode::Velocity => {
-                joint.data.set_motor(axis, motor.target, 0.0, 0.0, motor.max_force);
+                joint
+                    .data
+                    .set_motor(axis, motor.target, 0.0, 0.0, motor.max_force);
             }
             MotorMode::Position => {
-                joint.data.set_motor(axis, motor.target, 0.0, motor.stiffness, motor.damping);
+                joint
+                    .data
+                    .set_motor(axis, motor.target, 0.0, motor.stiffness, motor.damping);
             }
         }
     }

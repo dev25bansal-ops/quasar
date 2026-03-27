@@ -70,6 +70,33 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run Security Audit
+        run: cargo audit
+
+  coverage:
+    name: Test Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+      - name: Generate Coverage
+        run: cargo tarpaulin --workspace --out Xml --timeout 300
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
   wasm:
     name: WebGPU/WASM Check
     runs-on: ubuntu-latest
@@ -82,13 +109,16 @@ jobs:
       - run: cargo check -p web-demo --target wasm32-unknown-unknown
 
   bench:
-    name: Benchmarks Compile
+    name: Benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --bench ecs_bench -p quasar-core
+      - name: Build Benchmarks
+        run: cargo build --bench ecs_bench -p quasar-core
+      - name: Run Benchmarks
+        run: cargo bench --workspace --no-run || true
 
   android:
     name: Android Build

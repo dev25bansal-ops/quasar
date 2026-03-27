@@ -16,3 +16,10 @@ bytemuck = { workspace = true, optional = true }
 [features]
 default = []
 gpu-reverb = ["wgpu", "bytemuck"]
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "audio_bench"
+harness = false

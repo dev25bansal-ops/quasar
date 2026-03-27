@@ -41,9 +41,13 @@ use std::str::FromStr;
 
 mod client;
 mod protocol;
+#[cfg(feature = "server")]
+mod server;
 
 pub use client::*;
 pub use protocol::*;
+#[cfg(feature = "server")]
+pub use server::*;
 
 /// Unique identifier for a game session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -70,15 +74,15 @@ impl FromStr for SessionId {
 pub struct PlayerId(pub String);
 
 impl PlayerId {
-pub fn new() -> Self {
-Self(uuid::Uuid::new_v4().to_string())
-}
+    pub fn new() -> Self {
+        Self(uuid::Uuid::new_v4().to_string())
+    }
 }
 
 impl Default for PlayerId {
-fn default() -> Self {
-Self::new()
-}
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl fmt::Display for PlayerId {

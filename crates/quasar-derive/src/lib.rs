@@ -10,7 +10,7 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Fields, Type, PathArguments, GenericArgument};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, GenericArgument, PathArguments, Type};
 
 /// Derive the `Inspect` trait for a struct.
 ///
@@ -63,7 +63,9 @@ pub fn derive_inspect(input: TokenStream) -> TokenStream {
     let mut widget_calls = Vec::new();
 
     for field in fields {
-        let Some(field_name) = field.ident.as_ref() else { continue };
+        let Some(field_name) = field.ident.as_ref() else {
+            continue;
+        };
         let field_label = field_name.to_string();
         let ty = &field.ty;
 
@@ -206,7 +208,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let mut field_descriptors = Vec::new();
 
     for field in fields {
-        let Some(field_name) = field.ident.as_ref() else { continue };
+        let Some(field_name) = field.ident.as_ref() else {
+            continue;
+        };
         let field_str = field_name.to_string();
         let ty = &field.ty;
         let ty_str = quote!(#ty).to_string().replace(' ', "");
@@ -597,7 +601,9 @@ pub fn derive_replicate(input: TokenStream) -> TokenStream {
     let mut deser_fields = Vec::new();
 
     for field in fields {
-        let Some(field_name) = field.ident.as_ref() else { continue };
+        let Some(field_name) = field.ident.as_ref() else {
+            continue;
+        };
         let field_str = field_name.to_string();
         let ty = &field.ty;
         let ty_str = quote!(#ty).to_string().replace(' ', "");
@@ -753,9 +759,12 @@ pub fn derive_bundle(input: TokenStream) -> TokenStream {
         syn::Data::Struct(data) => match &data.fields {
             syn::Fields::Named(named) => &named.named,
             _ => {
-                return syn::Error::new_spanned(name, "Bundle can only be derived for structs with named fields")
-                    .to_compile_error()
-                    .into();
+                return syn::Error::new_spanned(
+                    name,
+                    "Bundle can only be derived for structs with named fields",
+                )
+                .to_compile_error()
+                .into();
             }
         },
         _ => {
@@ -765,12 +774,15 @@ pub fn derive_bundle(input: TokenStream) -> TokenStream {
         }
     };
 
-    let insert_calls: Vec<_> = fields.iter().map(|f| {
-        let field_name = &f.ident;
-        quote! {
-            world.insert(entity, self.#field_name);
-        }
-    }).collect();
+    let insert_calls: Vec<_> = fields
+        .iter()
+        .map(|f| {
+            let field_name = &f.ident;
+            quote! {
+                world.insert(entity, self.#field_name);
+            }
+        })
+        .collect();
 
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 

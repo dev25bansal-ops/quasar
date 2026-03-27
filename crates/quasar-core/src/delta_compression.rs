@@ -125,7 +125,11 @@ impl ClientBaseline {
     }
 
     /// Update the baseline when the client acknowledges a tick.
-    pub fn acknowledge(&mut self, tick: u64, current_hashes: &std::collections::HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]>) {
+    pub fn acknowledge(
+        &mut self,
+        tick: u64,
+        current_hashes: &std::collections::HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]>,
+    ) {
         self.acked_tick = tick;
         self.entity_hashes = current_hashes.clone();
     }
@@ -183,6 +187,9 @@ impl DeltaFrame {
 
     /// Total serialised byte count of all deltas in this frame.
     pub fn byte_size(&self) -> usize {
-        self.deltas.iter().map(|d| 8 + 8 + 4 + d.component_data.len()).sum()
+        self.deltas
+            .iter()
+            .map(|d| 8 + 8 + 4 + d.component_data.len())
+            .sum()
     }
 }
