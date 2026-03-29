@@ -8,6 +8,67 @@
 //! - Commands for deferred mutations (spawn/despawn between stages)
 //! - Archetype-based storage for 5–50x query performance
 //! - Parallel system execution with dependency graph
+//!
+//! # Architecture
+//!
+//! The ECS uses archetype-based storage:
+//! - Entities are grouped by their component composition into "archetypes"
+//! - Each archetype stores components in Structure-of-Arrays (SoA) columns
+//! - Queries iterate over matching archetypes for cache-efficient access
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use quasar_core::ecs::*;
+//!
+//! // Define components
+//! #[derive(Clone)]
+//! struct Position { x: f32, y: f32 }
+//!
+//! #[derive(Clone)]
+//! struct Velocity { dx: f32, dy: f32 }
+//!
+//! // Create world and spawn entities
+//! let mut world = World::new();
+//! let e = world.spawn();
+//! world.insert(e, Position { x: 0.0, y: 0.0 });
+//! world.insert(e, Velocity { dx: 1.0, dy: 0.0 });
+//!
+//! // Query for entities with both components
+//! for (e, pos, vel) in world.query2::<Position, Velocity>() {
+//!     println!("Entity {:?}: pos=({}, {}), vel=({}, {})",
+//!              e, pos.x, pos.y, vel.dx, vel.dy);
+//! }
+//!
+//! // Mutable iteration
+//! world.for_each_mut2::<Position, Velocity, _>(|e, pos, vel| {
+//!     pos.x += vel.dx;
+//!     pos.y += vel.dy;
+//! });
+//! ```
+//!
+//! # Entity Lifecycle
+//!
+//! Entities are created with `World::spawn()` and destroyed with `World::despawn()`.
+//! Entity IDs are generational - when an entity is despawned and its ID reused,
+//! the generation increments to catch stale references.
+//!
+//! # Component Requirements
+//!
+//! Components must implement `Clone + Send + Sync + 'static`. This is automatically
+//! satisfied for any type meeting these bounds thanks to a blanket implementation.
+//!
+//! # Parallel Queries
+//!
+//! For compute-heavy operations, use parallel iteration:
+//!
+//! ```rust,ignore
+//! // Parallel iteration using rayon
+//! world.par_for_each::<Position, _>(|e, pos| {
+//!     // This closure runs in parallel across multiple threads
+//!     process_position(pos);
+//! });
+//! ```
 
 pub mod archetype;
 mod commands;

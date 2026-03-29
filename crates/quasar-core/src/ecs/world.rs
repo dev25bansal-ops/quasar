@@ -240,7 +240,18 @@ pub struct World {
 }
 
 impl World {
-    /// Create an empty world.
+    /// Create an empty world with no entities or resources.
+    ///
+    /// The world is the central data store for all entities and components.
+    /// It uses archetype-based storage for cache-efficient queries.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut world = World::new();
+    /// let entity = world.spawn();
+    /// world.insert(entity, Position { x: 0.0, y: 0.0 });
+    /// ```
     pub fn new() -> Self {
         Self {
             allocator: EntityAllocator::new(),
@@ -267,7 +278,22 @@ impl World {
     // Entity management
     // ------------------------------------------------------------------
 
-    /// Spawn a new entity (with no components).
+    /// Spawn a new entity with no components.
+    ///
+    /// Returns a generational entity ID that can be used to insert components
+    /// or despawn the entity later.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let entity = world.spawn();
+    /// world.insert(entity, Position { x: 0.0, y: 0.0 });
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// Entity allocation is O(1). When entities are despawned, their IDs
+    /// are recycled with an incremented generation to catch stale references.
     pub fn spawn(&mut self) -> Entity {
         let entity = self.allocator.allocate();
         self.spawn_log.push(entity.index());
@@ -276,8 +302,22 @@ impl World {
 
     /// Spawn a new entity and immediately insert a bundle of components.
     ///
-    /// ```ignore
-    /// let e = world.spawn_bundle((Position(0.0, 0.0, 0.0), Velocity(1.0, 0.0, 0.0)));
+    /// This is more efficient than spawning and inserting components separately
+    /// because it allocates the archetype only once.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// #[derive(Clone)]
+    /// struct Position { x: f32, y: f32 }
+    ///
+    /// #[derive(Clone)]
+    /// struct Velocity { dx: f32, dy: f32 }
+    ///
+    /// let e = world.spawn_bundle((
+    ///     Position { x: 0.0, y: 0.0 },
+    ///     Velocity { dx: 1.0, dy: 0.0 },
+    /// ));
     /// ```
     pub fn spawn_bundle<B: Bundle>(&mut self, bundle: B) -> Entity {
         let entity = self.spawn();
@@ -286,8 +326,17 @@ impl World {
     }
 
     /// Despawn an entity, removing all of its components.
-    /// Uses swap-and-pop removal from archetype storage and logs removals
-    /// for `Removed<T>` query filters.
+    ///
+    /// Returns `true` if the entity was alive and despawned, `false` otherwise.
+    /// Uses swap-and-pop removal from archetype storage for O(1) removal.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let entity = world.spawn();
+    /// assert!(world.despawn(entity));
+    /// assert!(!world.is_alive(entity));
+    /// ```
     pub fn despawn(&mut self, entity: Entity) -> bool {
         if !self.allocator.deallocate(entity) {
             return false;
@@ -1369,6 +1418,95 @@ impl World {
         crate::ecs::query::QueryState::<Q, F>::new().iter(self)
     }
 
+    // ------------------------------------------------------------------
+    // Parallel query iteration (rayon-based)
+    // ------------------------------------------------------------------
+
+    /// Parallel iteration over all `(Entity, &T)` pairs using rayon.
+    ///
+    /// Entities are distributed across threads for parallel processing.
+    /// Use this for compute-heavy operations that benefit from parallelism.
+    ///
+    /// # Example
+    /// ```ignore
+    /// world.par_for_each::<Position, _>(|entity, pos| {
+    ///     // Process position in parallel
+    /// });
+    /// ```
+    pub fn par_for_each<T, F>(&self, f: F)
+    where
+        T: Component,
+        F: Fn(Entity, &T) + Sync + Send,
+    {
+        use rayon::prelude::*;
+
+        let type_id = TypeId::of::<T>();
+        let arch_ids = self.archetype_graph.find_with_components_ids(&[type_id]);
+
+        arch_ids.par_iter().for_each(|arch_id| {
+            if let Some(arch) = self.archetype_graph.get(*arch_id) {
+                if let Some(&col_idx) = arch.type_to_column.get(&type_id) {
+                    if let Some(col) = arch.columns[col_idx]
+                        .as_any()
+                        .downcast_ref::<TypedColumn<T>>()
+                    {
+                        let n = col.data.len().min(arch.entities.len());
+                        for i in 0..n {
+                            f(arch.entities[i], &col.data[i]);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /// Parallel iteration over entities with two components.
+    ///
+    /// Processes each matching entity in parallel using rayon.
+    pub fn par_for_each2<A, B, F>(&self, f: F)
+    where
+        A: Component,
+        B: Component,
+        F: Fn(Entity, &A, &B) + Sync + Send,
+    {
+        use rayon::prelude::*;
+
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        let arch_ids = self
+            .archetype_graph
+            .find_with_components_ids(&[type_a, type_b]);
+
+        arch_ids.par_iter().for_each(|arch_id| {
+            if let Some(arch) = self.archetype_graph.get(*arch_id) {
+                let (Some(&ca), Some(&cb)) = (
+                    arch.type_to_column.get(&type_a),
+                    arch.type_to_column.get(&type_b),
+                ) else {
+                    return;
+                };
+
+                let (Some(col_a), Some(col_b)) = (
+                    arch.columns[ca].as_any().downcast_ref::<TypedColumn<A>>(),
+                    arch.columns[cb].as_any().downcast_ref::<TypedColumn<B>>(),
+                ) else {
+                    return;
+                };
+
+                let n = arch
+                    .entities
+                    .len()
+                    .min(col_a.data.len())
+                    .min(col_b.data.len());
+                for i in 0..n {
+                    f(arch.entities[i], &col_a.data[i], &col_b.data[i]);
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // Internals — helpers for query.rs
     // ------------------------------------------------------------------
     // Internals — helpers for query.rs
     // ------------------------------------------------------------------
