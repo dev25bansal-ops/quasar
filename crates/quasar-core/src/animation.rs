@@ -349,11 +349,10 @@ impl System for AnimationSystem {
             .map(|t| t.delta_seconds)
             .unwrap_or(1.0 / 60.0);
 
-        let clips = if let Some(res) = world.resource::<AnimationResource>() {
-            res.clips.clone()
-        } else {
+        // Early exit if no animation resource exists
+        if world.resource::<AnimationResource>().is_none() {
             return;
-        };
+        }
 
         let players: Vec<(Entity, AnimationPlayer)> = world
             .query::<AnimationPlayer>()
@@ -368,11 +367,15 @@ impl System for AnimationSystem {
 
             player.time += delta * player.speed;
 
-            if let Some(clip) = clips.get(&player.clip_name) {
-                if let Some(transform) = clip.sample(player.time) {
-                    if let Some(t) = world.get_mut::<Transform>(entity) {
-                        *t = transform;
-                    }
+            // Get clip directly from resource instead of cloning entire map
+            let transform = world.resource::<AnimationResource>().and_then(|res| {
+                res.get_clip(&player.clip_name)
+                    .and_then(|clip| clip.sample(player.time))
+            });
+
+            if let Some(transform) = transform {
+                if let Some(t) = world.get_mut::<Transform>(entity) {
+                    *t = transform;
                 }
             }
 

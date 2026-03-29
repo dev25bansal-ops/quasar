@@ -1053,6 +1053,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo_game"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "glam",
+ "log",
+ "quasar-audio",
+ "quasar-core",
+ "quasar-engine",
+ "quasar-math",
+ "quasar-network",
+ "quasar-physics",
+ "quasar-render",
+ "quasar-scripting",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

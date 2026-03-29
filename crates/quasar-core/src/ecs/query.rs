@@ -750,6 +750,20 @@ use std::cell::UnsafeCell;
 /// Cached query state that avoids re-matching archetypes every frame.
 /// Stores the matching archetype IDs and only re-checks when the
 /// archetype graph generation changes.
+///
+/// # Safety Invariants
+///
+/// This type uses `UnsafeCell` for interior mutability. The safety of these
+/// accesses relies on the following invariants:
+///
+/// 1. **Single-threaded access**: Query iteration is single-threaded. The caller
+///    must not access the query state from multiple threads concurrently.
+///
+/// 2. **No aliasing during mutation**: When rebuilding the cache, no other code
+///    is reading from the archetype_ids or cached_generation fields.
+///
+/// 3. **Valid generation values**: The generation is always a valid u64 from
+///    the archetype graph, never modified except during cache rebuild.
 #[allow(dead_code)]
 pub struct CachedQueryState<T: Component> {
     archetype_ids: UnsafeCell<Vec<super::ArchetypeId>>,
@@ -772,7 +786,10 @@ impl<T: Component> CachedQueryState<T> {
         let graph = world.archetype_graph();
         let current_gen = graph.generation();
 
-        // SAFETY: Single-threaded access during query iteration
+        // SAFETY: This read is safe because:
+        // - The query state is only accessed from a single thread
+        // - No mutation occurs during this read (only reading cached_generation)
+        // - The value is a plain u64, which is always valid to read
         let cached_gen = unsafe { *self.cached_generation.get() };
 
         if current_gen != cached_gen {
@@ -780,14 +797,21 @@ impl<T: Component> CachedQueryState<T> {
             let type_id = TypeId::of::<T>();
             let matching = graph.find_with_components_ids(&[type_id]);
 
-            // SAFETY: Single-threaded access
+            // SAFETY: This mutation is safe because:
+            // - The check above ensures we only mutate when stale
+            // - No other code is reading archetype_ids during this mutation
+            // - Both fields are written atomically relative to each other
+            // - The caller ensures single-threaded access to this query state
             unsafe {
                 *self.archetype_ids.get() = matching;
                 *self.cached_generation.get() = current_gen;
             }
         }
 
-        // SAFETY: Single-threaded access
+        // SAFETY: This reference is valid because:
+        // - The archetype_ids Vec was properly initialized in new() or above
+        // - No mutation occurs while this reference is held
+        // - The returned slice lifetime is tied to &self, preventing use after mutation
         unsafe { &*self.archetype_ids.get() }
     }
 
@@ -813,6 +837,20 @@ impl<T: Component> Default for CachedQueryState<T> {
 }
 
 /// Cached query state for two-component queries.
+///
+/// # Safety Invariants
+///
+/// This type uses `UnsafeCell` for interior mutability. The safety of these
+/// accesses relies on the following invariants:
+///
+/// 1. **Single-threaded access**: Query iteration is single-threaded. The caller
+///    must not access the query state from multiple threads concurrently.
+///
+/// 2. **No aliasing during mutation**: When rebuilding the cache, no other code
+///    is reading from the archetype_ids or cached_generation fields.
+///
+/// 3. **Valid generation values**: The generation is always a valid u64 from
+///    the archetype graph, never modified except during cache rebuild.
 #[allow(dead_code)]
 pub struct CachedQueryState2<A: Component, B: Component> {
     archetype_ids: UnsafeCell<Vec<super::ArchetypeId>>,
@@ -836,6 +874,10 @@ impl<A: Component, B: Component> CachedQueryState2<A, B> {
         let graph = world.archetype_graph();
         let current_gen = graph.generation();
 
+        // SAFETY: This read is safe because:
+        // - The query state is only accessed from a single thread
+        // - No mutation occurs during this read (only reading cached_generation)
+        // - The value is a plain u64, which is always valid to read
         let cached_gen = unsafe { *self.cached_generation.get() };
 
         if current_gen != cached_gen {
@@ -843,12 +885,21 @@ impl<A: Component, B: Component> CachedQueryState2<A, B> {
             let type_b = TypeId::of::<B>();
             let matching = graph.find_with_components_ids(&[type_a, type_b]);
 
+            // SAFETY: This mutation is safe because:
+            // - The check above ensures we only mutate when stale
+            // - No other code is reading archetype_ids during this mutation
+            // - Both fields are written atomically relative to each other
+            // - The caller ensures single-threaded access to this query state
             unsafe {
                 *self.archetype_ids.get() = matching;
                 *self.cached_generation.get() = current_gen;
             }
         }
 
+        // SAFETY: This reference is valid because:
+        // - The archetype_ids Vec was properly initialized in new() or above
+        // - No mutation occurs while this reference is held
+        // - The returned slice lifetime is tied to &self, preventing use after mutation
         unsafe { &*self.archetype_ids.get() }
     }
 

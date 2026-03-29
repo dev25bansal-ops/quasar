@@ -1037,6 +1037,25 @@ fn slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     let dot = dot.clamp(-1.0, 1.0);
     let theta = dot.acos();
     let sin_theta = theta.sin();
+    // Guard against division by zero when sin_theta is near zero.
+    // This happens when quaternions are nearly identical or opposite.
+    if sin_theta.abs() < 1e-6 {
+        // Return linear interpolation as fallback
+        let mut r = [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+            a[3] + (b[3] - a[3]) * t,
+        ];
+        let len = (r[0] * r[0] + r[1] * r[1] + r[2] * r[2] + r[3] * r[3]).sqrt();
+        if len > 0.0 {
+            r[0] /= len;
+            r[1] /= len;
+            r[2] /= len;
+            r[3] /= len;
+        }
+        return r;
+    }
     let wa = ((1.0 - t) * theta).sin() / sin_theta;
     let wb = (t * theta).sin() / sin_theta;
     [

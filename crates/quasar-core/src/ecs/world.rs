@@ -970,6 +970,71 @@ impl World {
         }
     }
 
+    /// Iterate over all entities with both components `A` and `B`, providing mutable access.
+    /// Stamps per-row change ticks for each entity visited.
+    pub fn for_each_mut2<A, B, F>(&mut self, mut f: F)
+    where
+        A: Component,
+        B: Component,
+        F: FnMut(Entity, &mut A, &mut B),
+    {
+        let type_a = TypeId::of::<A>();
+        let type_b = TypeId::of::<B>();
+        let tick = self.current_tick;
+        let arch_ids = self
+            .archetype_graph
+            .find_with_components_ids(&[type_a, type_b]);
+        for arch_id in arch_ids {
+            if let Some(arch) = self.archetype_graph.get_mut(arch_id) {
+                let (Some(&ca), Some(&cb)) = (
+                    arch.type_to_column.get(&type_a),
+                    arch.type_to_column.get(&type_b),
+                ) else {
+                    continue;
+                };
+                let entities: Vec<Entity> = arch.entities.clone();
+
+                // Ensure we have distinct column indices
+                if ca == cb {
+                    continue;
+                }
+
+                let (col_a_ptr, col_b_ptr) = {
+                    let (left, right) = if ca < cb {
+                        let (l, r) = arch.columns.split_at_mut(cb);
+                        (&mut l[ca], &mut r[0])
+                    } else {
+                        let (l, r) = arch.columns.split_at_mut(ca);
+                        (&mut r[0], &mut l[cb])
+                    };
+
+                    let Some(col_a) = left.as_any_mut().downcast_mut::<TypedColumn<A>>() else {
+                        continue;
+                    };
+                    let Some(col_b) = right.as_any_mut().downcast_mut::<TypedColumn<B>>() else {
+                        continue;
+                    };
+
+                    // We need to work with raw data directly after this
+                    (col_a as *mut TypedColumn<A>, col_b as *mut TypedColumn<B>)
+                };
+
+                // SAFETY: We have exclusive access to world, and ca != cb ensures
+                // the two columns are distinct. The pointers are derived from
+                // mutable references that are no longer in scope.
+                let col_a = unsafe { &mut *col_a_ptr };
+                let col_b = unsafe { &mut *col_b_ptr };
+
+                let n = entities.len().min(col_a.data.len()).min(col_b.data.len());
+                for i in 0..n {
+                    col_a.set_changed(i, tick);
+                    col_b.set_changed(i, tick);
+                    f(entities[i], &mut col_a.data[i], &mut col_b.data[i]);
+                }
+            }
+        }
+    }
+
     /// Query entities that have **both** components `A` and `B` via archetype SoA.
     pub fn query2<A: Component, B: Component>(&self) -> Vec<(Entity, &A, &B)> {
         let type_a = TypeId::of::<A>();

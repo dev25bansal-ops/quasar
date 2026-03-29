@@ -8,50 +8,51 @@
 //! - Audio playback
 //! - Score tracking
 
-use glam::{Quat, Vec3};
-use quasar_core::prelude::*;
-use quasar_engine::App;
+use glam::Vec3;
+use quasar_core::ecs::{System, SystemStage, World};
+use quasar_core::{App, Entity, Events, Plugin};
+use quasar_engine::prelude::*;
 
 // ────────────────────────────────────────────────────────────────────────────
 // Components
 // ────────────────────────────────────────────────────────────────────────────
 
-#[derive(Component, Clone, Default)]
+#[derive(Clone, Default)]
 struct Player {
     speed: f32,
     health: f32,
     score: u32,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone)]
 struct Enemy {
     health: f32,
     damage: f32,
     state: EnemyState,
 }
 
-#[derive(Component, Clone, Default)]
+#[derive(Clone, Default)]
 struct Velocity {
     linear: Vec3,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone)]
 struct Pickup {
     points: u32,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone)]
 struct Particle {
     lifetime: f32,
     velocity: Vec3,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone)]
 struct Collider {
     radius: f32,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone)]
 struct MeshRenderer {
     mesh: String,
     color: [f32; 4],
@@ -127,11 +128,10 @@ impl System for PlayerMovementSystem {
 
     fn run(&mut self, world: &mut World) {
         let input = world.resource::<InputState>().cloned().unwrap_or_default();
-        let dt = 1.0 / 60.0;
 
-        for (entity, (player, vel)) in world.query_mut_2::<Player, Velocity>() {
+        world.for_each_mut2::<Player, Velocity, _>(|_entity, player, vel| {
             vel.linear = input.move_direction * player.speed;
-        }
+        });
     }
 }
 
@@ -144,14 +144,20 @@ impl System for EnemyAISystem {
 
     fn run(&mut self, world: &mut World) {
         let player_pos = world
-            .query_iter::<Player>()
-            .next()
-            .map(|(_, _)| Vec3::ZERO)
+            .query::<Player>()
+            .first()
+            .map(|(e, _)| {
+                world
+                    .get::<Transform>(*e)
+                    .map(|t| t.position)
+                    .unwrap_or(Vec3::ZERO)
+            })
             .unwrap_or(Vec3::ZERO);
 
-        for (entity, enemy) in world.query_mut::<Enemy>() {
+        world.for_each_mut::<Enemy, _>(|_entity, enemy| {
             enemy.state = match enemy.state {
                 EnemyState::Idle if rand_chance(0.01) => EnemyState::Patrol,
+                EnemyState::Idle => EnemyState::Idle,
                 EnemyState::Patrol => {
                     if rand_chance(0.02) {
                         EnemyState::Chase
@@ -175,7 +181,7 @@ impl System for EnemyAISystem {
                 }
                 EnemyState::Dead => EnemyState::Dead,
             };
-        }
+        });
     }
 }
 
@@ -187,26 +193,26 @@ impl System for CollisionSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        let mut events = world.resource_mut::<Events>().unwrap();
-
         let players: Vec<_> = world
-            .query::<(Entity, &Player, &Collider)>()
-            .iter()
-            .map(|(e, p, c)| (e, *p, *c))
+            .query2::<Player, Collider>()
+            .into_iter()
+            .map(|(e, p, c)| (e, p.clone(), c.clone()))
             .collect();
 
         let pickups: Vec<_> = world
-            .query::<(Entity, &Pickup, &Collider)>()
-            .iter()
-            .map(|(e, p, c)| (e, *p, *c))
+            .query2::<Pickup, Collider>()
+            .into_iter()
+            .map(|(e, p, c)| (e, p.clone(), c.clone()))
             .collect();
 
-        for (player_entity, player, player_collider) in &players {
-            for (pickup_entity, pickup, pickup_collider) in &pickups {
-                events.send(CollisionEvent {
-                    entity_a: *player_entity,
-                    entity_b: *pickup_entity,
-                });
+        if let Some(events) = world.resource_mut::<Events>() {
+            for (player_entity, _player, _player_collider) in &players {
+                for (pickup_entity, _pickup, _pickup_collider) in &pickups {
+                    events.send(CollisionEvent {
+                        entity_a: *player_entity,
+                        entity_b: *pickup_entity,
+                    });
+                }
             }
         }
     }
@@ -226,13 +232,17 @@ impl System for ScoreSystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        if let Some(events) = world.resource::<Events>() {
-            for event in events.read::<CollisionEvent>() {
-                if let Some(mut game_state) = world.resource_mut::<GameState>() {
-                    if let Some(pickup) = world.get::<Pickup>(event.entity_b) {
-                        game_state.score += pickup.points;
-                    }
-                }
+        let collision_events: Vec<CollisionEvent> = world
+            .resource::<Events>()
+            .map(|e| e.read::<CollisionEvent>().to_vec())
+            .unwrap_or_default();
+
+        for event in collision_events {
+            let points = world.get::<Pickup>(event.entity_b).map(|p| p.points);
+            if let (Some(points), Some(mut game_state)) =
+                (points, world.resource_mut::<GameState>())
+            {
+                game_state.score += points;
             }
         }
     }
@@ -248,19 +258,14 @@ impl System for ParticleSystem {
     fn run(&mut self, world: &mut World) {
         let dt = 1.0 / 60.0;
 
-        for (entity, particle) in world.query_mut::<Particle>() {
+        world.for_each_mut::<Particle, _>(|_entity, particle| {
             particle.lifetime -= dt;
-        }
+        });
 
         let dead: Vec<Entity> = world
-            .query_filtered::<Entity, With<Particle>>()
-            .iter()
-            .filter(|(e, _)| {
-                world
-                    .get::<Particle>(*e)
-                    .map(|p| p.lifetime <= 0.0)
-                    .unwrap_or(false)
-            })
+            .query::<Particle>()
+            .into_iter()
+            .filter(|(_, p)| p.lifetime <= 0.0)
             .map(|(e, _)| e)
             .collect();
 
@@ -385,5 +390,7 @@ fn main() {
     println!("  ESC - Quit");
     println!();
 
-    App::new().add_plugin(DemoGamePlugin).run();
+    let mut app = App::new();
+    app.add_plugin(DemoGamePlugin);
+    run(app, WindowConfig::default());
 }
