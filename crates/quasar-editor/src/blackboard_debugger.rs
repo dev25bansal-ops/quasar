@@ -1,4 +1,4 @@
-//! AI Blackboard Debugger Panel - inspect and modify AI blackboard values.
+//! AI Blackboard Debugger Panel - inspect and modify AI blackboard values.`r`n`r`n#![allow(deprecated)] // Using deprecated quasar-core::ai, migrate to quasar-ai
 
 use egui::{Color32, RichText};
 use quasar_core::ai::{Blackboard, BlackboardValue};
