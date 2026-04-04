@@ -12,7 +12,6 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-
 // ============================================================================
 // Player Components
 // ============================================================================
@@ -659,12 +658,10 @@ impl CameraBounds {
 // Power-Up Effects
 // ============================================================================
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ActivePowerUps {
     pub active: Vec<ActivePowerUp>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct ActivePowerUp {

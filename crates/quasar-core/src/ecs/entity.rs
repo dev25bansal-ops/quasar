@@ -1,4 +1,4 @@
-//! Entity — a lightweight handle to an object in the game world.
+﻿//! Entity — a lightweight handle to an object in the game world.
 //!
 //! Entities use generational indices to prevent dangling references:
 //! when an entity is despawned and its slot reused, the old `Entity`
@@ -22,6 +22,11 @@ pub struct Entity {
 impl Entity {
     /// Create a new entity handle. Typically only called by [`World`](super::World).
     pub(crate) fn new(index: u32, generation: u32) -> Self {
+        Self { index, generation }
+    }
+
+    /// Create an entity from raw index and generation values.
+    pub fn from_raw(index: u32, generation: u32) -> Self {
         Self { index, generation }
     }
 
@@ -152,11 +157,18 @@ mod tests {
     }
 
     #[test]
+    fn entity_from_raw() {
+        let e = Entity::from_raw(42, 1);
+        assert_eq!(e.index(), 42);
+        assert_eq!(e.generation(), 1);
+    }
+
+    #[test]
     fn entity_equality() {
-        let e1 = Entity::new(0, 0);
-        let e2 = Entity::new(0, 0);
-        let e3 = Entity::new(0, 1);
-        let e4 = Entity::new(1, 0);
+        let e1 = Entity::from_raw(0, 0);
+        let e2 = Entity::from_raw(0, 0);
+        let e3 = Entity::from_raw(0, 1);
+        let e4 = Entity::from_raw(1, 0);
 
         assert_eq!(e1, e2);
         assert_ne!(e1, e3);
@@ -165,7 +177,7 @@ mod tests {
 
     #[test]
     fn entity_clone() {
-        let e = Entity::new(5, 2);
+        let e = Entity::from_raw(5, 2);
         let cloned = e.clone();
         assert_eq!(e, cloned);
         assert_eq!(e.index(), cloned.index());
@@ -174,7 +186,7 @@ mod tests {
 
     #[test]
     fn entity_copy() {
-        let e = Entity::new(10, 3);
+        let e = Entity::from_raw(10, 3);
         let copied = e;
         assert_eq!(e.index(), copied.index());
         assert_eq!(e.generation(), copied.generation());
@@ -182,14 +194,14 @@ mod tests {
 
     #[test]
     fn entity_debug_format() {
-        let e = Entity::new(5, 2);
+        let e = Entity::from_raw(5, 2);
         let debug = format!("{:?}", e);
         assert_eq!(debug, "Entity(5v2)");
     }
 
     #[test]
     fn entity_display_format() {
-        let e = Entity::new(5, 2);
+        let e = Entity::from_raw(5, 2);
         let display = format!("{}", e);
         assert_eq!(display, "5v2");
     }
@@ -261,7 +273,7 @@ mod tests {
     #[test]
     fn entity_allocator_deallocate_invalid_entity_fails() {
         let mut alloc = EntityAllocator::new();
-        let fake = Entity::new(999, 999);
+        let fake = Entity::from_raw(999, 999);
 
         assert!(!alloc.deallocate(fake));
     }
@@ -270,9 +282,9 @@ mod tests {
     fn entity_hash() {
         use std::collections::HashSet;
         let mut set = HashSet::new();
-        let e1 = Entity::new(0, 0);
-        let e2 = Entity::new(1, 0);
-        let e3 = Entity::new(0, 0);
+        let e1 = Entity::from_raw(0, 0);
+        let e2 = Entity::from_raw(1, 0);
+        let e3 = Entity::from_raw(0, 0);
 
         set.insert(e1);
         assert!(set.contains(&e1));

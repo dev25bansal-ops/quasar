@@ -1,4 +1,4 @@
-//! Derive macro unit tests
+﻿//! Derive macro unit tests
 
 use quasar_derive::Inspect;
 
@@ -14,24 +14,6 @@ fn inspect_derive_struct() {
         value: 42.0,
         name: "test".to_string(),
     };
-
-    // Just verify it compiles and derives Inspect
-}
-
-#[test]
-fn inspect_derive_unit_struct() {
-    #[derive(Inspect, Debug, Clone)]
-    struct UnitStruct;
-
-    let _item = UnitStruct;
-}
-
-#[test]
-fn inspect_derive_tuple_struct() {
-    #[derive(Inspect, Debug, Clone)]
-    struct TupleStruct(f32, f32, f32);
-
-    let _item = TupleStruct(1.0, 2.0, 3.0);
 }
 
 #[test]

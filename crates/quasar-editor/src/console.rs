@@ -56,6 +56,26 @@ impl ConsoleLog {
         self.push(LogLevel::Error, msg);
     }
 
+    /// Add an info log message (alias for info()).
+    pub fn log(&mut self, msg: impl Into<String>) {
+        self.info(msg);
+    }
+
+    /// Returns the number of log entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if there are no log entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns an iterator over log entries.
+    pub fn entries(&self) -> impl Iterator<Item = &LogEntry> {
+        self.entries.iter()
+    }
+
     /// Clear all log entries.
     pub fn clear(&mut self) {
         self.entries.clear();

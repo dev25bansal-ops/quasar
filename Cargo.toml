@@ -16,6 +16,9 @@ members = [
     "crates/quasar-derive",
     "crates/quasar-lobby",
     "crates/quasar-network",
+    "crates/quasar-ai",
+    "crates/quasar-xr",
+    "crates/quasar-templates",
     "crates/quasar-localization",
     "crates/quasar-profiler",
     "examples/spinning_cube",
@@ -54,6 +57,9 @@ quasar-lobby = { path = "crates/quasar-lobby" }
 quasar-network = { path = "crates/quasar-network" }
 quasar-localization = { path = "crates/quasar-localization" }
 quasar-profiler = { path = "crates/quasar-profiler" }
+quasar-ai = { path = "crates/quasar-ai" }
+quasar-xr = { path = "crates/quasar-xr" }
+quasar-templates = { path = "crates/quasar-templates" }
 
 # Rendering & windowing
 wgpu = "24"
@@ -119,6 +125,7 @@ tracy-client = "0.17"
 
 # Fast hashmaps
 rustc-hash = "1"
+hashbrown = "0.15"
 smallvec = { version = "1", features = ["serde"] }
 
 # Serialization
@@ -153,7 +160,7 @@ opt-level = 1
 [profile.dev.package."*"]
 opt-level = 3
 
-# Fast iteration profile: `cargo build --profile fast-iter`
+# Fast iteration profile: cargo build --profile fast-iter
 [profile.fast-iter]
 inherits = "dev"
 opt-level = 0
@@ -163,3 +170,4 @@ incremental = true
 [profile.release]
 lto = "thin"
 debug = 1
+

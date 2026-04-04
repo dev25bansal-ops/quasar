@@ -25,6 +25,7 @@ pub mod shader_graph_editor;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
 pub use asset_processor::{AssetHandle, AssetImporter, LoadedAsset};
+pub use console::ConsoleLog;
 pub use editor_state::{
     DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
     SetPositionCommand, SetRotationCommand, SetScaleCommand, SpawnEntityCommand, TransformData,

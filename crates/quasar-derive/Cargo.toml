@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "quasar-derive"
 description = "Derive macros for Quasar Engine (Inspect, etc.)"
 version.workspace = true
@@ -12,3 +12,7 @@ proc-macro = true
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
+
+[dev-dependencies]
+egui.workspace = true
+quasar-editor = { path = "../quasar-editor" }

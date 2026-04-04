@@ -12,7 +12,6 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-
 // ============================================================================
 // Unit Components
 // ============================================================================
@@ -423,7 +422,8 @@ impl FogOfWar {
 
     pub fn is_visible(&self, world_pos: Vec2) -> bool {
         if let Some(grid_pos) = self.world_to_grid(world_pos) {
-            return self.grid
+            return self
+                .grid
                 .get(grid_pos[0] as usize)
                 .and_then(|row| row.get(grid_pos[1] as usize))
                 .map(|&cell| cell == FogState::Visible)
@@ -434,7 +434,8 @@ impl FogOfWar {
 
     pub fn is_explored(&self, world_pos: Vec2) -> bool {
         if let Some(grid_pos) = self.world_to_grid(world_pos) {
-            return self.grid
+            return self
+                .grid
                 .get(grid_pos[0] as usize)
                 .and_then(|row| row.get(grid_pos[1] as usize))
                 .map(|&cell| cell != FogState::Hidden)

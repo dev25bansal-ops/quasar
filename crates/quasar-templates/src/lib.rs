@@ -238,10 +238,28 @@ pub mod rpg;
 pub mod rts;
 
 pub mod prelude {
-    pub use crate::fps::*;
-    pub use crate::platformer::*;
-    pub use crate::rpg::*;
-    pub use crate::rts::*;
+    pub use crate::fps::Ammo;
+    pub use crate::fps::EnemyAI;
+    pub use crate::fps::FpsCamera;
+    pub use crate::fps::FpsPlayer;
+    pub use crate::fps::FpsPlugin;
+    pub use crate::fps::Weapon;
+    pub use crate::fps::WeaponConfig;
+    pub use crate::fps::WeaponSlot;
+    pub use crate::fps::WeaponSystem;
+    pub use crate::fps::WeaponType;
+    pub use crate::rpg::CharacterStats;
+    pub use crate::rpg::Equipment;
+    pub use crate::rpg::EquipmentSlot;
+    pub use crate::rpg::Inventory;
+    pub use crate::rpg::InventoryItem;
+    pub use crate::rpg::NpcDialogue;
+    pub use crate::rpg::Quest;
+    pub use crate::rpg::QuestObjective;
+    pub use crate::rpg::QuestState;
+    pub use crate::rpg::RpgPlayer;
+    pub use crate::rpg::RpgPlugin;
+    pub use crate::rpg::Skill;
 }
 
 #[cfg(test)]

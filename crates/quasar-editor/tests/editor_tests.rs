@@ -1,53 +1,27 @@
-//! Editor system unit tests
+﻿//! Editor system unit tests
 
 #[test]
 fn editor_state_default() {
     use quasar_editor::EditorState;
+    use quasar_editor::EditorMode;
 
     let state = EditorState::default();
-    assert!(!state.visible);
+    assert_eq!(state.mode, EditorMode::Stopped);
 }
 
 #[test]
-fn editor_state_toggle() {
+fn editor_state_mode_transitions() {
     use quasar_editor::EditorState;
+    use quasar_editor::EditorMode;
 
     let mut state = EditorState::default();
-    state.toggle();
-    assert!(state.visible);
-}
+    assert_eq!(state.mode, EditorMode::Stopped);
 
-#[test]
-fn selection_default() {
-    use quasar_editor::Selection;
+    state.mode = EditorMode::Playing;
+    assert_eq!(state.mode, EditorMode::Playing);
 
-    let selection = Selection::default();
-    assert!(selection.is_empty());
-}
-
-#[test]
-fn selection_add() {
-    use quasar_core::Entity;
-    use quasar_editor::Selection;
-
-    let mut selection = Selection::default();
-    let entity = Entity::new(0, 0);
-    selection.add(entity);
-
-    assert!(!selection.is_empty());
-    assert!(selection.contains(entity));
-}
-
-#[test]
-fn selection_clear() {
-    use quasar_core::Entity;
-    use quasar_editor::Selection;
-
-    let mut selection = Selection::default();
-    selection.add(Entity::new(0, 0));
-    selection.clear();
-
-    assert!(selection.is_empty());
+    state.pause();
+    assert_eq!(state.mode, EditorMode::Paused);
 }
 
 #[test]
@@ -61,20 +35,21 @@ fn gizmo_mode_variants() {
 
 #[test]
 fn console_creation() {
-    use quasar_editor::Console;
+    use quasar_editor::ConsoleLog;
 
-    let console = Console::new();
-    assert!(console.entries().is_empty());
+    let console = ConsoleLog::new();
+    assert!(console.is_empty());
 }
 
 #[test]
 fn console_log() {
-    use quasar_editor::Console;
+    use quasar_editor::ConsoleLog;
 
-    let mut console = Console::new();
+    let mut console = ConsoleLog::new();
     console.log("Test message");
 
-    assert!(!console.entries().is_empty());
+    assert!(!console.is_empty());
+    assert_eq!(console.len(), 1);
 }
 
 #[test]

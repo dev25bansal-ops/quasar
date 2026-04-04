@@ -212,7 +212,7 @@ impl Inventory {
         }
 
         let entry = self.items.entry(item.id).or_insert((item, 0));
-        
+
         if entry.0.stackable {
             let space = entry.0.max_stack.saturating_sub(entry.1);
             let to_add = count.min(space);
