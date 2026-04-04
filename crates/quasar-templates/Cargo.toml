@@ -1,0 +1,26 @@
+[package]
+name = "quasar-templates"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Game templates for Quasar Engine - FPS, RPG, RTS, Platformer starter kits"
+
+[dependencies]
+quasar-core.workspace = true
+quasar-math.workspace = true
+quasar-physics.workspace = true
+glam.workspace = true
+serde.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+
+[features]
+default = ["fps", "rpg", "rts", "platformer"]
+fps = []
+rpg = []
+rts = []
+platformer = []

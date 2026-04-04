@@ -917,19 +917,17 @@ pub mod compression {
     pub const COMPRESSION_VERSION: u32 = 1;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Default)]
     pub enum CompressionMethod {
         None = 0,
         Quantized8 = 1,
+        #[default]
         Quantized16 = 2,
         KeyReduction = 3,
         CurveFitting = 4,
     }
 
-    impl Default for CompressionMethod {
-        fn default() -> Self {
-            Self::Quantized16
-        }
-    }
+    
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CompressedAnimationClip {
@@ -1041,7 +1039,7 @@ pub mod compression {
                 compression_method: CompressionMethod::Quantized16,
                 position_keys: pos_keys,
                 rotation_keys: rot_keys,
-                scale_keys: scale_keys,
+                scale_keys,
             }
         }
 
@@ -1198,7 +1196,7 @@ pub mod compression {
             }
         }
 
-        let scale = 32767.0 / 0.7071067811865476;
+        let scale = 32767.0 / 0.707_106_77;
         QuantizedQuat {
             largest: largest as u8,
             a: (remaining[0] * scale).clamp(-32767.0, 32767.0) as i16,
@@ -1208,7 +1206,7 @@ pub mod compression {
     }
 
     fn dequantize_quat(q: QuantizedQuat) -> Quat {
-        let scale = 0.7071067811865476 / 32767.0;
+        let scale = 0.707_106_77 / 32767.0;
         let a = q.a as f32 * scale;
         let b = q.b as f32 * scale;
         let c = q.c as f32 * scale;

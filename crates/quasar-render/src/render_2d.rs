@@ -159,6 +159,7 @@ impl Default for SpriteAnimator {
 
 /// A single tile in a tilemap.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Tile {
     pub tile_id: u32,
     pub flip_x: bool,
@@ -166,16 +167,6 @@ pub struct Tile {
     pub rotation: u8,
 }
 
-impl Default for Tile {
-    fn default() -> Self {
-        Self {
-            tile_id: 0,
-            flip_x: false,
-            flip_y: false,
-            rotation: 0,
-        }
-    }
-}
 
 /// A tileset containing tile textures.
 #[derive(Debug, Clone, Serialize, Deserialize)]

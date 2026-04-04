@@ -1,0 +1,25 @@
+﻿[package]
+name = "quasar-ai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Quasar Engine AI Systems - GOAP, Utility AI, Behavior Trees, Navigation"
+
+[features]
+default = ["goap", "utility", "navigation"]
+goap = []
+utility = []
+navigation = []
+
+[dependencies]
+quasar-core = { workspace = true }
+quasar-math = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+glam = { workspace = true }
+hashbrown = { workspace = true }
+smallvec = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }

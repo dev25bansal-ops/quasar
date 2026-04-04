@@ -155,7 +155,7 @@ pub fn has_key(key: &str) -> impl Fn(&Blackboard, &World, Entity) -> bool + '_ {
 pub struct InverterNode;
 
 impl InverterNode {
-    pub fn new(child: Node) -> Node {
+    pub fn create(child: Node) -> Node {
         Node::inverter(child)
     }
 }
@@ -164,7 +164,7 @@ impl InverterNode {
 pub struct RepeaterNode;
 
 impl RepeaterNode {
-    pub fn new(child: Node, count: u32) -> Node {
+    pub fn create(child: Node, count: u32) -> Node {
         Node::repeater(child, Some(count))
     }
 
@@ -181,7 +181,7 @@ impl RepeaterNode {
 pub struct TimeoutNode;
 
 impl TimeoutNode {
-    pub fn new(child: Node, duration_seconds: f32) -> Node {
+    pub fn create(child: Node, duration_seconds: f32) -> Node {
         Node::timeout(child, duration_seconds)
     }
 }
@@ -190,7 +190,7 @@ impl TimeoutNode {
 pub struct WaitForNode;
 
 impl WaitForNode {
-    pub fn new(condition: &str) -> Node {
+    pub fn create(condition: &str) -> Node {
         Node::wait_for(condition)
     }
 }
@@ -199,7 +199,7 @@ impl WaitForNode {
 pub struct ParallelNode;
 
 impl ParallelNode {
-    pub fn new(children: Vec<Node>) -> Node {
+    pub fn create(children: Vec<Node>) -> Node {
         let len = children.len();
         Node::Parallel {
             children,
@@ -231,7 +231,7 @@ impl ParallelNode {
 pub struct RandomSelectorNode;
 
 impl RandomSelectorNode {
-    pub fn new(children: Vec<Node>) -> Node {
+    pub fn create(children: Vec<Node>) -> Node {
         Node::RandomSelector(children)
     }
 }
@@ -466,3 +466,4 @@ mod tests {
         assert_eq!(result, NodeResult::Success);
     }
 }
+

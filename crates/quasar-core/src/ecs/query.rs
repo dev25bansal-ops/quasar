@@ -1147,9 +1147,7 @@ impl<'w, T: Component> Iterator for LazyArchetypeIter<'w, T> {
             }
 
             // If no archetype found, we're done
-            if self.current_arch.is_none() {
-                return None;
-            }
+            self.current_arch?;
         }
     }
 }

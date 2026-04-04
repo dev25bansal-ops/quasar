@@ -16,6 +16,8 @@ members = [
     "crates/quasar-derive",
     "crates/quasar-lobby",
     "crates/quasar-network",
+    "crates/quasar-localization",
+    "crates/quasar-profiler",
     "examples/spinning_cube",
     "examples/showcase",
     "examples/physics_sandbox",
@@ -50,6 +52,8 @@ quasar-build = { path = "crates/quasar-build" }
 quasar-derive = { path = "crates/quasar-derive" }
 quasar-lobby = { path = "crates/quasar-lobby" }
 quasar-network = { path = "crates/quasar-network" }
+quasar-localization = { path = "crates/quasar-localization" }
+quasar-profiler = { path = "crates/quasar-profiler" }
 
 # Rendering & windowing
 wgpu = "24"

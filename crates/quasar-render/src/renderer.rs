@@ -51,7 +51,7 @@ impl UniformRingBuffer {
     /// Allocate space for data, returns offset into buffer.
     /// Automatically wraps around when reaching capacity.
     pub fn allocate(&mut self, size: u64, alignment: u64) -> u64 {
-        let aligned_offset = (self.offset + alignment - 1) / alignment * alignment;
+        let aligned_offset = self.offset.div_ceil(alignment) * alignment;
         let end = aligned_offset + size;
 
         if end > self.capacity {

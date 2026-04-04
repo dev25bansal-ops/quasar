@@ -234,21 +234,13 @@ impl Default for NetworkSecurityConfig {
 
 /// Per-client security state.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct ClientSecurityState {
     pub rate_limiter: RateLimiter,
     pub last_sequence: u64,
     pub seen_entities: HashMap<NetworkEntityId, Instant>,
 }
 
-impl Default for ClientSecurityState {
-    fn default() -> Self {
-        Self {
-            rate_limiter: RateLimiter::default(),
-            last_sequence: 0,
-            seen_entities: HashMap::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);

@@ -480,10 +480,8 @@ impl BehaviorTree {
                 if let Some(f) = function {
                     f(blackboard, world, entity)
                 } else {
-                    blackboard
-                        .get_bool(name)
-                        .then_some(NodeResult::Success)
-                        .unwrap_or(NodeResult::Failure)
+                    if blackboard
+                        .get_bool(name) { NodeResult::Success } else { NodeResult::Failure }
                 }
             }
 

@@ -74,6 +74,7 @@ pub mod delta_compression;
 pub mod ecs;
 pub mod error;
 pub mod event;
+pub mod event_bus;
 pub mod interest;
 pub mod localization;
 pub mod navigation;
@@ -117,6 +118,7 @@ pub use ecs::{
 };
 pub use error::{QuasarError, QuasarResult};
 pub use event::{Events, EventsChannel};
+pub use event_bus::{Event, EventBus, EventReader, EventWriter, EventPriority, DEFAULT_PRIORITY};
 pub use interest::InterestManager;
 pub use localization::{
     plural_category, Localization, LocalizationPlugin, LocalizationResource, LocalizedString,
@@ -160,6 +162,7 @@ pub mod prelude {
         QueryIter, World, WorldQuery, Schedule, System, SystemStage,
     };
     pub use crate::event::{Events, EventsChannel};
+    pub use crate::event_bus::{Event, EventBus, EventReader, EventWriter};
     pub use crate::time::{FixedUpdateAccumulator, Time};
     pub use crate::app::{App, TimeSnapshot, SimulationState, simulation_active};
     pub use crate::plugin::Plugin;

@@ -20,6 +20,12 @@ pub struct HotReloadSystem {
     pub reload_count: u64,
 }
 
+impl Default for HotReloadSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HotReloadSystem {
     pub fn new() -> Self {
         Self {

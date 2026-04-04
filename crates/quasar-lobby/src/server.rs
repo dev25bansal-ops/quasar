@@ -274,7 +274,7 @@ async fn handle_http_request(
     }
 
     let parts: Vec<&str> = request_line.split_whitespace().collect();
-    let method = parts.get(0).unwrap_or(&"");
+    let method = parts.first().unwrap_or(&"");
     let path = parts.get(1).unwrap_or(&"/");
 
     let (status, response_body) = route_request(

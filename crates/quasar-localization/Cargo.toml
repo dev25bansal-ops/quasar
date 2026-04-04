@@ -1,0 +1,35 @@
+[package]
+name = "quasar-localization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Internationalization and localization support for Quasar Engine"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = "2"
+fluent = "0.17"
+fluent-bundle = "0.16"
+fluent-syntax = "0.12"
+unic-langid = { version = "0.9", features = ["serde"] }
+intl-memoizer = "0.5"
+toml = "0.8"
+parking_lot = { workspace = true }
+once_cell = "1"
+walkdir = "2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3", features = ["winnls"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+locale_config = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

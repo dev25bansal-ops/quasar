@@ -59,7 +59,9 @@ struct MeshRenderer {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[derive(Default)]
 enum EnemyState {
+    #[default]
     Idle,
     Patrol,
     Chase,
@@ -67,11 +69,6 @@ enum EnemyState {
     Dead,
 }
 
-impl Default for EnemyState {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -143,7 +140,7 @@ impl System for EnemyAISystem {
     }
 
     fn run(&mut self, world: &mut World) {
-        let player_pos = world
+        let _player_pos = world
             .query::<Player>()
             .first()
             .map(|(e, _)| {
@@ -239,7 +236,7 @@ impl System for ScoreSystem {
 
         for event in collision_events {
             let points = world.get::<Pickup>(event.entity_b).map(|p| p.points);
-            if let (Some(points), Some(mut game_state)) =
+            if let (Some(points), Some(game_state)) =
                 (points, world.resource_mut::<GameState>())
             {
                 game_state.score += points;
@@ -329,7 +326,7 @@ fn spawn_player(world: &mut World) {
 }
 
 fn spawn_enemies(world: &mut World, count: usize) {
-    for i in 0..count {
+    for _i in 0..count {
         let entity = world.spawn();
         world.insert(
             entity,
@@ -352,7 +349,7 @@ fn spawn_enemies(world: &mut World, count: usize) {
 }
 
 fn spawn_pickups(world: &mut World, count: usize) {
-    for i in 0..count {
+    for _i in 0..count {
         let entity = world.spawn();
         world.insert(entity, Pickup { points: 100 });
         world.insert(entity, Collider { radius: 0.3 });

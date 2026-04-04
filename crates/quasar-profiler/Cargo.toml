@@ -1,0 +1,27 @@
+[package]
+name = "quasar-profiler"
+description = "Performance monitoring and profiling tools for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+parking_lot = { workspace = true }
+crossbeam-channel = { workspace = true }
+smallvec = { workspace = true }
+
+wgpu = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
+
+[features]
+default = ["cpu"]
+cpu = []
+gpu = ["dep:wgpu"]
+ui = ["dep:egui"]
+full = ["cpu", "gpu", "ui"]
+
+[dev-dependencies]
+pollster = { workspace = true }

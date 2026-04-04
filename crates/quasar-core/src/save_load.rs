@@ -564,7 +564,7 @@ impl SaveSlotManager {
     }
 
     pub fn slot_exists(&self, slot: usize) -> bool {
-        self.slots.get(slot).map_or(false, |m| m.is_some())
+        self.slots.get(slot).is_some_and(|m| m.is_some())
     }
 
     pub fn slot_count(&self) -> usize {

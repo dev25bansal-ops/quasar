@@ -201,6 +201,7 @@ impl fmt::Display for SourceLocation {
 
 /// Rich error context.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ErrorContext {
     /// The subsystem or component this error relates to.
     pub context: String,
@@ -218,19 +219,6 @@ pub struct ErrorContext {
     pub source: Option<Arc<QuasarError>>,
 }
 
-impl Default for ErrorContext {
-    fn default() -> Self {
-        Self {
-            context: String::new(),
-            operation: None,
-            target: None,
-            reason: None,
-            location: None,
-            backtrace: None,
-            source: None,
-        }
-    }
-}
 
 /// Top-level engine error with rich context.
 #[derive(Debug, Clone)]
