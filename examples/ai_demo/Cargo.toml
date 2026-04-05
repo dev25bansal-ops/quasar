@@ -1,0 +1,15 @@
+[package]
+name = "ai_demo"
+description = "AI systems demo for Quasar Engine - GOAP, Behavior Trees, Utility AI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+quasar-core = { path = "../../crates/quasar-core" }
+quasar-ai = { path = "../../crates/quasar-ai" }
+quasar-math = { path = "../../crates/quasar-math" }
+env_logger = { workspace = true }
+log = { workspace = true }
+glam = { workspace = true }

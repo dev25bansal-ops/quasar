@@ -56,6 +56,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_demo"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "glam",
+ "log",
+ "quasar-ai",
+ "quasar-core",
+ "quasar-math",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

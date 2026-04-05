@@ -35,7 +35,7 @@ pub mod steering;
 pub mod debug;
 
 pub use blackboard::{Blackboard, BlackboardKey, BlackboardValue};
-pub use behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext};
+pub use behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext, BtState};
 pub use goap::{GoapPlanner, GoapAction, GoapGoal, GoapWorldState};
 pub use utility::{UtilityBrain, UtilityAction, Consideration, ResponseCurve};
 pub use sensors::{SensorSystem, Perception, AwarenessLevel};
@@ -45,7 +45,7 @@ pub use debug::{AiDebugger, DebugDraw};
 
 pub mod prelude {
     pub use crate::blackboard::{Blackboard, BlackboardKey, BlackboardValue};
-    pub use crate::behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext};
+    pub use crate::behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext, BtState};
     pub use crate::goap::{GoapPlanner, GoapAction, GoapGoal, GoapWorldState};
     pub use crate::utility::{UtilityBrain, UtilityAction, Consideration, ResponseCurve};
     pub use crate::sensors::{SensorSystem, Perception, AwarenessLevel};

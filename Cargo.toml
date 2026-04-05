@@ -28,6 +28,7 @@ members = [
     "examples/scripting_demo",
     "examples/lobby_server",
     "examples/demo_game",
+    "examples/ai_demo",
 ]
 # web_demo is wasm32-only; build with: cargo build -p web-demo --target wasm32-unknown-unknown
 exclude = ["examples/web_demo"]
