@@ -1,0 +1,51 @@
+﻿pub fn validate_message(message: &NetworkMessage) -> Result<(), NetworkError> {
+    let config = bincode::config::standard();
+    let encoded = bincode::serde::encode_to_vec(message, config)?;
+    if encoded.len() < MIN_MESSAGE_SIZE {
+        return Err(NetworkError(format!(
+            "Message too small: {} < {}",
+            encoded.len(),
+            MIN_MESSAGE_SIZE
+        )));
+    }
+    if encoded.len() > MAX_MESSAGE_SIZE {
+        return Err(NetworkError(format!(
+            "Message too large: {} > {}",
+            encoded.len(),
+            MAX_MESSAGE_SIZE
+        )));
+    }
+    match &message.payload {
+        NetworkPayload::StateSnapshot { entities, .. } => {
+            if entities.len() > MAX_ENTITIES_PER_SNAPSHOT {
+                return Err(NetworkError(format!(
+                    "Snapshot has too many entities: {} > {}",
+                    entities.len(),
+                    MAX_ENTITIES_PER_SNAPSHOT
+                )));
+            }
+        }
+        NetworkPayload::EntitySpawn { components, .. }
+        | NetworkPayload::EntityUpdate { components, .. } => {
+            if components.len() > MAX_COMPONENTS_PER_ENTITY {
+                return Err(NetworkError(format!(
+                    "Entity has too many components: {} > {}",
+                    components.len(),
+                    MAX_COMPONENTS_PER_ENTITY
+                )));
+            }
+        }
+        NetworkPayload::Rpc { method, args, .. } => {
+            if args.len() > MAX_MESSAGE_SIZE / 4 {
+                return Err(NetworkError(format!(
+                    "RPC args too large: {} bytes",
+                    args.len()
+                )));
+            }
+            let whitelist = RpcMethodWhitelist::default();
+            whitelist.validate_method(method)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}

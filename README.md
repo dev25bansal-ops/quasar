@@ -1,8 +1,8 @@
-﻿# ðŸš€ Quasar Engine
+﻿# 🚀 Quasar Engine
 
 **A modular, data-driven 3D game engine written entirely in Rust.**
 
-Built for [FOSS Hack 2026](https://fossunited.org/fosshack/2026) â€” the month-long open source hackathon by FOSS United.
+Built for [FOSS Hack 2026](https://fossunited.org/fosshack/2026) – the month-long open source hackathon by FOSS United.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
@@ -12,55 +12,55 @@ Built for [FOSS Hack 2026](https://fossunited.org/fosshack/2026) â€” the mo
 
 ## Highlights
 
-- **Archetype ECS** â€” SoA archetype storage with generational entity handles, typed queries with filters (`With`, `Without`, `Changed`, `Added`, `Removed`), deferred command buffers, sparse-set side storage, and entity relations (`ChildOf`, `OwnedBy` with cascade despawn)
-- **Parallel System Scheduling** â€” explicit read/write access declarations, automatic conflict detection, topological grouping, and rayon-based parallel execution
-- **Render Graph** â€” node-based render pipeline with 14 feature flags: deferred shading (100+ lights), clustered forward (16Ã—9Ã—24 froxels), PBR Cook-Torrance BRDF, IBL environment maps, and cascade + virtual shadow maps
-- **Screen-Space Effects** â€” SSGI (ray-marched), SSR (hierarchical march), SSAO (hemisphere sampling), TAA (Halton jitter + YCoCg clamping), FXAA, and bloom
-- **GPU-Driven Rendering** â€” Hi-Z occlusion culling (8-level depth pyramid), meshlet clustering (64 verts / 126 tris with cone culling), and compute-based indirect draw
-- **Virtual Shadow Maps** â€” clipmap pages with LRU cache (128Ã—128 pages, 6 levels)
-- **Sparse Virtual Textures** â€” 128Ã—128 tile streaming with GPU feedback pass, page table, and background tile loading
-- **Streaming & LOD** â€” budget-based streaming pool (512 MB texture / 256 MB mesh) with LRU eviction, distance-based LOD selection, and 4Ã—4 Bayer dithered cross-fade transitions
-- **Rigid Body Physics** â€” full Rapier3D integration (bodies, colliders, joints with motors, character controller, sensors/triggers, raycasting, shape casting) with async physics stepping on a dedicated thread and interpolation
-- **Deterministic Rollback** â€” frame-snapshotted physics state, per-client input history ring buffer, misprediction detection, and re-simulation for netcode
-- **Spatial Audio** â€” Kira-backed playback with 6-bus mixer, parametric EQ / compressor / limiter / reverb DSP chain, OpenAL-style inverse-distance attenuation, Doppler tracking, and reverb zones
-- **Ambisonics & GPU Reverb** â€” orders 1â€“3 spherical harmonic encoding/decoding (ACN/SN3D, up to 16 B-format channels) and GPU-accelerated partitioned convolution reverb (1024-sample overlap-add via compute shader)
-- **QUIC Networking** â€” Quinn-based QUIC transport with unreliable/reliable/bulk channels, per-client delta compression (64-slot bitmask diffing against acknowledged baselines), spatial interest management (grid-based AoI), and client-side prediction with server reconciliation
-- **Dual Scripting** â€” Lua 5.4 VM (mlua) with hot-reload file watcher, ECS bridge (`quasar._transforms`, force/spawn/despawn commands, component registry), and sandboxed WASM scripting via wasmtime with host API
-- **Scene Editor** â€” egui-based editor (F12 toggle) with hierarchy panel (multi-select), component inspector (auto-generated via `#[derive(Inspect)]`), console log (512-entry ring buffer), asset browser (grid view with kind detection), gizmos (translate/rotate/scale with axis raycasting), play-in-editor with world snapshot/restore, undo/redo (100-deep command stack), and prefab override diffing
-- **Visual Graph Editors** â€” shader graph editor (node-based WGSL generation) and logic graph editor (visual Lua code generation with data + execution flow connections)
-- **GPU Profiler** â€” per-pass timestamp queries (64 passes max) with async readback, wired into the editor overlay alongside CPU frame stats (average, median, min, max, FPS)
-- **Animation** â€” keyframe-based transform animation with linear interpolation and quaternion SLERP, skeletal animation clips (per-bone keyframes), animation state machine, and timeline editor panel with Step/Linear/CubicSpline interpolation modes
-- **Build Pipeline** â€” CLI tool targeting 6 platforms (Windows, Linux, macOS, Web, Android, iOS) with parallel asset processing (rayon), BC7 texture compression (intel_tex_2), ASTC 4Ã—4 for mobile, glTF mesh optimization (meshopt vertex cache + overdraw + fetch), SHA-256 integrity verification, and content-addressable caching
-- **Navigation** â€” A* pathfinding on polygon nav meshes with heightmap generation (slope filtering), centroid-based waypoints, and `NavMeshAgent` component
-- **Reflection** â€” `#[derive(Reflect)]` proc macro generating field descriptors, JSON serialization, and compact binary network serialization (little-endian)
-- **Save/Load** â€” full world snapshot to JSON with entity transforms, names, hierarchy, and custom data; bidirectional scene â†” save conversion
-- **In-Game UI** â€” retained-mode flexbox layout solver with text (fontdue), image, and widget rendering (button, checkbox, slider, progress bar, text input), batched to 4096 GPU quads
-- **Mobile** â€” Android/iOS touch input, gesture recognition (tap, swipe, pinch, rotate), gyroscope/accelerometer/magnetometer sensor abstraction, and haptic feedback engine
-- **Hot Reload** â€” file-watcher-based live reload of shaders (WGSL), textures (PNG/JPEG), Lua scripts, scenes, prefabs, and audio assets with dirty-flag propagation
-- **Cross-Platform** â€” Vulkan/Metal/DX12 via wgpu, WebGPU for browsers, multi-platform CI on Windows/macOS/Linux
+- **Archetype ECS** — SoA archetype storage with generational entity handles, typed queries with filters (`With`, `Without`, `Changed`, `Added`, `Removed`), deferred command buffers, sparse-set side storage, and entity relations (`ChildOf`, `OwnedBy` with cascade despawn)
+- **Parallel System Scheduling** – explicit read/write access declarations, automatic conflict detection, topological grouping, and rayon-based parallel execution
+- **Render Graph** – node-based render pipeline with 14 feature flags: deferred shading (100+ lights), clustered forward (16×9×24 froxels), PBR Cook-Torrance BRDF, IBL environment maps, and cascade + virtual shadow maps
+- **Screen-Space Effects** – SSGI (ray-marched), SSR (hierarchical march), SSAO (hemisphere sampling), TAA (Halton jitter + YCoCg clamping), FXAA, and bloom
+- **GPU-Driven Rendering** – Hi-Z occlusion culling (8-level depth pyramid), meshlet clustering (64 verts / 126 tris with cone culling), and compute-based indirect draw
+- **Virtual Shadow Maps** – clipmap pages with LRU cache (128×128 pages, 6 levels)
+- **Sparse Virtual Textures** – 128×128 tile streaming with GPU feedback pass, page table, and background tile loading
+- **Streaming & LOD** – budget-based streaming pool (512 MB texture / 256 MB mesh) with LRU eviction, distance-based LOD selection, and 4×4 Bayer dithered cross-fade transitions
+- **Rigid Body Physics** – full Rapier3D integration (bodies, colliders, joints with motors, character controller, sensors/triggers, raycasting, shape casting) with async physics stepping on a dedicated thread and interpolation
+- **Deterministic Rollback** – frame-snapshotted physics state, per-client input history ring buffer, misprediction detection, and re-simulation for netcode
+- **Spatial Audio** – Kira-backed playback with 6-bus mixer, parametric EQ / compressor / limiter / reverb DSP chain, OpenAL-style inverse-distance attenuation, Doppler tracking, and reverb zones
+- **Ambisonics & GPU Reverb** – orders 1—3 spherical harmonic encoding/decoding (ACN/SN3D, up to 16 B-format channels) and GPU-accelerated partitioned convolution reverb (1024-sample overlap-add via compute shader)
+- **QUIC Networking** – Quinn-based QUIC transport with unreliable/reliable/bulk channels, per-client delta compression (64-slot bitmask diffing against acknowledged baselines), spatial interest management (grid-based AoI), and client-side prediction with server reconciliation
+- **Dual Scripting** – Lua 5.4 VM (mlua) with hot-reload file watcher, ECS bridge (`quasar._transforms`, force/spawn/despawn commands, component registry), and sandboxed WASM scripting via wasmtime with host API
+- **Scene Editor** – egui-based editor (F12 toggle) with hierarchy panel (multi-select), component inspector (auto-generated via `#[derive(Inspect)]`), console log (512-entry ring buffer), asset browser (grid view with kind detection), gizmos (translate/rotate/scale with axis raycasting), play-in-editor with world snapshot/restore, undo/redo (100-deep command stack), and prefab override diffing
+- **Visual Graph Editors** – shader graph editor (node-based WGSL generation) and logic graph editor (visual Lua code generation with data + execution flow connections)
+- **GPU Profiler** – per-pass timestamp queries (64 passes max) with async readback, wired into the editor overlay alongside CPU frame stats (average, median, min, max, FPS)
+- **Animation** – keyframe-based transform animation with linear interpolation and quaternion SLERP, skeletal animation clips (per-bone keyframes), animation state machine, and timeline editor panel with Step/Linear/CubicSpline interpolation modes
+- **Build Pipeline** – CLI tool targeting 6 platforms (Windows, Linux, macOS, Web, Android, iOS) with parallel asset processing (rayon), BC7 texture compression (intel_tex_2), ASTC 4×4 for mobile, glTF mesh optimization (meshopt vertex cache + overdraw + fetch), SHA-256 integrity verification, and content-addressable caching
+- **Navigation** – A* pathfinding on polygon nav meshes with heightmap generation (slope filtering), centroid-based waypoints, and `NavMeshAgent` component
+- **Reflection** – `#[derive(Reflect)]` proc macro generating field descriptors, JSON serialization, and compact binary network serialization (little-endian)
+- **Save/Load** – full world snapshot to JSON with entity transforms, names, hierarchy, and custom data; bidirectional scene ↔ save conversion
+- **In-Game UI** – retained-mode flexbox layout solver with text (fontdue), image, and widget rendering (button, checkbox, slider, progress bar, text input), batched to 4096 GPU quads
+- **Mobile** – Android/iOS touch input, gesture recognition (tap, swipe, pinch, rotate), gyroscope/accelerometer/magnetometer sensor abstraction, and haptic feedback engine
+- **Hot Reload** – file-watcher-based live reload of shaders (WGSL), textures (PNG/JPEG), Lua scripts, scenes, prefabs, and audio assets with dirty-flag propagation
+- **Cross-Platform** – Vulkan/Metal/DX12 via wgpu, WebGPU for browsers, multi-platform CI on Windows/macOS/Linux
 
 ## Features
 
 | Module | Description | Status |
 |--------|-------------|--------|
-| **quasar-core** | Archetype ECS (SoA storage, generational handles, typed queries, filters, change detection, sparse sets, relations, deferred commands), parallel system scheduling (rayon), events, scene graph, animation (keyframe + skeletal + state machine), asset server (hot-reload, loaders), A* navigation (polygon nav mesh, heightmap gen), QUIC networking (delta compression, interest management, prediction, rollback), reflection, prefabs (override diffing), save/load | âœ… Complete |
-| **quasar-math** | Transform (TRS, look_at, local axes), Color (linear f32, presets, u8 conversion), glam re-exports (Vec2â€“4, Quat, Mat3â€“4, Affine3A) | âœ… Complete |
-| **quasar-render** | Render graph with 14 feature flags, forward + deferred + hybrid paths, PBR (Cook-Torrance BRDF, IBL), clustered lighting (16Ã—9Ã—24 froxels), cascade + virtual shadow maps, SSGI, SSR, SSAO, TAA, FXAA, bloom, tonemap, Hi-Z occlusion culling, meshlets (64v/126t, cone culling), SVT (128px tiles, page table), streaming pool (LRU, budgeted), LOD (Bayer dithered cross-fade), terrain (heightmap + splatmap), 100K GPU particles, volumetric fog, lightmap baking (CPU + GPU path tracer), reflection probes (parallax-corrected cubemaps), decals, sprites, skinned meshes, hot-reload, GPU profiler | âœ… Complete |
-| **quasar-window** | Window config (title, resolution, vsync), per-frame keyboard/mouse input state, action map binding system with ActionEvents | âœ… Complete |
-| **quasar-physics** | Rapier3D: rigid bodies (dynamic/kinematic/fixed), colliders (sphere/box/capsule/mesh/heightfield), joints (fixed/prismatic/revolute/spherical + motors), character controller (auto-step), sensors/triggers, raycasting, shape casting, collision events (start/stop), async stepping (dedicated thread + interpolation), rollback snapshots | âœ… Complete |
-| **quasar-audio** | Kira playback (one-shot, looped, streaming), 6-bus mixer, DSP chain (parametric EQ, compressor, limiter, reverb), spatial audio (inverse-distance attenuation), Doppler tracking, reverb zones (AABB), ambisonics encoding/decoding (orders 1â€“3, ACN/SN3D), GPU convolution reverb (1024-sample partitioned overlap-add compute shader) | âœ… Complete |
-| **quasar-scripting** | Lua 5.4 (mlua) with file-watcher hot-reload, ECS bridge (transform read/write, force/spawn/despawn commands), component registry (string â†’ serialize/insert/update/remove), WASM scripting (wasmtime, host API: get/set transform, spawn, log) | âœ… Complete |
-| **quasar-editor** | egui panels: hierarchy (multi-select tree), inspector (`#[derive(Inspect)]` reflection), console (512-entry ring buffer), asset browser (grid + kind detection), gizmos (translate/rotate/scale + axis raycasting), shader graph editor (WGSL gen), logic graph editor (Lua gen with data + exec flow), timeline (keyframe scrubber), GPU profiler overlay, play-in-editor (snapshot/restore), undo/redo (100 commands), prefab override diffing | âœ… Complete |
-| **quasar-build** | CLI build tool (6 targets: Windows/Linux/macOS/Web/Android/iOS), parallel asset processing (rayon), BC7 compression (intel_tex_2), ASTC 4Ã—4 (mobile), glTF mesh optimization (meshopt: vertex cache + overdraw + fetch), SHA-256 integrity, content-addressable caching | âœ… Complete |
-| **quasar-derive** | `#[derive(Inspect)]` proc macro: type-directed widget generation (DragValue, Checkbox, TextEdit, Vec3 sliders, Color4 picker), `#[inspect(skip)]` attribute | âœ… Complete |
-| **quasar-ui** | Retained-mode UI: flexbox layout solver, anchor positioning, widgets (button, checkbox, slider, progress bar, text input), text rendering (fontdue), batched GPU quads (4096 max), alpha blending | âœ… Complete |
-| **quasar-mobile** | Touch input (multi-pointer with pressure), gesture recognition (tap, swipe, pinch, rotate), sensor abstraction (gyroscope, accelerometer, magnetometer), haptic feedback engine | âœ… Complete |
-| **quasar-ai** | Comprehensive AI: GOAP planner, Utility AI scoring, Behavior Trees, Navigation mesh pathfinding, Steering behaviors, Sensors/Perception, Blackboard knowledge system | :white_check_mark: Complete |
-| **quasar-xr** | Extended Reality: OpenXR integration, VR stereo rendering, AR passthrough, hand tracking, controller input, spatial anchors | :white_check_mark: Complete |
-| **quasar-profiler** | Performance profiling: CPU/GPU timing, memory tracking, allocation profiling, stats overlay, JSON export | :white_check_mark: Complete |
-| **quasar-localization** | I18n: JSON translations, plural forms, gender variants, runtime language switch, locale-aware formatting | :white_check_mark: Complete |
-| **quasar-templates** | Game templates: FPS (weapons/ammo/enemies), RPG (stats/inventory/quests), RTS (units/buildings/resources), Platformer (player/enemies/collectibles) | :white_check_mark: Complete |
-| **quasar-engine** | Meta-crate with prelude re-exporting all subsystems, winit game loop runner with HDR + tonemap pipeline | âœ… Complete |
+| **quasar-core** | Archetype ECS (SoA storage, generational handles, typed queries, filters, change detection, sparse sets, relations, deferred commands), parallel system scheduling (rayon), events, scene graph, animation (keyframe + skeletal + state machine), asset server (hot-reload, loaders), A* navigation (polygon nav mesh, heightmap gen), QUIC networking (delta compression, interest management, prediction, rollback), reflection, prefabs (override diffing), save/load | ✅ Complete |
+| **quasar-math** | Transform (TRS, look_at, local axes), Color (linear f32, presets, u8 conversion), glam re-exports (Vec2—4, Quat, Mat3—4, Affine3A) | ✅ Complete |
+| **quasar-render** | Render graph with 14 feature flags, forward + deferred + hybrid paths, PBR (Cook-Torrance BRDF, IBL), clustered lighting (16×9×24 froxels), cascade + virtual shadow maps, SSGI, SSR, SSAO, TAA, FXAA, bloom, tonemap, Hi-Z occlusion culling, meshlets (64v/126t, cone culling), SVT (128px tiles, page table), streaming pool (LRU, budgeted), LOD (Bayer dithered cross-fade), terrain (heightmap + splatmap), 100K GPU particles, volumetric fog, lightmap baking (CPU + GPU path tracer), reflection probes (parallax-corrected cubemaps), decals, sprites, skinned meshes, hot-reload, GPU profiler | ✅ Complete |
+| **quasar-window** | Window config (title, resolution, vsync), per-frame keyboard/mouse input state, action map binding system with ActionEvents | ✅ Complete |
+| **quasar-physics** | Rapier3D: rigid bodies (dynamic/kinematic/fixed), colliders (sphere/box/capsule/mesh/heightfield), joints (fixed/prismatic/revolute/spherical + motors), character controller (auto-step), sensors/triggers, raycasting, shape casting, collision events (start/stop), async stepping (dedicated thread + interpolation), rollback snapshots | ✅ Complete |
+| **quasar-audio** | Kira playback (one-shot, looped, streaming), 6-bus mixer, DSP chain (parametric EQ, compressor, limiter, reverb), spatial audio (inverse-distance attenuation), Doppler tracking, reverb zones (AABB), ambisonics encoding/decoding (orders 1—3, ACN/SN3D), GPU convolution reverb (1024-sample partitioned overlap-add compute shader) | ✅ Complete |
+| **quasar-scripting** | Lua 5.4 (mlua) with file-watcher hot-reload, ECS bridge (transform read/write, force/spawn/despawn commands), component registry (string â†’ serialize/insert/update/remove), WASM scripting (wasmtime, host API: get/set transform, spawn, log) | ✅ Complete |
+| **quasar-editor** | egui panels: hierarchy (multi-select tree), inspector (`#[derive(Inspect)]` reflection), console (512-entry ring buffer), asset browser (grid + kind detection), gizmos (translate/rotate/scale + axis raycasting), shader graph editor (WGSL gen), logic graph editor (Lua gen with data + exec flow), timeline (keyframe scrubber), GPU profiler overlay, play-in-editor (snapshot/restore), undo/redo (100 commands), prefab override diffing | ✅ Complete |
+| **quasar-build** | CLI build tool (6 targets: Windows/Linux/macOS/Web/Android/iOS), parallel asset processing (rayon), BC7 compression (intel_tex_2), ASTC 4×4 (mobile), glTF mesh optimization (meshopt: vertex cache + overdraw + fetch), SHA-256 integrity, content-addressable caching | ✅ Complete |
+| **quasar-derive** | `#[derive(Inspect)]` proc macro: type-directed widget generation (DragValue, Checkbox, TextEdit, Vec3 sliders, Color4 picker), `#[inspect(skip)]` attribute | ✅ Complete |
+| **quasar-ui** | Retained-mode UI: flexbox layout solver, anchor positioning, widgets (button, checkbox, slider, progress bar, text input), text rendering (fontdue), batched GPU quads (4096 max), alpha blending | ✅ Complete |
+| **quasar-mobile** | Touch input (multi-pointer with pressure), gesture recognition (tap, swipe, pinch, rotate), sensor abstraction (gyroscope, accelerometer, magnetometer), haptic feedback engine | ✅ Complete |
+| **quasar-ai** | Comprehensive AI: GOAP planner, Utility AI scoring, Behavior Trees, Navigation mesh pathfinding, Steering behaviors, Sensors/Perception, Blackboard knowledge system | ✅ Complete |
+| **quasar-xr** | Extended Reality: OpenXR integration, VR stereo rendering, AR passthrough, hand tracking, controller input, spatial anchors | ✅ Complete |
+| **quasar-profiler** | Performance profiling: CPU/GPU timing, memory tracking, allocation profiling, stats overlay, JSON export | ✅ Complete |
+| **quasar-localization** | I18n: JSON translations, plural forms, gender variants, runtime language switch, locale-aware formatting | ✅ Complete |
+| **quasar-templates** | Game templates: FPS (weapons/ammo/enemies), RPG (stats/inventory/quests), RTS (units/buildings/resources), Platformer (player/enemies/collectibles) | ✅ Complete |
+| **quasar-engine** | Meta-crate with prelude re-exporting all subsystems, winit game loop runner with HDR + tonemap pipeline | ✅ Complete |
 
 ## Architecture
 
@@ -79,7 +79,7 @@ quasar-engine (meta-crate / prelude / game loop runner)
 â”‚   â”œâ”€â”€ prediction      #   Client prediction + server reconciliation
 â”‚   â”œâ”€â”€ reflect         #   #[derive(Reflect)] â†’ schema + JSON + binary serialization
 â”‚   â”œâ”€â”€ prefab          #   Blueprint instantiation, component override registry
-â”‚   â”œâ”€â”€ save_load       #   World snapshot â†” JSON, scene interop
+â”‚   â”œâ”€â”€ save_load       #   World snapshot ↔ JSON, scene interop
 â”‚   â””â”€â”€ scene           #   Scene graph (parent/child, name lookup, transform propagation)
 â”‚
 â”œâ”€â”€ quasar-math         # Transform (TRS + local axes), Color (linear f32), glam re-exports
@@ -108,7 +108,7 @@ quasar-engine (meta-crate / prelude / game loop runner)
 â”œâ”€â”€ quasar-physics      # Rapier3D (bodies, colliders, joints, character controller,
 â”‚                       #   sensors, raycasting), async stepping, rollback snapshots
 â”œâ”€â”€ quasar-audio        # Kira (playback, 6-bus mixer, DSP chain), spatial audio,
-â”‚                       #   Doppler, reverb zones, ambisonics (1â€“3), GPU convolution reverb
+â”‚                       #   Doppler, reverb zones, ambisonics (1—3), GPU convolution reverb
 â”œâ”€â”€ quasar-scripting    # Lua 5.4 (mlua, hot-reload, ECS bridge, component registry)
 â”‚                       #   + WASM (wasmtime, sandboxed host API)
 â”œâ”€â”€ quasar-editor       # egui editor: hierarchy, inspector, console, asset browser,
@@ -205,7 +205,7 @@ for (entity, (transform, health)) in world.query::<(Transform, Health)>() {
     }
 }
 
-// Change detection â€” only process entities whose Transform changed this frame
+// Change detection – only process entities whose Transform changed this frame
 let query = QueryState::<(&Transform,), FilterChanged<Transform>>::new();
 for (entity, (transform,)) in query.iter(&world) { /* ... */ }
 
@@ -224,14 +224,30 @@ script_engine.execute("quasar.apply_force(entity_id, 0, 10, 0)");
 
 ## Examples
 
+### Graphical Demos
+
 | Example | Description | Run |
 |---------|-------------|-----|
-| **showcase** | Ground plane, pedestal, spinning cube, 6 orbiting/bobbing spheres, 4 outer cubes, scene graph hierarchy, camera orbit controls | `cargo run -p showcase` |
-| **spinning_cube** | Minimal starter â€” single cube rotating on X/Y axes with delta-time animation and editor overlay | `cargo run -p spinning-cube` |
+| **showcase** | Multi-feature showcase: ground plane, pedestal, spinning cube, 6 orbiting/bobbing spheres, 4 outer cubes, scene graph hierarchy, camera orbit controls | `cargo run -p showcase` |
+| **spinning_cube** | Minimal starter — single cube rotating on X/Y axes with delta-time animation and editor overlay | `cargo run -p spinning-cube` |
 | **physics_sandbox** | Dynamic rigid bodies with gravity, static/rotating platforms, collision event logging, mouse-click raycast spawning | `cargo run -p physics-sandbox` |
 | **audio_demo** | One-shot SFX (Space), looped music toggle (M), 4 orbiting spatial audio sources with distance attenuation | `cargo run -p audio-demo` |
-| **scripting_demo** | Lua hot-reload (auto + R key), Rustâ†”Lua function bridging, 5 Lua-driven animated cubes with tunable globals | `cargo run -p scripting-demo` |
-| **web_demo** | WebGPU browser deployment via Trunk | See [examples/web_demo/README.md](examples/web_demo/README.md) |
+| **scripting_demo** | Lua hot-reload (auto + R key), Rust↔Lua function bridging, 5 Lua-driven animated cubes with tunable globals | `cargo run -p scripting-demo` |
+| **demo_game** | Complete game demo: player sphere (WASD movement), 5 enemy cubes with AI state machines, 10 pickup spheres, collision detection, score tracking | `cargo run -p demo_game` |
+
+### Console Demos
+
+| Example | Description | Run |
+|---------|-------------|-----|
+| **ai_demo** | AI systems showcase: Behavior Trees (Guard AI), GOAP planning, Utility AI scoring, Blackboard knowledge system | `cargo run -p ai_demo` |
+| **lobby_server** | QUIC-based lobby server with player matchmaking, room management, and connection brokering | `cargo run -p lobby_server` |
+| **networking_demo** | QUIC networking client demo with delta compression, spatial interest management, and client-side prediction | `cargo run -p networking_demo` |
+
+### Web Demo
+
+| Example | Description | Build |
+|---------|-------------|-------|
+| **web_demo** | WebGPU browser deployment via Trunk — runs Quasar Engine in the browser | See [examples/web_demo/README.md](examples/web_demo/README.md) |
 
 ## Testing
 
@@ -256,17 +272,17 @@ cargo test --workspace
 
 Automated CI pipeline runs on every push and pull request:
 
-- **Check** â€” Compiles on Ubuntu, Windows, and macOS
-- **Test** â€” All 73 tests pass
-- **Format** â€” `cargo fmt --check` on all platforms
-- **Clippy** â€” Linting with `-D warnings` on all platforms
-- **Docs** â€” Documentation builds without warnings
+- **Check** – Compiles on Ubuntu, Windows, and macOS
+- **Test** – All 73 tests pass
+- **Format** – `cargo fmt --check` on all platforms
+- **Clippy** – Linting with `-D warnings` on all platforms
+- **Docs** – Documentation builds without warnings
 
 ## Tech Stack
 
 | Category | Library | Version | Used In |
 |----------|---------|---------|----------|
-| **Language** | [Rust](https://www.rust-lang.org/) ðŸ¦€ | Edition 2021 | â€” |
+| **Language** | [Rust](https://www.rust-lang.org/) 🦀 | Edition 2021 | – |
 | **GPU** | [wgpu](https://wgpu.rs/) | 24 | render, editor, audio (compute), ui |
 | **Windowing** | [winit](https://docs.rs/winit) | 0.30 | window, engine |
 | **Math** | [glam](https://docs.rs/glam) | 0.29 | math (re-exported everywhere) |
@@ -299,14 +315,14 @@ Automated CI pipeline runs on every push and pull request:
 | Flag | Description |
 |------|-------------|
 | `deferred` | G-Buffer + deferred light accumulation (100+ dynamic lights) |
-| `clustered-lighting` | 16Ã—9Ã—24 froxel-based light binning (128 lights/cluster) |
+| `clustered-lighting` | 16×9×24 froxel-based light binning (128 lights/cluster) |
 | `ssr` | Screen-space reflections (hierarchical ray-march + roughness blend) |
 | `terrain` | Heightmap terrain with splatmap texturing and adaptive LOD |
 | `gpu-culling` | Hi-Z depth pyramid occlusion culling (8 mip levels) |
 | `meshlet` | Meshlet clustering + per-meshlet frustum/cone culling (requires `gpu-culling`) |
 | `particles` | 100K GPU particle system (compute sim + instanced draw) |
 | `volumetric` | Ray-marched volumetric fog (Henyey-Greenstein phase function) |
-| `lightmap` | Baked GI â€” CPU ray-cast baker + GPU path tracer |
+| `lightmap` | Baked GI – CPU ray-cast baker + GPU path tracer |
 | `reflection-probes` | 128Â³ cubemaps with parallax correction (up to 16 active) |
 | `decals` | Deferred decal projection |
 | `shader-graph` | Visual node-based material editor (WGSL output) |

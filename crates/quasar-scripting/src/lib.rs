@@ -40,11 +40,48 @@ impl PathValidator {
 
     /// Validate a path is within allowed directories.
     /// Returns the canonical path if valid, or an error if not.
+    /// 
+    /// # Security
+    /// 
+    /// This method performs multiple security checks:
+    /// 1. Rejects paths containing `..` segments (path traversal)
+    /// 2. Rejects paths with null bytes
+    /// 3. Verifies the canonical path is within allowed directories
     pub fn validate(&self, path: &Path) -> Result<PathBuf, PathValidationError> {
+        let path_str = path.to_string_lossy();
+        
+        // Security check: reject null bytes
+        if path_str.contains('\0') {
+            return Err(PathValidationError::InvalidPath(
+                "Path contains null bytes".to_string()
+            ));
+        }
+        
+        // Security check: reject path traversal patterns
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    return Err(PathValidationError::PathTraversal(path.to_path_buf()));
+                }
+                std::path::Component::Prefix(_) => {
+                    // Reject absolute Windows paths like C:\ outside allowed dirs
+                }
+                _ => {}
+            }
+        }
+        
+        // Check for traversal in string form (catches encoded variants)
+        let path_str = path.to_string_lossy();
+        if path_str.contains("..") {
+            return Err(PathValidationError::PathTraversal(path.to_path_buf()));
+        }
+
+        // Canonicalize to resolve symlinks and get absolute path
         let canonical = path
             .canonicalize()
             .map_err(|e| PathValidationError::NotFound(e.to_string()))?;
 
+        // Verify canonical path is within allowed directories
         for allowed in &self.allowed_directories {
             let allowed_canonical = allowed.canonicalize().unwrap_or_else(|_| allowed.clone());
             if canonical.starts_with(&allowed_canonical) {
@@ -71,6 +108,8 @@ impl Default for PathValidator {
 pub enum PathValidationError {
     NotFound(String),
     NotAllowed(PathBuf),
+    PathTraversal(PathBuf),
+    InvalidPath(String),
 }
 
 impl std::fmt::Display for PathValidationError {
@@ -78,6 +117,8 @@ impl std::fmt::Display for PathValidationError {
         match self {
             Self::NotFound(p) => write!(f, "Path not found: {}", p),
             Self::NotAllowed(p) => write!(f, "Path not in allowed directories: {}", p.display()),
+            Self::PathTraversal(p) => write!(f, "Path traversal attempt detected: {}", p.display()),
+            Self::InvalidPath(msg) => write!(f, "Invalid path: {}", msg),
         }
     }
 }
@@ -686,5 +727,33 @@ mod tests {
         let caps = ScriptCapabilities::full();
         engine.set_capabilities(caps);
         assert!(!engine.capabilities.sandbox_mode);
+    }
+
+    #[test]
+    fn test_path_validator_rejects_traversal() {
+        let validator = PathValidator::default();
+        let result = validator.validate(Path::new("scripts/../etc/passwd"));
+        assert!(matches!(result, Err(PathValidationError::PathTraversal(_))));
+    }
+
+    #[test]
+    fn test_path_validator_rejects_double_dot() {
+        let validator = PathValidator::default();
+        let result = validator.validate(Path::new(".."));
+        assert!(matches!(result, Err(PathValidationError::PathTraversal(_))));
+    }
+
+    #[test]
+    fn test_path_validator_rejects_null_bytes() {
+        let validator = PathValidator::default();
+        let result = validator.validate(Path::new("scripts\0test.lua"));
+        assert!(matches!(result, Err(PathValidationError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_path_validator_deep_traversal() {
+        let validator = PathValidator::default();
+        let result = validator.validate(Path::new("scripts/../../../etc/passwd"));
+        assert!(matches!(result, Err(PathValidationError::PathTraversal(_))));
     }
 }

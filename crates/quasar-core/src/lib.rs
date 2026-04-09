@@ -13,6 +13,7 @@
 //! - **Profiling**: puffin/tracy instrumentation
 //! - **AI**: Behavior tree system for game AI
 //! - **Localization**: Internationalization (i18n) support
+//! - **IK**: Inverse kinematics for procedural animation
 //!
 //! ## Quick Start
 //!
@@ -70,10 +71,12 @@ pub mod animation;
 pub mod app;
 pub mod asset;
 pub mod asset_server;
+pub mod debug_draw;
 pub mod delta_compression;
 pub mod ecs;
 pub mod error;
 pub mod event;
+pub mod ik;
 pub mod event_bus;
 pub mod interest;
 pub mod localization;
@@ -93,10 +96,6 @@ pub mod time;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_platform;
 
-pub use ai::{
-    BehaviorTree, BehaviorTreePlugin, BehaviorTreeRunner, BehaviorTreeSystem, Blackboard,
-    BlackboardValue, Node, NodeResult,
-};
 pub use animation::{
     AnimationBlendTree, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationResource,
     AnimationState, AnimationStateMachine, AnimationStateMachineSystem, AnimationStateNode,
@@ -113,12 +112,14 @@ pub use asset::{
     Asset, AssetDepGraph, AssetHandle, AssetManager, AsyncHandle, AsyncState, ContentHash,
     LoadingState,
 };
+pub use debug_draw::{DebugDraw, DebugDrawConfig, DebugDrawColors, DebugLine};
 pub use ecs::{
     flush_commands, Component, Entity, EntityBuilder, QueryFilter, QueryState, World, WorldQuery,
 };
 pub use error::{QuasarError, QuasarResult};
 pub use event::{Events, EventsChannel};
 pub use event_bus::{Event, EventBus, EventReader, EventWriter, EventPriority, DEFAULT_PRIORITY};
+pub use ik::{CCDIK, FabrikIK, IKConfig, IKJoint, IKResult, TwoBoneIK};
 pub use interest::InterestManager;
 pub use localization::{
     plural_category, Localization, LocalizationPlugin, LocalizationResource, LocalizedString,
@@ -136,6 +137,11 @@ pub use network::{
     RelayServer, RelayServerConfig, RelaySession, ReplicateDescriptor, Replicated, ReplicatedField,
     ReplicationMode, ReplicationResource, SendChannel, SnapshotInterpolation, TickAccumulator,
     Transport, TransportEvent, TransportProtocol, TransportType, UdpTransport,
+};
+
+// Delta compression types from the delta_compression module.
+pub use delta_compression::{
+    ClientBaseline, DeltaFrame, EntityDelta, DeltaComponentIter, MAX_COMPONENT_SLOTS,
 };
 pub use plugin::Plugin;
 pub use prefab::{

@@ -1,0 +1,13 @@
+[package]
+name = "networking_demo"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+quasar-lobby = { path = "../../crates/quasar-lobby", features = ["server"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }

@@ -90,8 +90,9 @@ pub use parallel::{
     ParallelSchedule, ReadWriteSet, SystemAccess, SystemGraph, SystemNode,
 };
 pub use query::{
-    FilterAdded, FilterChanged, FilterRemoved, FilterWith, FilterWithout, Query, Query2Iter,
-    QueryFilter, QueryIter, QueryIterSingle, QueryState, QueryStateCache, WorldQuery,
+    CachedArchetypeQueryIter, CachedArchetypeQueryState, FilterAdded, FilterChanged, FilterRemoved,
+    FilterWith, FilterWithout, Query, Query2Iter, QueryFilter, QueryIter, QueryIterSingle,
+    QueryState, QueryStateCache, WorldQuery, WorldQueryArchFetch,
 };
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
 pub use sparse_set::{SparseSet, SparseSetStorage};

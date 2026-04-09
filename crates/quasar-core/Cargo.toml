@@ -11,12 +11,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bincode = { workspace = true }
 flate2 = { workspace = true }
+glam = { workspace = true }
 quasar-math = { path = "../quasar-math" }
 quasar-network = { path = "../quasar-network" }
 rayon = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = { workspace = true }
-smallvec = { workspace = true }
+smallvec = { workspace = true, features = ["serde"] }
 crossbeam-channel = { workspace = true }
 notify = { workspace = true }
 blake3 = { workspace = true }
@@ -24,12 +25,14 @@ quinn = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
+webpki-roots = { version = "0.26", optional = true }
 wgpu = { workspace = true, optional = true }
 bytemuck = { workspace = true, optional = true }
 
 [features]
 default = []
-quinn-transport = ["dep:quinn", "dep:rustls", "dep:tokio", "dep:rcgen", "quasar-network/quinn-transport"]
+quinn-transport = ["dep:quinn", "dep:rustls", "dep:tokio", "dep:rcgen", "dep:webpki-roots", "quasar-network/quinn-transport"]
+dev = []
 puffin = ["dep:puffin"]
 tracy = ["dep:tracy-client"]
 gpu-profiling = ["dep:wgpu", "dep:bytemuck"]
@@ -45,7 +48,36 @@ optional = true
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
+quasar-physics = { path = "../quasar-physics" }
+quasar-render = { path = "../quasar-render" }
+quasar-network = { path = "../quasar-network" }
+rapier3d = { workspace = true }
+nalgebra = "0.33"
 
 [[bench]]
 name = "ecs_bench"
 harness = false
+
+[[bench]]
+name = "event_bus_bench"
+harness = false
+
+[[test]]
+name = "ecs_physics_integration"
+path = "tests/integration/ecs_physics_integration.rs"
+
+[[test]]
+name = "ecs_render_integration"
+path = "tests/integration/ecs_render_integration.rs"
+
+[[test]]
+name = "ecs_network_integration"
+path = "tests/integration/ecs_network_integration.rs"
+
+[[test]]
+name = "save_load_scene_integration"
+path = "tests/integration/save_load_scene_integration.rs"
+
+[[test]]
+name = "ecs_animation_integration"
+path = "tests/integration/ecs_animation_integration.rs"

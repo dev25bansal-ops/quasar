@@ -284,3 +284,69 @@ impl SpatialGrid {
         result
     }
 }
+
+// ---------------------------------------------------------------------------
+// Property-based tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn prop_position_quantization_error_bounded(
+            x in -10000f32..10000f32,
+            y in -10000f32..10000f32,
+            z in -10000f32..10000f32
+        ) {
+            let pos = Vec3::new(x, y, z);
+            let quant = quantize_position(pos);
+            let restored = dequantize_position(quant);
+
+            let max_error = 0.011; // Slightly above 1cm for float rounding
+            prop_assert!((restored.x - pos.x).abs() < max_error);
+            prop_assert!((restored.y - pos.y).abs() < max_error);
+            prop_assert!((restored.z - pos.z).abs() < max_error);
+        }
+
+        #[test]
+        fn prop_rotation_quantization_angle_error_bounded(
+            axis_x in -1.0f32..=1.0,
+            axis_y in -1.0f32..=1.0,
+            axis_z in -1.0f32..=1.0,
+            angle in 0.5f32..=std::f32::consts::TAU
+        ) {
+            let axis = Vec3::new(axis_x, axis_y, axis_z);
+            // Skip near-zero axes that would produce NaN on normalize
+            prop_assume!(axis.length_squared() > 0.1);
+            let axis = axis.normalize();
+            let rot = Quat::from_axis_angle(axis, angle);
+
+            let quant = quantize_rotation(rot);
+            // Use the largest component index from the original quaternion
+            let abs_vals = [rot.x.abs(), rot.y.abs(), rot.z.abs(), rot.w.abs()];
+            let mut largest_idx = 0u8;
+            let mut largest_val = abs_vals[0];
+            for (i, &v) in abs_vals.iter().enumerate().skip(1) {
+                if v > largest_val {
+                    largest_val = v;
+                    largest_idx = i as u8;
+                }
+            }
+
+            let restored = dequantize_rotation(quant, largest_idx);
+            let dot = rot.x * restored.x + rot.y * restored.y +
+                      rot.z * restored.z + rot.w * restored.w;
+            // Angular distance between quaternions: 2 * acos(|dot|)
+            // q and -q represent the same rotation, so we use abs(dot).
+            let dot_clamped = dot.abs().clamp(0.0, 1.0);
+            let angle_error = 2.0 * dot_clamped.acos();
+
+            prop_assert!(angle_error < 0.02,
+                "Rotation error too large: {} rad (axis={:?}, angle={}, largest_idx={})",
+                angle_error, axis, angle, largest_idx);
+        }
+    }
+}

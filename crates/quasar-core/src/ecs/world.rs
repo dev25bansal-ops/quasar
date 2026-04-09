@@ -985,7 +985,6 @@ impl World {
         }
         results
     }
-
     /// Iterate over all `(Entity, &mut T)` pairs using a callback.
     /// Stamps per-row change ticks for each entity visited.
     pub fn for_each_mut<T, F>(&mut self, mut f: F)
@@ -1884,12 +1883,16 @@ impl World {
                         if elem_size > 0 {
                             let ptr = col.raw_ptr();
                             let mut bytes = vec![0u8; elem_size];
-                            unsafe {
-                                std::ptr::copy_nonoverlapping(
-                                    ptr.add(src_row * elem_size),
-                                    bytes.as_mut_ptr(),
-                                    elem_size,
-                                );
+                            // Bounds check: ensure src_row is within column length
+                            debug_assert!(src_row < col.len(), "src_row out of bounds in clone_entity");
+                            if src_row < col.len() {
+                                unsafe {
+                                    std::ptr::copy_nonoverlapping(
+                                        ptr.add(src_row * elem_size),
+                                        bytes.as_mut_ptr(),
+                                        elem_size,
+                                    );
+                                }
                             }
                             let factory = self
                                 .column_factories

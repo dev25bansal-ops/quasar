@@ -450,19 +450,19 @@ impl LocalizationResource {
     }
 
     pub fn get(&self, key: &str) -> String {
-        self.localization.read().unwrap().get(key)
+        self.localization.read().expect("localization lock poisoned").get(key)
     }
 
     pub fn get_with_args(&self, key: &str, args: &[(&str, &str)]) -> String {
-        self.localization.read().unwrap().get_with_args(key, args)
+        self.localization.read().expect("localization lock poisoned").get_with_args(key, args)
     }
 
     pub fn get_plural(&self, key: &str, count: i64) -> String {
-        self.localization.read().unwrap().get_plural(key, count)
+        self.localization.read().expect("localization lock poisoned").get_plural(key, count)
     }
 
     pub fn set_language(&self, language: &str) {
-        self.localization.write().unwrap().set_language(language);
+        self.localization.write().expect("localization lock poisoned").set_language(language);
     }
 }
 

@@ -23,6 +23,79 @@ pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 pub const MIN_MESSAGE_SIZE: usize = 8;
 pub const MAX_ENTITIES_PER_SNAPSHOT: usize = 1024;
 pub const MAX_COMPONENTS_PER_ENTITY: usize = 64;
+pub const MAX_RPC_METHOD_LENGTH: usize = 128;
+
+/// Whitelist for allowed RPC method names.
+/// Prevents arbitrary method invocation attacks.
+#[derive(Debug, Clone)]
+pub struct RpcMethodWhitelist {
+    allowed_methods: Vec<String>,
+}
+
+impl RpcMethodWhitelist {
+    pub fn new(allowed_methods: Vec<&str>) -> Self {
+        Self {
+            allowed_methods: allowed_methods.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    pub fn is_allowed(&self, method: &str) -> bool {
+        self.allowed_methods.iter().any(|m| m == method)
+    }
+
+    pub fn validate_method(&self, method: &str) -> Result<(), NetworkError> {
+        if method.len() > MAX_RPC_METHOD_LENGTH {
+            return Err(NetworkError(format!(
+                "RPC method name too long: {} > {}",
+                method.len(),
+                MAX_RPC_METHOD_LENGTH
+            )));
+        }
+        if method.is_empty() {
+            return Err(NetworkError("RPC method name is empty".to_string()));
+        }
+        if !method.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+            return Err(NetworkError(format!(
+                "RPC method name contains invalid characters: {}",
+                method
+            )));
+        }
+        if !self.is_allowed(method) {
+            return Err(NetworkError(format!(
+                "RPC method not in whitelist: {}",
+                method
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Default for RpcMethodWhitelist {
+    fn default() -> Self {
+        Self::new(vec![
+            "set_position",
+            "set_rotation",
+            "set_scale",
+            "play_animation",
+            "stop_animation",
+            "set_velocity",
+            "apply_impulse",
+            "set_health",
+            "deal_damage",
+            "heal",
+            "use_item",
+            "drop_item",
+            "pick_up_item",
+            "interact",
+            "emit_signal",
+            "set_active",
+            "spawn_entity",
+            "despawn_entity",
+            "set_visibility",
+            "set_parent",
+        ])
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
@@ -30,7 +103,7 @@ pub struct ClientId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NetworkEntityId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NetworkRole {
     Server,
     Client { server_addr: SocketAddr },
@@ -462,13 +535,15 @@ pub fn validate_message(message: &NetworkMessage) -> Result<(), NetworkError> {
                 )));
             }
         }
-        NetworkPayload::Rpc { args, .. } => {
+        NetworkPayload::Rpc { method, args, .. } => {
             if args.len() > MAX_MESSAGE_SIZE / 4 {
                 return Err(NetworkError(format!(
                     "RPC args too large: {} bytes",
                     args.len()
                 )));
             }
+            let whitelist = RpcMethodWhitelist::default();
+            whitelist.validate_method(method)?;
         }
         _ => {}
     }
@@ -747,5 +822,73 @@ mod tests {
         };
         let result = validate_message(&msg);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_rpc_whitelist_default() {
+        let whitelist = RpcMethodWhitelist::default();
+        assert!(whitelist.is_allowed("set_position"));
+        assert!(whitelist.is_allowed("play_animation"));
+        assert!(!whitelist.is_allowed("malicious_method"));
+    }
+
+    #[test]
+    fn test_rpc_whitelist_rejects_invalid_chars() {
+        let whitelist = RpcMethodWhitelist::default();
+        let result = whitelist.validate_method("set_position; DROP TABLE");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rpc_whitelist_rejects_too_long() {
+        let whitelist = RpcMethodWhitelist::default();
+        let long_method = "a".repeat(200);
+        let result = whitelist.validate_method(&long_method);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rpc_whitelist_rejects_empty() {
+        let whitelist = RpcMethodWhitelist::default();
+        let result = whitelist.validate_method("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rpc_whitelist_custom() {
+        let whitelist = RpcMethodWhitelist::new(vec!["custom_method"]);
+        assert!(whitelist.is_allowed("custom_method"));
+        assert!(!whitelist.is_allowed("set_position"));
+    }
+
+    #[test]
+    fn test_validate_message_rpc_whitelisted() {
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 12345,
+            payload: NetworkPayload::Rpc {
+                entity_id: NetworkEntityId(1),
+                method: "set_position".to_string(),
+                args: vec![1, 2, 3],
+            },
+        };
+        let result = validate_message(&msg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_message_rpc_not_whitelisted() {
+        let msg = NetworkMessage {
+            sequence: 1,
+            timestamp: 12345,
+            payload: NetworkPayload::Rpc {
+                entity_id: NetworkEntityId(1),
+                method: "malicious_method".to_string(),
+                args: vec![],
+            },
+        };
+        let result = validate_message(&msg);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().0.contains("not in whitelist"));
     }
 }

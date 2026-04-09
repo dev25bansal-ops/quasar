@@ -62,32 +62,44 @@ pub enum SystemStage {
 ///
 /// Commands are flushed between stages to apply deferred mutations.
 /// Systems within a stage can be ordered using `before` / `after` constraints.
+///
+/// Topological sort is computed once when systems are finalized (on first `run`)
+/// and cached for reuse. Adding new systems or constraints invalidates the cache.
 pub struct Schedule {
     stages: Vec<(SystemStage, Vec<Box<dyn System>>)>,
     /// Ordering constraints: `"A" -> ["B", "C"]` means A must run before B and C.
     before: HashMap<String, Vec<String>>,
+    /// Cached topological order per stage. Computed on first `run`, invalidated on mutation.
+    cached_orders: Vec<Option<Vec<usize>>>,
+    /// Whether the cache is dirty (needs recomputation).
+    cache_dirty: bool,
 }
 
 impl Schedule {
     pub fn new() -> Self {
+        let stages = vec![
+            (SystemStage::PreUpdate, Vec::new()),
+            (SystemStage::FixedUpdate, Vec::new()),
+            (SystemStage::Update, Vec::new()),
+            (SystemStage::PostUpdate, Vec::new()),
+            (SystemStage::PreRender, Vec::new()),
+            (SystemStage::Render, Vec::new()),
+        ];
         Self {
-            stages: vec![
-                (SystemStage::PreUpdate, Vec::new()),
-                (SystemStage::FixedUpdate, Vec::new()),
-                (SystemStage::Update, Vec::new()),
-                (SystemStage::PostUpdate, Vec::new()),
-                (SystemStage::PreRender, Vec::new()),
-                (SystemStage::Render, Vec::new()),
-            ],
+            stages,
             before: HashMap::new(),
+            cached_orders: vec![None; 6],
+            cache_dirty: false,
         }
     }
 
     /// Add a system to a specific stage.
     pub fn add_system(&mut self, stage: SystemStage, system: Box<dyn System>) {
-        for (s, systems) in &mut self.stages {
+        for (si, (s, systems)) in &mut self.stages.iter_mut().enumerate() {
             if *s == stage {
                 systems.push(system);
+                self.cache_dirty = true;
+                self.cached_orders[si] = None;
                 return;
             }
         }
@@ -120,16 +132,27 @@ impl Schedule {
             .entry(before_name.to_string())
             .or_default()
             .push(after_name.to_string());
+        self.cache_dirty = true;
+        // Invalidate all cached orders since constraints are global across stages.
+        for cached in &mut self.cached_orders {
+            *cached = None;
+        }
     }
 
     /// Run all systems in stage order, flushing Commands between stages.
     ///
     /// Within each stage, systems are topologically sorted according to
-    /// the constraints registered via `add_order`.
+    /// the constraints registered via `add_order`. Sorting is cached after
+    /// the first computation and reused until systems or constraints change.
     pub fn run(&mut self, world: &mut World) {
-        for (_stage, systems) in &mut self.stages {
-            let order = topo_sort_systems(systems, &self.before);
-            for idx in order {
+        for (si, (_stage, systems)) in self.stages.iter_mut().enumerate() {
+            // Compute or retrieve cached topological order.
+            if self.cached_orders[si].is_none() {
+                self.cached_orders[si] = Some(topo_sort_systems(systems, &self.before));
+            }
+            let order = self.cached_orders[si].as_ref().unwrap();
+
+            for &idx in order {
                 world.begin_system(systems[idx].name());
                 systems[idx].run(world);
                 world.end_system(systems[idx].name());
@@ -149,7 +172,13 @@ impl Schedule {
     pub fn run_with_fixed_update(&mut self, world: &mut World, frame_delta: f32) {
         use crate::time::FixedUpdateAccumulator;
 
-        for (stage, systems) in &mut self.stages {
+        for (si, (stage, systems)) in self.stages.iter_mut().enumerate() {
+            // Compute or retrieve cached topological order.
+            if self.cached_orders[si].is_none() {
+                self.cached_orders[si] = Some(topo_sort_systems(systems, &self.before));
+            }
+            let order = self.cached_orders[si].as_ref().unwrap();
+
             if *stage == SystemStage::FixedUpdate {
                 // Accumulate frame delta and run fixed-rate substeps.
                 let (acc, step) = if let Some(fua) = world.resource_mut::<FixedUpdateAccumulator>()
@@ -166,11 +195,10 @@ impl Schedule {
 
                 let mut remaining = acc;
                 while remaining >= step {
-                    let order = topo_sort_systems(systems, &self.before);
-                    for idx in &order {
-                        world.begin_system(systems[*idx].name());
-                        systems[*idx].run(world);
-                        world.end_system(systems[*idx].name());
+                    for &idx in order {
+                        world.begin_system(systems[idx].name());
+                        systems[idx].run(world);
+                        world.end_system(systems[idx].name());
                     }
                     if let Some(mut cmds) = world.remove_resource::<Commands>() {
                         cmds.apply(world);
@@ -184,8 +212,7 @@ impl Schedule {
                     fua.acc = remaining;
                 }
             } else {
-                let order = topo_sort_systems(systems, &self.before);
-                for idx in order {
+                for &idx in order {
                     world.begin_system(systems[idx].name());
                     systems[idx].run(world);
                     world.end_system(systems[idx].name());

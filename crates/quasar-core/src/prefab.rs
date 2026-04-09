@@ -14,6 +14,112 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
+// TransformField Enum — single source of truth for Transform field paths
+// ---------------------------------------------------------------------------
+
+/// Represents a single scalar field within a [`Transform`] component.
+///
+/// This enum provides a single source of truth for the 10 transform field
+/// paths (`position.x/y/z`, `scale.x/y/z`, `rotation.x/y/z/w`) that are
+/// used across prefab override, diffing, and propagation logic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformField {
+    PositionX,
+    PositionY,
+    PositionZ,
+    ScaleX,
+    ScaleY,
+    ScaleZ,
+    RotationX,
+    RotationY,
+    RotationZ,
+    RotationW,
+}
+
+impl TransformField {
+    /// All 10 transform field variants, in a canonical order.
+    pub const ALL: &'static [Self] = &[
+        Self::PositionX,
+        Self::PositionY,
+        Self::PositionZ,
+        Self::ScaleX,
+        Self::ScaleY,
+        Self::ScaleZ,
+        Self::RotationX,
+        Self::RotationY,
+        Self::RotationZ,
+        Self::RotationW,
+    ];
+
+    /// Parse a dot-separated field path into a [`TransformField`].
+    ///
+    /// Returns `None` if the path doesn't match any known transform field.
+    pub fn from_path(path: &str) -> Option<Self> {
+        match path {
+            "position.x" => Some(Self::PositionX),
+            "position.y" => Some(Self::PositionY),
+            "position.z" => Some(Self::PositionZ),
+            "scale.x" => Some(Self::ScaleX),
+            "scale.y" => Some(Self::ScaleY),
+            "scale.z" => Some(Self::ScaleZ),
+            "rotation.x" => Some(Self::RotationX),
+            "rotation.y" => Some(Self::RotationY),
+            "rotation.z" => Some(Self::RotationZ),
+            "rotation.w" => Some(Self::RotationW),
+            _ => None,
+        }
+    }
+
+    /// Returns the canonical dot-separated path for this field.
+    pub fn path(&self) -> &'static str {
+        match self {
+            Self::PositionX => "position.x",
+            Self::PositionY => "position.y",
+            Self::PositionZ => "position.z",
+            Self::ScaleX => "scale.x",
+            Self::ScaleY => "scale.y",
+            Self::ScaleZ => "scale.z",
+            Self::RotationX => "rotation.x",
+            Self::RotationY => "rotation.y",
+            Self::RotationZ => "rotation.z",
+            Self::RotationW => "rotation.w",
+        }
+    }
+
+    /// Read the scalar value from this field of a [`Transform`].
+    pub fn get(&self, t: &Transform) -> f32 {
+        match self {
+            Self::PositionX => t.position.x,
+            Self::PositionY => t.position.y,
+            Self::PositionZ => t.position.z,
+            Self::ScaleX => t.scale.x,
+            Self::ScaleY => t.scale.y,
+            Self::ScaleZ => t.scale.z,
+            Self::RotationX => t.rotation.x,
+            Self::RotationY => t.rotation.y,
+            Self::RotationZ => t.rotation.z,
+            Self::RotationW => t.rotation.w,
+        }
+    }
+
+    /// Write a scalar value into this field of a [`Transform`].
+    pub fn set(&self, t: &mut Transform, value: f32) {
+        match self {
+            Self::PositionX => t.position.x = value,
+            Self::PositionY => t.position.y = value,
+            Self::PositionZ => t.position.z = value,
+            Self::ScaleX => t.scale.x = value,
+            Self::ScaleY => t.scale.y = value,
+            Self::ScaleZ => t.scale.z = value,
+            Self::RotationX => t.rotation.x = value,
+            Self::RotationY => t.rotation.y = value,
+            Self::RotationZ => t.rotation.z = value,
+            Self::RotationW => t.rotation.w = value,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Prefab data model
 // ---------------------------------------------------------------------------
 
@@ -231,60 +337,12 @@ pub fn apply_overrides(world: &mut World, entity: Entity, overrides: &[Component
     for ovr in overrides {
         if ovr.component_type == "Transform" {
             if let Some(t) = world.get_mut::<Transform>(entity) {
-                match ovr.field_path.as_str() {
-                    "position.x" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.position.x = v as f32;
-                        }
+                if let Some(field) = TransformField::from_path(&ovr.field_path) {
+                    if let Some(v) = ovr.value.as_f64() {
+                        field.set(t, v as f32);
                     }
-                    "position.y" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.position.y = v as f32;
-                        }
-                    }
-                    "position.z" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.position.z = v as f32;
-                        }
-                    }
-                    "scale.x" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.scale.x = v as f32;
-                        }
-                    }
-                    "scale.y" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.scale.y = v as f32;
-                        }
-                    }
-                    "scale.z" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.scale.z = v as f32;
-                        }
-                    }
-                    "rotation.x" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.rotation.x = v as f32;
-                        }
-                    }
-                    "rotation.y" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.rotation.y = v as f32;
-                        }
-                    }
-                    "rotation.z" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.rotation.z = v as f32;
-                        }
-                    }
-                    "rotation.w" => {
-                        if let Some(v) = ovr.value.as_f64() {
-                            t.rotation.w = v as f32;
-                        }
-                    }
-                    _ => {
-                        log::warn!("Unknown override path '{}' for Transform", ovr.field_path);
-                    }
+                } else {
+                    log::warn!("Unknown override path '{}' for Transform", ovr.field_path);
                 }
             }
         }
@@ -419,28 +477,18 @@ pub fn diff_instance_transform(
     };
     let b = &base_entity.transform;
 
-    macro_rules! check {
-        ($comp:literal, $path:literal, $inst:expr, $base:expr) => {
-            if ($inst - $base).abs() > f32::EPSILON {
-                diffs.push(PrefabFieldDiff {
-                    component_type: $comp.into(),
-                    field_path: $path.into(),
-                    base_value: serde_json::json!($base),
-                    instance_value: serde_json::json!($inst),
-                });
-            }
-        };
+    for field in TransformField::ALL {
+        let inst_val = field.get(t);
+        let base_val = field.get(b);
+        if (inst_val - base_val).abs() > f32::EPSILON {
+            diffs.push(PrefabFieldDiff {
+                component_type: "Transform".into(),
+                field_path: field.path().into(),
+                base_value: serde_json::json!(base_val),
+                instance_value: serde_json::json!(inst_val),
+            });
+        }
     }
-    check!("Transform", "position.x", t.position.x, b.position.x);
-    check!("Transform", "position.y", t.position.y, b.position.y);
-    check!("Transform", "position.z", t.position.z, b.position.z);
-    check!("Transform", "scale.x", t.scale.x, b.scale.x);
-    check!("Transform", "scale.y", t.scale.y, b.scale.y);
-    check!("Transform", "scale.z", t.scale.z, b.scale.z);
-    check!("Transform", "rotation.x", t.rotation.x, b.rotation.x);
-    check!("Transform", "rotation.y", t.rotation.y, b.rotation.y);
-    check!("Transform", "rotation.z", t.rotation.z, b.rotation.z);
-    check!("Transform", "rotation.w", t.rotation.w, b.rotation.w);
 
     diffs
 }
@@ -497,39 +545,153 @@ pub fn propagate_prefab_changes(world: &mut World) {
 
         // Re-apply non-overridden Transform fields from the base.
         if let Some(t) = world.get_mut::<Transform>(*entity) {
-            if !is_field_overridden(inst, "Transform", "position.x") {
-                t.position.x = base.transform.position.x;
-            }
-            if !is_field_overridden(inst, "Transform", "position.y") {
-                t.position.y = base.transform.position.y;
-            }
-            if !is_field_overridden(inst, "Transform", "position.z") {
-                t.position.z = base.transform.position.z;
-            }
-            if !is_field_overridden(inst, "Transform", "scale.x") {
-                t.scale.x = base.transform.scale.x;
-            }
-            if !is_field_overridden(inst, "Transform", "scale.y") {
-                t.scale.y = base.transform.scale.y;
-            }
-            if !is_field_overridden(inst, "Transform", "scale.z") {
-                t.scale.z = base.transform.scale.z;
-            }
-            if !is_field_overridden(inst, "Transform", "rotation.x") {
-                t.rotation.x = base.transform.rotation.x;
-            }
-            if !is_field_overridden(inst, "Transform", "rotation.y") {
-                t.rotation.y = base.transform.rotation.y;
-            }
-            if !is_field_overridden(inst, "Transform", "rotation.z") {
-                t.rotation.z = base.transform.rotation.z;
-            }
-            if !is_field_overridden(inst, "Transform", "rotation.w") {
-                t.rotation.w = base.transform.rotation.w;
+            for field in TransformField::ALL {
+                if !is_field_overridden(inst, "Transform", field.path()) {
+                    field.set(t, field.get(&base.transform));
+                }
             }
         }
 
         // Re-apply explicit overrides (they win over the base).
         apply_overrides(world, *entity, &inst.overrides);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // TransformField enum tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn transform_field_all_has_10_variants() {
+        assert_eq!(TransformField::ALL.len(), 10);
+    }
+
+    #[test]
+    fn transform_field_from_path_roundtrip() {
+        for field in TransformField::ALL {
+            let path = field.path();
+            let parsed = TransformField::from_path(path);
+            assert_eq!(parsed, Some(*field), "from_path('{path}') should return the original field");
+        }
+    }
+
+    #[test]
+    fn transform_field_from_path_returns_none_for_unknown() {
+        assert_eq!(TransformField::from_path("unknown.field"), None);
+        assert_eq!(TransformField::from_path("position"), None);
+        assert_eq!(TransformField::from_path(""), None);
+    }
+
+    #[test]
+    fn transform_field_path_returns_correct_strings() {
+        assert_eq!(TransformField::PositionX.path(), "position.x");
+        assert_eq!(TransformField::PositionY.path(), "position.y");
+        assert_eq!(TransformField::PositionZ.path(), "position.z");
+        assert_eq!(TransformField::ScaleX.path(), "scale.x");
+        assert_eq!(TransformField::ScaleY.path(), "scale.y");
+        assert_eq!(TransformField::ScaleZ.path(), "scale.z");
+        assert_eq!(TransformField::RotationX.path(), "rotation.x");
+        assert_eq!(TransformField::RotationY.path(), "rotation.y");
+        assert_eq!(TransformField::RotationZ.path(), "rotation.z");
+        assert_eq!(TransformField::RotationW.path(), "rotation.w");
+    }
+
+    #[test]
+    fn transform_field_get_position() {
+        let t = Transform {
+            position: glam::Vec3::new(1.0, 2.0, 3.0),
+            rotation: glam::Quat::IDENTITY,
+            scale: glam::Vec3::ONE,
+        };
+        assert!((TransformField::PositionX.get(&t) - 1.0).abs() < 1e-6);
+        assert!((TransformField::PositionY.get(&t) - 2.0).abs() < 1e-6);
+        assert!((TransformField::PositionZ.get(&t) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_get_scale() {
+        let t = Transform {
+            position: glam::Vec3::ZERO,
+            rotation: glam::Quat::IDENTITY,
+            scale: glam::Vec3::new(0.5, 2.0, 3.0),
+        };
+        assert!((TransformField::ScaleX.get(&t) - 0.5).abs() < 1e-6);
+        assert!((TransformField::ScaleY.get(&t) - 2.0).abs() < 1e-6);
+        assert!((TransformField::ScaleZ.get(&t) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_get_rotation() {
+        let t = Transform {
+            position: glam::Vec3::ZERO,
+            rotation: glam::Quat::from_xyzw(0.1, 0.2, 0.3, 0.4),
+            scale: glam::Vec3::ONE,
+        };
+        assert!((TransformField::RotationX.get(&t) - 0.1).abs() < 1e-6);
+        assert!((TransformField::RotationY.get(&t) - 0.2).abs() < 1e-6);
+        assert!((TransformField::RotationZ.get(&t) - 0.3).abs() < 1e-6);
+        assert!((TransformField::RotationW.get(&t) - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_set_position() {
+        let mut t = Transform::IDENTITY;
+        TransformField::PositionX.set(&mut t, 10.0);
+        TransformField::PositionY.set(&mut t, 20.0);
+        TransformField::PositionZ.set(&mut t, 30.0);
+        assert!((t.position.x - 10.0).abs() < 1e-6);
+        assert!((t.position.y - 20.0).abs() < 1e-6);
+        assert!((t.position.z - 30.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_set_scale() {
+        let mut t = Transform::IDENTITY;
+        TransformField::ScaleX.set(&mut t, 0.5);
+        TransformField::ScaleY.set(&mut t, 1.5);
+        TransformField::ScaleZ.set(&mut t, 2.5);
+        assert!((t.scale.x - 0.5).abs() < 1e-6);
+        assert!((t.scale.y - 1.5).abs() < 1e-6);
+        assert!((t.scale.z - 2.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_set_rotation() {
+        let mut t = Transform::IDENTITY;
+        TransformField::RotationX.set(&mut t, 0.1);
+        TransformField::RotationY.set(&mut t, 0.2);
+        TransformField::RotationZ.set(&mut t, 0.3);
+        TransformField::RotationW.set(&mut t, 0.4);
+        assert!((t.rotation.x - 0.1).abs() < 1e-6);
+        assert!((t.rotation.y - 0.2).abs() < 1e-6);
+        assert!((t.rotation.z - 0.3).abs() < 1e-6);
+        assert!((t.rotation.w - 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn transform_field_get_set_roundtrip() {
+        let mut t = Transform::IDENTITY;
+        for field in TransformField::ALL {
+            let original = field.get(&t);
+            field.set(&mut t, 42.0);
+            assert!((field.get(&t) - 42.0).abs() < 1e-6);
+            // Restore original to not corrupt the transform
+            field.set(&mut t, original);
+        }
+    }
+
+    #[test]
+    fn transform_field_all_paths_are_unique() {
+        let paths: std::collections::HashSet<&str> =
+            TransformField::ALL.iter().map(|f| f.path()).collect();
+        assert_eq!(paths.len(), 10, "All field paths should be unique");
     }
 }

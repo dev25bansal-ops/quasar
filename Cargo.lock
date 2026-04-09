@@ -1155,6 +1155,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -2012,6 +2013,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2859,6 +2869,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "networking_demo"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "quasar-lobby",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3824,14 +3846,19 @@ dependencies = [
  "criterion",
  "crossbeam-channel",
  "flate2",
+ "glam",
  "log",
+ "nalgebra",
  "notify",
  "parking_lot",
  "proptest",
  "puffin",
  "quasar-math",
  "quasar-network",
+ "quasar-physics",
+ "quasar-render",
  "quinn",
+ "rapier3d",
  "rayon",
  "rcgen",
  "rustc-hash 1.1.0",
@@ -3841,6 +3868,7 @@ dependencies = [
  "smallvec",
  "tokio",
  "tracy-client",
+ "webpki-roots 0.26.11",
  "wgpu 24.0.5",
 ]
 
@@ -3971,15 +3999,18 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "criterion",
+ "hmac",
  "log",
  "parking_lot",
  "proptest",
  "quasar-math",
  "quinn",
+ "rand 0.8.5",
  "rcgen",
  "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 
@@ -4026,7 +4057,6 @@ dependencies = [
  "log",
  "quasar-core",
  "quasar-math",
- "quasar-physics",
  "rand 0.8.5",
  "rayon",
  "serde",
@@ -6338,6 +6368,24 @@ name = "webpki-root-certs"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "804f18a4ac2676ffb4e8b5b5fa9ae38af06df08162314f96a68d2a363e21a8ca"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "0.26.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
+dependencies = [
+ "webpki-roots 1.0.6",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
 dependencies = [
  "rustls-pki-types",
 ]

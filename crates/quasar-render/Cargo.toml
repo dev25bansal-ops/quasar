@@ -43,7 +43,6 @@ raytracing = []
 [dependencies]
 quasar-core = { workspace = true }
 quasar-math = { workspace = true }
-quasar-physics = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 bytemuck = { workspace = true }

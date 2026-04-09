@@ -41,6 +41,7 @@ use std::str::FromStr;
 
 mod client;
 mod protocol;
+mod secret;
 #[cfg(feature = "server")]
 mod server;
 
@@ -48,6 +49,7 @@ pub use client::*;
 pub use protocol::*;
 #[cfg(feature = "server")]
 pub use server::*;
+pub use secret::{load_lobby_secret, MIN_SECRET_LENGTH, SECRET_ENV_VAR};
 
 /// Unique identifier for a game session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

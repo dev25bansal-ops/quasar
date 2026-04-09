@@ -3,6 +3,7 @@
 use quasar_core::error::{QuasarError, QuasarResult};
 
 use super::camera::{Camera, CameraUniform};
+use super::culling::{Aabb, Frustum, RenderStats};
 use super::light::LightsUniform;
 use super::material::{Material, MaterialOverride};
 use super::mesh::Mesh;
@@ -183,6 +184,8 @@ pub struct Renderer {
     pub uniform_ring_buffer: UniformRingBuffer,
     /// Staging buffer for CPU-side uniform data (reused across frames).
     uniform_staging: Vec<u8>,
+    /// Frame rendering statistics (culled vs rendered objects).
+    pub stats: RenderStats,
 }
 
 impl Renderer {
@@ -763,6 +766,7 @@ impl Renderer {
             gpu_particle_system: None,
             uniform_ring_buffer,
             uniform_staging: vec![0u8; UNIFORM_RING_SIZE as usize],
+            stats: RenderStats::default(),
         });
         if let Ok(ref mut renderer) = result {
             if renderer.render_config.gpu_driven_culling {
@@ -1120,26 +1124,54 @@ impl Renderer {
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let aligned_size = uniform_size.div_ceil(align) * align;
 
-        if !objects.is_empty() {
-            let total = aligned_size * objects.len();
+        // ── Frustum culling ──
+        let frustum = Frustum::from_view_proj(&camera.view_projection());
+        let total = objects.len();
+        let mut culled_count = 0u32;
+
+        // Pre-compute visibility and write only visible objects' uniforms
+        let mut visible_indices = Vec::with_capacity(total);
+        for (i, (_, model, _, _)) in objects.iter().enumerate() {
+            // Decompose model matrix to get scale and translation for AABB
+            let (scale, _, translation) = model.to_scale_rotation_translation();
+            let half_extent = scale.abs();
+            let world_aabb = Aabb {
+                min: translation - half_extent,
+                max: translation + half_extent,
+            };
+
+            if frustum.intersects_aabb(&world_aabb) {
+                visible_indices.push(i);
+            } else {
+                culled_count += 1;
+            }
+        }
+
+        // Write uniform data only for visible objects
+        if !visible_indices.is_empty() {
+            let total_size = aligned_size * visible_indices.len();
 
             // Ensure staging buffer is large enough
-            if self.uniform_staging.len() < total {
-                self.uniform_staging.resize(total, 0);
+            if self.uniform_staging.len() < total_size {
+                self.uniform_staging.resize(total_size, 0);
             }
 
-            // Write uniform data to staging buffer
-            let data = &mut self.uniform_staging[..total];
-            for (i, (_, model, _, _)) in objects.iter().enumerate() {
+            let data = &mut self.uniform_staging[..total_size];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
                 let mut uniform = CameraUniform::new();
-                uniform.update(camera, *model);
+                uniform.update(camera, objects[i].1);
                 let bytes = bytemuck::bytes_of(&uniform);
-                let offset = i * aligned_size;
+                let offset = visible_idx * aligned_size;
                 data[offset..offset + uniform_size].copy_from_slice(bytes);
             }
             self.queue
-                .write_buffer(&self.camera_buffer, 0, &data[..total]);
+                .write_buffer(&self.camera_buffer, 0, &data[..total_size]);
         }
+
+        // Update stats
+        self.stats.total_objects = total as u32;
+        self.stats.rendered_objects = visible_indices.len() as u32;
+        self.stats.culled_objects = culled_count;
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1173,10 +1205,11 @@ impl Renderer {
 
             pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
-            for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
-                let dyn_offset = (i * aligned_size) as u32;
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let dyn_offset = (visible_idx * aligned_size) as u32;
                 pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
 
+                let (_, _, mat_bg, tex_index) = objects[i];
                 // Use the combined material + texture bind group
                 let material_texture_bg = if mat_bg.is_some() || tex_index.is_some() {
                     // For now, we'll use the default combined bind group
@@ -1187,6 +1220,7 @@ impl Renderer {
                 };
                 pass.set_bind_group(1, material_texture_bg, &[]);
 
+                let (mesh, _, _, _) = objects[i];
                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..mesh.index_count, 0, 0..1);
@@ -1740,18 +1774,45 @@ impl Renderer {
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let aligned_size = uniform_size.div_ceil(align) * align;
 
-        if !objects.is_empty() {
-            let total = aligned_size * objects.len();
-            let mut data = vec![0u8; total];
-            for (i, (_, model, _, _)) in objects.iter().enumerate() {
+        // ── Frustum culling ──
+        let frustum = Frustum::from_view_proj(&camera.view_projection());
+        let total = objects.len();
+        let mut culled_count = 0u32;
+        let mut visible_indices = Vec::with_capacity(total);
+
+        for (i, (_, model, _, _)) in objects.iter().enumerate() {
+            let (scale, _, translation) = model.to_scale_rotation_translation();
+            let half_extent = scale.abs();
+            let world_aabb = Aabb {
+                min: translation - half_extent,
+                max: translation + half_extent,
+            };
+
+            if frustum.intersects_aabb(&world_aabb) {
+                visible_indices.push(i);
+            } else {
+                culled_count += 1;
+            }
+        }
+
+        // Write uniform data only for visible objects
+        if !visible_indices.is_empty() {
+            let total_bytes = aligned_size * visible_indices.len();
+            let mut data = vec![0u8; total_bytes];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
                 let mut uniform = CameraUniform::new();
-                uniform.update(camera, *model);
+                uniform.update(camera, objects[i].1);
                 let bytes = bytemuck::bytes_of(&uniform);
-                let offset = i * aligned_size;
+                let offset = visible_idx * aligned_size;
                 data[offset..offset + uniform_size].copy_from_slice(bytes);
             }
             self.queue.write_buffer(&self.camera_buffer, 0, &data);
         }
+
+        // Update stats
+        self.stats.total_objects = total as u32;
+        self.stats.rendered_objects = visible_indices.len() as u32;
+        self.stats.culled_objects = culled_count;
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1796,8 +1857,10 @@ impl Renderer {
 
                 let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
 
-                for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
-                    let mesh_key = *mesh as *const Mesh as usize;
+                // Only batch visible objects
+                for &visible_idx in &visible_indices {
+                    let (mesh, _, mat_bg, tex_index) = objects[visible_idx];
+                    let mesh_key = mesh as *const Mesh as usize;
                     let mat_key = mat_bg
                         .map(|bg| bg as *const wgpu::BindGroup as usize)
                         .unwrap_or(usize::MAX);
@@ -1808,14 +1871,14 @@ impl Renderer {
                         .or_insert_with(|| {
                             let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
                             Batch {
-                                mesh: unsafe { &*(*mesh as *const Mesh) },
+                                mesh: unsafe { &*(mesh as *const Mesh) },
                                 indices: Vec::new(),
                                 material: mat_bg
                                     .map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
                                 texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
                             }
                         });
-                    entry.indices.push(i);
+                    entry.indices.push(visible_idx);
                 }
 
                 for batch in batches.values() {
@@ -1829,8 +1892,13 @@ impl Renderer {
                         wgpu::IndexFormat::Uint32,
                     );
 
-                    for &idx in &batch.indices {
-                        let dyn_offset = (idx * aligned_size) as u32;
+                    for &orig_idx in &batch.indices {
+                        // Find position within visible_indices for uniform offset
+                        let visible_pos = visible_indices
+                            .iter()
+                            .position(|&v| v == orig_idx)
+                            .unwrap_or(0);
+                        let dyn_offset = (visible_pos * aligned_size) as u32;
                         render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
                         render_pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
                     }
@@ -1838,9 +1906,10 @@ impl Renderer {
             } else {
                 render_pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
-                for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
-                    let dyn_offset = (i * aligned_size) as u32;
+                for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                    let dyn_offset = (visible_idx * aligned_size) as u32;
                     render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
+                    let (mesh, _, mat_bg, tex_index) = objects[i];
                     let material_bg = mat_bg.unwrap_or(&self.default_material.bind_group);
                     render_pass.set_bind_group(1, material_bg, &[]);
                     let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));

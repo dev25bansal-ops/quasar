@@ -3,6 +3,7 @@
 use crate::{
     protocol::*, JoinInfo, LobbyError, PlayerId, Session, SessionConfig, SessionFilters, SessionId,
 };
+use crate::secret;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -546,10 +547,12 @@ impl LobbyClient {
     }
 
     /// Generate an auth token for the given session and player.
+    ///
+    /// The secret is loaded from the `QUASAR_LOBBY_SECRET` environment variable.
+    /// Returns `None` if no secret is configured (only possible in dev mode).
     pub fn create_auth_token(&self, session_id: SessionId, player_id: &PlayerId) -> Option<String> {
-        // In production, this would use the configured secret
-        let secret = b"quasar_default_secret";
-        Some(generate_session_token(session_id, player_id, secret))
+        let secret = secret::load_lobby_secret()?;
+        Some(generate_session_token(session_id, player_id, &secret))
     }
 }
 

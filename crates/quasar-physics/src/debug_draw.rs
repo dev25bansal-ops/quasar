@@ -1,84 +1,42 @@
 //! Physics debug draw — generates wireframe line segments for colliders,
 //! AABBs, joints, and contact points so a renderer can visualise the
 //! physics state.
+//!
+//! This module implements the [`quasar_core::debug_draw::DebugDraw`] trait
+//! on [`PhysicsWorld`] so the render crate can consume debug output
+//! without a direct dependency on this crate.
 
 use crate::collider::ColliderShape;
+use crate::world::PhysicsWorld;
 
-/// A single debug line segment in world space.
-#[derive(Debug, Clone, Copy)]
-pub struct DebugLine {
-    pub start: [f32; 3],
-    pub end: [f32; 3],
-    pub color: [f32; 4],
-}
+// Re-export core types for backward compatibility.
+pub use quasar_core::debug_draw::{DebugDraw, DebugDrawConfig, DebugDrawColors, DebugLine};
+use quasar_core::debug_draw::DebugDrawConfig as Config;
 
-/// Colours used by the debug draw system.
-pub struct DebugDrawColors {
-    pub collider: [f32; 4],
-    pub aabb: [f32; 4],
-    pub joint: [f32; 4],
-    pub contact: [f32; 4],
-    pub trigger: [f32; 4],
-}
+// ---------------------------------------------------------------------------
+// DebugDraw trait implementation for PhysicsWorld
+// ---------------------------------------------------------------------------
 
-impl Default for DebugDrawColors {
-    fn default() -> Self {
-        Self {
-            collider: [0.0, 1.0, 0.0, 1.0], // green
-            aabb: [1.0, 1.0, 0.0, 0.5],     // yellow translucent
-            joint: [0.0, 0.5, 1.0, 1.0],    // blue
-            contact: [1.0, 0.0, 0.0, 1.0],  // red
-            trigger: [1.0, 0.0, 1.0, 0.6],  // magenta translucent
-        }
-    }
-}
-
-/// Configuration for physics debug drawing.
-pub struct PhysicsDebugDraw {
-    pub draw_colliders: bool,
-    pub draw_aabbs: bool,
-    pub draw_joints: bool,
-    pub draw_contacts: bool,
-    pub draw_triggers: bool,
-    pub colors: DebugDrawColors,
-}
-
-impl Default for PhysicsDebugDraw {
-    fn default() -> Self {
-        Self {
-            draw_colliders: true,
-            draw_aabbs: false,
-            draw_joints: true,
-            draw_contacts: true,
-            draw_triggers: true,
-            colors: DebugDrawColors::default(),
-        }
-    }
-}
-
-impl PhysicsDebugDraw {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Generate debug lines for the entire physics world.
-    pub fn generate(&self, physics: &crate::world::PhysicsWorld) -> Vec<DebugLine> {
+impl DebugDraw for PhysicsWorld {
+    fn generate_debug_lines(&self, config: &Config) -> Vec<DebugLine> {
         let mut lines = Vec::new();
 
-        if self.draw_colliders || self.draw_aabbs || self.draw_triggers {
-            for (_handle, collider) in physics.colliders.iter() {
+        if config.draw_colliders || config.draw_aabbs || config.draw_triggers {
+            for (_handle, collider) in self.colliders.iter() {
                 let pos = collider.position();
                 let translation = pos.translation;
                 let rotation = pos.rotation;
 
                 let is_sensor = collider.is_sensor();
                 let color = if is_sensor {
-                    self.colors.trigger
+                    config.colors.trigger
                 } else {
-                    self.colors.collider
+                    config.colors.collider
                 };
 
-                if (is_sensor && self.draw_triggers) || (!is_sensor && self.draw_colliders) {
+                if (is_sensor && config.draw_triggers)
+                    || (!is_sensor && config.draw_colliders)
+                {
                     let shape = collider.shape();
                     Self::wireframe_shape(
                         &mut lines,
@@ -89,33 +47,31 @@ impl PhysicsDebugDraw {
                     );
                 }
 
-                if self.draw_aabbs {
+                if config.draw_aabbs {
                     let aabb = collider.compute_aabb();
                     Self::wireframe_aabb(
                         &mut lines,
                         [aabb.mins.x, aabb.mins.y, aabb.mins.z],
                         [aabb.maxs.x, aabb.maxs.y, aabb.maxs.z],
-                        self.colors.aabb,
+                        config.colors.aabb,
                     );
                 }
             }
         }
 
-        if self.draw_joints {
-            for (_, joint) in physics.impulse_joints.iter() {
+        if config.draw_joints {
+            for (_, joint) in self.impulse_joints.iter() {
                 let anchor1 = joint.data.local_anchor1();
                 let anchor2 = joint.data.local_anchor2();
-                // Get world positions of the attached bodies.
-                if let (Some(b1), Some(b2)) = (
-                    physics.bodies.get(joint.body1),
-                    physics.bodies.get(joint.body2),
-                ) {
+                if let (Some(b1), Some(b2)) =
+                    (self.bodies.get(joint.body1), self.bodies.get(joint.body2))
+                {
                     let p1 = b1.position() * anchor1;
                     let p2 = b2.position() * anchor2;
                     lines.push(DebugLine {
                         start: [p1.x, p1.y, p1.z],
                         end: [p2.x, p2.y, p2.z],
-                        color: self.colors.joint,
+                        color: config.colors.joint,
                     });
                 }
             }
@@ -123,19 +79,25 @@ impl PhysicsDebugDraw {
 
         lines
     }
+}
 
+// ---------------------------------------------------------------------------
+// Helper methods for generating wireframe shapes
+// ---------------------------------------------------------------------------
+
+impl PhysicsWorld {
     /// Generate wireframe lines for a Rapier shape.
     fn wireframe_shape(
         lines: &mut Vec<DebugLine>,
         shape: &dyn rapier3d::prelude::Shape,
         pos: [f32; 3],
-        rot: [f32; 4],
+        _rot: [f32; 4],
         color: [f32; 4],
     ) {
         // Cuboid
         if let Some(cuboid) = shape.as_cuboid() {
             let he = cuboid.half_extents;
-            Self::wireframe_box(lines, pos, rot, [he.x, he.y, he.z], color);
+            Self::wireframe_box(lines, pos, [he.x, he.y, he.z], color);
             return;
         }
         // Ball
@@ -147,10 +109,20 @@ impl PhysicsDebugDraw {
         if let Some(capsule) = shape.as_capsule() {
             let r = capsule.radius;
             let hh = capsule.half_height();
-            // Draw two circle rings and connecting lines.
-            Self::wireframe_sphere(lines, [pos[0], pos[1] + hh, pos[2]], r, color, 12);
-            Self::wireframe_sphere(lines, [pos[0], pos[1] - hh, pos[2]], r, color, 12);
-            // Vertical lines connecting caps.
+            Self::wireframe_sphere(
+                lines,
+                [pos[0], pos[1] + hh, pos[2]],
+                r,
+                color,
+                12,
+            );
+            Self::wireframe_sphere(
+                lines,
+                [pos[0], pos[1] - hh, pos[2]],
+                r,
+                color,
+                12,
+            );
             for i in 0..4 {
                 let angle = (i as f32) * std::f32::consts::FRAC_PI_2;
                 let dx = r * angle.cos();
@@ -181,7 +153,7 @@ impl PhysicsDebugDraw {
             }
             return;
         }
-        // Fallback: draw a small cross at the position.
+        // Fallback: small cross.
         let s = 0.1;
         lines.push(DebugLine {
             start: [pos[0] - s, pos[1], pos[2]],
@@ -201,7 +173,12 @@ impl PhysicsDebugDraw {
     }
 
     /// Wireframe axis-aligned bounding box.
-    fn wireframe_aabb(lines: &mut Vec<DebugLine>, mins: [f32; 3], maxs: [f32; 3], color: [f32; 4]) {
+    fn wireframe_aabb(
+        lines: &mut Vec<DebugLine>,
+        mins: [f32; 3],
+        maxs: [f32; 3],
+        color: [f32; 4],
+    ) {
         let corners = [
             [mins[0], mins[1], mins[2]],
             [maxs[0], mins[1], mins[2]],
@@ -217,15 +194,15 @@ impl PhysicsDebugDraw {
             (0, 1),
             (1, 2),
             (2, 3),
-            (3, 0), // front
+            (3, 0),
             (4, 5),
             (5, 6),
             (6, 7),
-            (7, 4), // back
+            (7, 4),
             (0, 4),
             (1, 5),
             (2, 6),
-            (3, 7), // connecting
+            (3, 7),
         ];
 
         for (a, b) in edges {
@@ -237,15 +214,13 @@ impl PhysicsDebugDraw {
         }
     }
 
-    /// Wireframe box with rotation.
+    /// Wireframe box at position with half extents.
     fn wireframe_box(
         lines: &mut Vec<DebugLine>,
         pos: [f32; 3],
-        _rot: [f32; 4],
         half_extents: [f32; 3],
         color: [f32; 4],
     ) {
-        // Simplified: axis-aligned at position (ignoring rotation for line drawing performance).
         let mins = [
             pos[0] - half_extents[0],
             pos[1] - half_extents[1],
@@ -268,7 +243,6 @@ impl PhysicsDebugDraw {
         segments: u32,
     ) {
         Self::wireframe_circle_y(lines, center, radius, color, segments);
-        // XY plane circle.
         let step = std::f32::consts::TAU / segments as f32;
         for i in 0..segments {
             let a0 = i as f32 * step;
@@ -287,7 +261,6 @@ impl PhysicsDebugDraw {
                 color,
             });
         }
-        // YZ plane circle.
         for i in 0..segments {
             let a0 = i as f32 * step;
             let a1 = (i + 1) as f32 * step;
@@ -336,7 +309,7 @@ impl PhysicsDebugDraw {
     }
 
     /// Generate wireframe lines for a specific collider shape description.
-    pub fn lines_for_shape(
+    pub fn debug_lines_for_shape(
         shape: &ColliderShape,
         position: [f32; 3],
         color: [f32; 4],
@@ -344,13 +317,7 @@ impl PhysicsDebugDraw {
         let mut lines = Vec::new();
         match shape {
             ColliderShape::Box { half_extents } => {
-                Self::wireframe_box(
-                    &mut lines,
-                    position,
-                    [0.0, 0.0, 0.0, 1.0],
-                    *half_extents,
-                    color,
-                );
+                Self::wireframe_box(&mut lines, position, *half_extents, color);
             }
             ColliderShape::Sphere { radius } => {
                 Self::wireframe_sphere(&mut lines, position, *radius, color, 16);
@@ -404,7 +371,6 @@ impl PhysicsDebugDraw {
                     color,
                     16,
                 );
-                // Apex
                 let apex = [position[0], position[1] + half_height, position[2]];
                 for i in 0..4 {
                     let angle = (i as f32) * std::f32::consts::FRAC_PI_2;

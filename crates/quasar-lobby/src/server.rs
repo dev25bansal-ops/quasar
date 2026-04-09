@@ -5,6 +5,19 @@
 //! - WebSocket-style real-time updates
 //! - Session matchmaking and player management
 
+// ─── Security Constants (CRIT-003) ───────────────────────────────────────────
+/// Maximum allowed size for incoming JSON lobby messages (64KB).
+/// Prevents memory exhaustion from oversized payloads.
+const MAX_REQUEST_SIZE: usize = 64 * 1024;
+
+/// Maximum allowed nesting depth for JSON structures (32 levels).
+/// Prevents stack overflow from deeply nested JSON bombs.
+const MAX_JSON_DEPTH: usize = 32;
+
+/// Maximum allowed length for individual string fields within JSON.
+/// Prevents memory exhaustion from extremely long strings.
+const MAX_STRING_LENGTH: usize = 4096;
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,9 +28,185 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, RwLock};
 use tokio::time::timeout;
 
+use crate::secret;
 use crate::{
     JoinInfo, LobbyError, PlayerId, PlayerInfo, Session, SessionConfig, SessionId, SessionState,
 };
+
+// ─── Safe Deserialization (CRIT-003) ─────────────────────────────────────────
+
+/// Error type for safe deserialization that distinguishes between
+/// size violations, depth violations, and standard parse errors.
+#[derive(Debug)]
+enum SafeDeserializeError {
+    /// The input exceeds the maximum allowed size.
+    TooLarge(usize),
+    /// The JSON structure exceeds the maximum allowed depth.
+    TooDeep(usize),
+    /// A string field exceeds the maximum allowed length.
+    StringTooLong(usize),
+    /// Standard serde deserialization error.
+    Parse(serde_json::Error),
+}
+
+impl std::fmt::Display for SafeDeserializeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SafeDeserializeError::TooLarge(size) => {
+                write!(f, "Request size {} bytes exceeds maximum {}", size, MAX_REQUEST_SIZE)
+            }
+            SafeDeserializeError::TooDeep(depth) => {
+                write!(f, "JSON depth {} exceeds maximum {}", depth, MAX_JSON_DEPTH)
+            }
+            SafeDeserializeError::StringTooLong(len) => {
+                write!(f, "String length {} exceeds maximum {}", len, MAX_STRING_LENGTH)
+            }
+            SafeDeserializeError::Parse(e) => {
+                write!(f, "JSON parse error: {}", e)
+            }
+        }
+    }
+}
+
+/// Safely deserialize JSON from untrusted input with size, depth, and string length limits.
+///
+/// This wrapper performs the following security checks:
+/// 1. Validates input size does not exceed `MAX_REQUEST_SIZE`
+/// 2. Checks JSON structural depth does not exceed `MAX_JSON_DEPTH`
+/// 3. Validates all string fields do not exceed `MAX_STRING_LENGTH`
+///
+/// Returns `Err(SafeDeserializeError)` on any violation, allowing the caller
+/// to return an appropriate HTTP 413 or 400 response.
+fn safe_deserialize<'a, T: Deserialize<'a>>(input: &'a str) -> Result<T, SafeDeserializeError> {
+    // Step 1: Validate total input size
+    if input.len() > MAX_REQUEST_SIZE {
+        return Err(SafeDeserializeError::TooLarge(input.len()));
+    }
+
+    // Step 2: Validate string lengths before deserialization
+    validate_string_lengths(input)?;
+
+    // Step 3: Validate JSON depth before deserialization
+    validate_json_depth(input)?;
+
+    // Step 4: Deserialize with all validations passed
+    // serde_json::from_str has its own internal recursion limit (default 128),
+    // but we enforce a stricter limit (32) via our pre-check above.
+    let result = serde_json::from_str::<T>(input).map_err(SafeDeserializeError::Parse);
+
+    result
+}
+
+/// Scan raw JSON input to verify no individual string value exceeds `MAX_STRING_LENGTH`.
+///
+/// This is a lightweight pre-check that scans for string literals in the raw JSON
+/// without full parsing. It catches the most common memory exhaustion vectors.
+fn validate_string_lengths(json: &str) -> Result<(), SafeDeserializeError> {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut current_string_len = 0usize;
+
+    for ch in json.chars() {
+        if escaped {
+            escaped = false;
+            current_string_len += ch.len_utf8();
+            continue;
+        }
+
+        if in_string {
+            match ch {
+                '\\' => {
+                    escaped = true;
+                    current_string_len += 1;
+                }
+                '"' => {
+                    // End of string - validate length
+                    if current_string_len > MAX_STRING_LENGTH {
+                        return Err(SafeDeserializeError::StringTooLong(current_string_len));
+                    }
+                    in_string = false;
+                    current_string_len = 0;
+                }
+                _ => {
+                    current_string_len += ch.len_utf8();
+                    if current_string_len > MAX_STRING_LENGTH {
+                        return Err(SafeDeserializeError::StringTooLong(current_string_len));
+                    }
+                }
+            }
+        } else if ch == '"' {
+            in_string = true;
+            current_string_len = 0;
+        }
+    }
+
+    // If we ended while still in a string, the JSON is malformed (will be caught by serde)
+    Ok(())
+}
+
+/// Scan raw JSON input to verify the nesting depth does not exceed `MAX_JSON_DEPTH`.
+///
+/// This is a lightweight pre-check that counts opening/closing braces and brackets
+/// to estimate the maximum nesting depth without full parsing.
+fn validate_json_depth(json: &str) -> Result<(), SafeDeserializeError> {
+    let mut current_depth = 0usize;
+    let mut max_depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for ch in json.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+
+        if in_string {
+            match ch {
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' | '[' => {
+                current_depth += 1;
+                if current_depth > max_depth {
+                    max_depth = current_depth;
+                }
+                if current_depth > MAX_JSON_DEPTH {
+                    return Err(SafeDeserializeError::TooDeep(current_depth));
+                }
+            }
+            '}' | ']' => {
+                if current_depth > 0 {
+                    current_depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// Generate an HTTP 413 Payload Too Large response.
+fn http_413_payload_too_large() -> String {
+    format!(
+        "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\n\r\n{}",
+        json_error("Payload too large")
+    )
+}
+
+/// Generate an HTTP 400 Bad Request response for JSON errors.
+fn http_400_bad_request(detail: &str) -> String {
+    format!(
+        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n{}",
+        json_error(detail)
+    )
+}
 
 /// Configuration for the lobby server.
 #[derive(Debug, Clone)]
@@ -27,7 +216,8 @@ pub struct LobbyServerConfig {
     pub max_sessions: usize,
     pub session_timeout_secs: u64,
     pub heartbeat_interval_secs: u64,
-    pub secret_key: Vec<u8>,
+    /// Secret key for token signing. If `None`, loaded from `QUASAR_LOBBY_SECRET` env var.
+    pub secret_key: Option<Vec<u8>>,
 }
 
 impl Default for LobbyServerConfig {
@@ -38,8 +228,25 @@ impl Default for LobbyServerConfig {
             max_sessions: 1000,
             session_timeout_secs: 3600,
             heartbeat_interval_secs: 30,
-            secret_key: b"quasar_default_secret".to_vec(),
+            secret_key: None, // Loaded from QUASAR_LOBBY_SECRET env var on resolve()
         }
+    }
+}
+
+impl LobbyServerConfig {
+    /// Resolve the secret key, loading from the environment if not explicitly configured.
+    ///
+    /// Panics in production if no secret is configured.
+    pub fn resolve_secret(&self) -> Vec<u8> {
+        self.secret_key
+            .clone()
+            .or_else(|| secret::load_lobby_secret())
+            .unwrap_or_else(|| {
+                panic!(
+                    "CRITICAL: No lobby secret configured. Set the {} environment variable.",
+                    secret::SECRET_ENV_VAR
+                )
+            })
     }
 }
 
@@ -68,6 +275,7 @@ struct PlayerConnection {
 /// The lobby server.
 pub struct LobbyServer {
     config: LobbyServerConfig,
+    secret_key: Vec<u8>,
     sessions: Arc<RwLock<HashMap<u64, SessionEntry>>>,
     connections: Arc<RwLock<HashMap<SocketAddr, PlayerConnection>>>,
     next_session_id: Arc<RwLock<u64>>,
@@ -99,9 +307,11 @@ pub enum ServerEvent {
 
 impl LobbyServer {
     pub fn new(config: LobbyServerConfig) -> Self {
+        let secret_key = config.resolve_secret();
         let (event_tx, _) = broadcast::channel(1024);
         Self {
             config,
+            secret_key,
             sessions: Arc::new(RwLock::new(HashMap::new())),
             connections: Arc::new(RwLock::new(HashMap::new())),
             next_session_id: Arc::new(RwLock::new(1)),
@@ -136,6 +346,7 @@ impl LobbyServer {
             let connections = self.connections.clone();
             let next_id = self.next_session_id.clone();
             let config = self.config.clone();
+            let secret_key = self.secret_key.clone();
             let event_tx = self.event_tx.clone();
 
             tokio::spawn(async move {
@@ -146,6 +357,7 @@ impl LobbyServer {
                     connections,
                     next_id,
                     config,
+                    secret_key,
                     event_tx,
                 )
                 .await
@@ -172,6 +384,7 @@ async fn handle_connection(
     connections: Arc<RwLock<HashMap<SocketAddr, PlayerConnection>>>,
     next_session_id: Arc<RwLock<u64>>,
     config: LobbyServerConfig,
+    secret_key: Vec<u8>,
     event_tx: broadcast::Sender<ServerEvent>,
 ) -> Result<(), LobbyError> {
     let (reader, mut writer) = stream.split();
@@ -211,6 +424,7 @@ async fn handle_connection(
                 &sessions,
                 &next_session_id,
                 &config,
+                &secret_key,
                 &event_tx,
             )
             .await?;
@@ -236,6 +450,7 @@ async fn handle_http_request(
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     next_session_id: &Arc<RwLock<u64>>,
     config: &LobbyServerConfig,
+    secret_key: &[u8],
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> Result<String, LobbyError> {
     let mut headers = HashMap::new();
@@ -264,6 +479,11 @@ async fn handle_http_request(
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
+    // CRIT-003: Reject requests exceeding maximum size limit
+    if content_length > MAX_REQUEST_SIZE {
+        return Ok(http_413_payload_too_large());
+    }
+
     let mut body = Vec::new();
     if content_length > 0 {
         body.resize(content_length, 0);
@@ -284,6 +504,7 @@ async fn handle_http_request(
         sessions,
         next_session_id,
         config,
+        secret_key,
         event_tx,
     )
     .await;
@@ -304,12 +525,18 @@ async fn route_request(
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     next_session_id: &Arc<RwLock<u64>>,
     config: &LobbyServerConfig,
+    secret_key: &[u8],
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> (u16, String) {
+    // CRIT-003: Double-check body size at route level (defense in depth)
+    if body.len() > MAX_REQUEST_SIZE {
+        return (413, json_error("Payload too large"));
+    }
+
     let body_str = String::from_utf8_lossy(body);
 
     if method == "POST" && path == "/api/sessions" {
-        return create_session(&body_str, sessions, next_session_id, config, event_tx).await;
+        return create_session(&body_str, sessions, next_session_id, config, secret_key, event_tx).await;
     }
 
     if method == "GET" && path.starts_with("/api/sessions/") {
@@ -329,7 +556,7 @@ async fn route_request(
             .trim_start_matches("/api/sessions/")
             .trim_end_matches("/join");
         if let Ok(id) = u64::from_str_radix(id_str, 16) {
-            return join_session(id, &body_str, sessions, config, event_tx).await;
+            return join_session(id, &body_str, sessions, config, secret_key, event_tx).await;
         }
         return (404, json_error("Session not found"));
     }
@@ -380,11 +607,25 @@ async fn create_session(
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     next_session_id: &Arc<RwLock<u64>>,
     config: &LobbyServerConfig,
+    secret_key: &[u8],
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> (u16, String) {
-    let request: Result<CreateSessionRequest, _> = serde_json::from_str(body);
-    let Ok(request) = request else {
-        return (400, json_error("Invalid request body"));
+    // CRIT-003: Use safe deserialization with size and depth validation
+    let request = match safe_deserialize::<CreateSessionRequest>(body) {
+        Ok(req) => req,
+        Err(SafeDeserializeError::TooLarge(_)) => {
+            return (413, json_error("Payload too large"));
+        }
+        Err(SafeDeserializeError::StringTooLong(_)) => {
+            return (400, json_error("String field exceeds maximum length"));
+        }
+        Err(SafeDeserializeError::Parse(_)) => {
+            return (400, json_error("Invalid request body"));
+        }
+        Err(e) => {
+            log::warn!("Unexpected deserialization error in create_session: {}", e);
+            return (400, json_error("Invalid request body"));
+        }
     };
 
     let mut sessions_lock = sessions.write().await;
@@ -418,7 +659,7 @@ async fn create_session(
             .as_secs(),
     };
 
-    let connection_token = generate_token(session_id, &player_id, &config.secret_key);
+    let connection_token = generate_token(session_id, &player_id, secret_key);
 
     sessions_lock.insert(
         id,
@@ -475,11 +716,25 @@ async fn join_session(
     body: &str,
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     config: &LobbyServerConfig,
+    secret_key: &[u8],
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> (u16, String) {
-    let request: Result<JoinSessionRequest, _> = serde_json::from_str(body);
-    let Ok(request) = request else {
-        return (400, json_error("Invalid request body"));
+    // CRIT-003: Use safe deserialization with size and depth validation
+    let request = match safe_deserialize::<JoinSessionRequest>(body) {
+        Ok(req) => req,
+        Err(SafeDeserializeError::TooLarge(_)) => {
+            return (413, json_error("Payload too large"));
+        }
+        Err(SafeDeserializeError::StringTooLong(_)) => {
+            return (400, json_error("String field exceeds maximum length"));
+        }
+        Err(SafeDeserializeError::Parse(_)) => {
+            return (400, json_error("Invalid request body"));
+        }
+        Err(e) => {
+            log::warn!("Unexpected deserialization error in join_session: {}", e);
+            return (400, json_error("Invalid request body"));
+        }
     };
 
     let mut sessions_lock = sessions.write().await;
@@ -505,7 +760,7 @@ async fn join_session(
     entry.session.player_count = entry.session.players.len() as u32;
     entry.last_activity = Instant::now();
 
-    let connection_token = generate_token(session_id, &player_id, &config.secret_key);
+    let connection_token = generate_token(session_id, &player_id, secret_key);
     entry
         .connection_tokens
         .insert(connection_token.clone(), Instant::now());
@@ -537,9 +792,22 @@ async fn leave_session(
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> (u16, String) {
-    let request: Result<LeaveSessionRequest, _> = serde_json::from_str(body);
-    let Ok(request) = request else {
-        return (400, json_error("Invalid request body"));
+    // CRIT-003: Use safe deserialization with size and depth validation
+    let request = match safe_deserialize::<LeaveSessionRequest>(body) {
+        Ok(req) => req,
+        Err(SafeDeserializeError::TooLarge(_)) => {
+            return (413, json_error("Payload too large"));
+        }
+        Err(SafeDeserializeError::StringTooLong(_)) => {
+            return (400, json_error("String field exceeds maximum length"));
+        }
+        Err(SafeDeserializeError::Parse(_)) => {
+            return (400, json_error("Invalid request body"));
+        }
+        Err(e) => {
+            log::warn!("Unexpected deserialization error in leave_session: {}", e);
+            return (400, json_error("Invalid request body"));
+        }
     };
 
     let mut sessions_lock = sessions.write().await;
@@ -597,9 +865,22 @@ async fn update_session_state(
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
     event_tx: &broadcast::Sender<ServerEvent>,
 ) -> (u16, String) {
-    let request: Result<UpdateSessionRequest, _> = serde_json::from_str(body);
-    let Ok(request) = request else {
-        return (400, json_error("Invalid request body"));
+    // CRIT-003: Use safe deserialization with size and depth validation
+    let request = match safe_deserialize::<UpdateSessionRequest>(body) {
+        Ok(req) => req,
+        Err(SafeDeserializeError::TooLarge(_)) => {
+            return (413, json_error("Payload too large"));
+        }
+        Err(SafeDeserializeError::StringTooLong(_)) => {
+            return (400, json_error("String field exceeds maximum length"));
+        }
+        Err(SafeDeserializeError::Parse(_)) => {
+            return (400, json_error("Invalid request body"));
+        }
+        Err(e) => {
+            log::warn!("Unexpected deserialization error in update_session_state: {}", e);
+            return (400, json_error("Invalid request body"));
+        }
     };
 
     let mut sessions_lock = sessions.write().await;
@@ -631,9 +912,22 @@ async fn update_player(
     body: &str,
     sessions: &Arc<RwLock<HashMap<u64, SessionEntry>>>,
 ) -> (u16, String) {
-    let request: Result<UpdatePlayerRequest, _> = serde_json::from_str(body);
-    let Ok(request) = request else {
-        return (400, json_error("Invalid request body"));
+    // CRIT-003: Use safe deserialization with size and depth validation
+    let request = match safe_deserialize::<UpdatePlayerRequest>(body) {
+        Ok(req) => req,
+        Err(SafeDeserializeError::TooLarge(_)) => {
+            return (413, json_error("Payload too large"));
+        }
+        Err(SafeDeserializeError::StringTooLong(_)) => {
+            return (400, json_error("String field exceeds maximum length"));
+        }
+        Err(SafeDeserializeError::Parse(_)) => {
+            return (400, json_error("Invalid request body"));
+        }
+        Err(e) => {
+            log::warn!("Unexpected deserialization error in update_player: {}", e);
+            return (400, json_error("Invalid request body"));
+        }
     };
 
     let mut sessions_lock = sessions.write().await;
@@ -681,23 +975,109 @@ fn json_error(message: &str) -> String {
     serde_json::json!({ "error": message }).to_string()
 }
 
+// ─── Schema Validation Helpers (CRIT-003) ────────────────────────────────────
+
+/// Deserializes a string field with length validation.
+/// Returns an error if the string exceeds `MAX_STRING_LENGTH`.
+fn deserialize_limited_string<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_STRING_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "String length {} exceeds maximum {}",
+            s.len(),
+            MAX_STRING_LENGTH
+        )));
+    }
+    Ok(s)
+}
+
+/// Deserializes a `PlayerId` with length validation on the underlying string.
+fn deserialize_limited_player_id<'de, D>(deserializer: D) -> Result<PlayerId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    if s.len() > MAX_STRING_LENGTH {
+        return Err(serde::de::Error::custom(format!(
+            "PlayerId length {} exceeds maximum {}",
+            s.len(),
+            MAX_STRING_LENGTH
+        )));
+    }
+    Ok(PlayerId(s))
+}
+
+/// Deserializes an optional string field with length validation.
+fn deserialize_optional_limited_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    match opt {
+        Some(s) if s.len() > MAX_STRING_LENGTH => Err(serde::de::Error::custom(format!(
+            "String length {} exceeds maximum {}",
+            s.len(),
+            MAX_STRING_LENGTH
+        ))),
+        Some(s) => Ok(Some(s)),
+        None => Ok(None),
+    }
+}
+
+/// Deserializes a HashMap<String, String> with length validation on both keys and values.
+fn deserialize_limited_string_map<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = HashMap::<String, String>::deserialize(deserializer)?;
+    for (k, v) in &map {
+        if k.len() > MAX_STRING_LENGTH {
+            return Err(serde::de::Error::custom(format!(
+                "Map key length {} exceeds maximum {}",
+                k.len(),
+                MAX_STRING_LENGTH
+            )));
+        }
+        if v.len() > MAX_STRING_LENGTH {
+            return Err(serde::de::Error::custom(format!(
+                "Map value length {} exceeds maximum {}",
+                v.len(),
+                MAX_STRING_LENGTH
+            )));
+        }
+    }
+    Ok(map)
+}
+
+/// Request to create a new lobby session.
+/// CRIT-003: All string fields are validated for length during deserialization.
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateSessionRequest {
     config: SessionConfig,
+    #[serde(deserialize_with = "deserialize_limited_player_id")]
     player_id: PlayerId,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 struct CreateSessionResponse {
     session: Session,
+    #[serde(deserialize_with = "deserialize_limited_string")]
     connection_token: String,
+    #[serde(deserialize_with = "deserialize_limited_string")]
     server_address: String,
 }
 
+/// Request to join an existing lobby session.
+/// CRIT-003: All string fields are validated for length during deserialization.
 #[derive(Debug, Serialize, Deserialize)]
 struct JoinSessionRequest {
     session_id: SessionId,
+    #[serde(deserialize_with = "deserialize_limited_player_id")]
     player_id: PlayerId,
+    #[serde(default, deserialize_with = "deserialize_optional_limited_string")]
     password: Option<String>,
 }
 
@@ -706,25 +1086,35 @@ struct JoinSessionResponse {
     join_info: JoinInfo,
 }
 
+/// Request to leave a lobby session.
+/// CRIT-003: All string fields are validated for length during deserialization.
 #[derive(Debug, Serialize, Deserialize)]
 struct LeaveSessionRequest {
     session_id: SessionId,
+    #[serde(deserialize_with = "deserialize_limited_player_id")]
     player_id: PlayerId,
 }
 
+/// Request to update session state.
+/// CRIT-003: All string fields are validated for length during deserialization.
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateSessionRequest {
     session_id: SessionId,
+    #[serde(deserialize_with = "deserialize_limited_player_id")]
     player_id: PlayerId,
     state: SessionState,
 }
 
+/// Request to update player information.
+/// CRIT-003: All string fields are validated for length during deserialization.
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdatePlayerRequest {
     session_id: SessionId,
+    #[serde(deserialize_with = "deserialize_limited_player_id")]
     player_id: PlayerId,
     is_ready: bool,
     team: Option<u32>,
+    #[serde(default, deserialize_with = "deserialize_limited_string_map")]
     metadata: HashMap<String, String>,
 }
 

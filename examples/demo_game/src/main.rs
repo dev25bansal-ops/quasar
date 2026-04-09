@@ -316,17 +316,16 @@ fn spawn_player(world: &mut World) {
     );
     world.insert(entity, Velocity { linear: Vec3::ZERO });
     world.insert(entity, Collider { radius: 0.5 });
-    world.insert(
-        entity,
-        MeshRenderer {
-            mesh: "player".into(),
-            color: [0.0, 0.5, 1.0, 1.0],
-        },
-    );
+    
+    // Add Transform and MeshShape for rendering
+    let mut transform = Transform::IDENTITY;
+    transform.position = Vec3::new(0.0, 1.0, 0.0);
+    world.insert(entity, transform);
+    world.insert(entity, MeshShape::Sphere { sectors: 16, stacks: 8 });
 }
 
 fn spawn_enemies(world: &mut World, count: usize) {
-    for _i in 0..count {
+    for i in 0..count {
         let entity = world.spawn();
         world.insert(
             entity,
@@ -338,28 +337,28 @@ fn spawn_enemies(world: &mut World, count: usize) {
         );
         world.insert(entity, Velocity { linear: Vec3::ZERO });
         world.insert(entity, Collider { radius: 0.4 });
-        world.insert(
-            entity,
-            MeshRenderer {
-                mesh: "enemy".into(),
-                color: [1.0, 0.2, 0.2, 1.0],
-            },
-        );
+        
+        // Add Transform and MeshShape for rendering
+        let mut transform = Transform::IDENTITY;
+        let angle = (i as f32) * std::f32::consts::TAU / count as f32;
+        transform.position = Vec3::new(angle.cos() * 3.0, 1.0, angle.sin() * 3.0);
+        world.insert(entity, transform);
+        world.insert(entity, MeshShape::Cube);
     }
 }
 
 fn spawn_pickups(world: &mut World, count: usize) {
-    for _i in 0..count {
+    for i in 0..count {
         let entity = world.spawn();
         world.insert(entity, Pickup { points: 100 });
         world.insert(entity, Collider { radius: 0.3 });
-        world.insert(
-            entity,
-            MeshRenderer {
-                mesh: "pickup".into(),
-                color: [1.0, 1.0, 0.0, 1.0],
-            },
-        );
+        
+        // Add Transform and MeshShape for rendering
+        let mut transform = Transform::IDENTITY;
+        let angle = (i as f32) * std::f32::consts::TAU / count as f32 + 0.5;
+        transform.position = Vec3::new(angle.cos() * 5.0, 0.5, angle.sin() * 5.0);
+        world.insert(entity, transform);
+        world.insert(entity, MeshShape::Sphere { sectors: 8, stacks: 4 });
     }
 }
 

@@ -7,6 +7,9 @@
 //! - Ban list management
 
 use std::collections::{HashMap, HashSet};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use rand::Rng;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -369,7 +372,7 @@ impl AuthServer {
             bans: BanList::new(),
             rate_limiter: RateLimiter::new(RateLimitConfig::default()),
             next_player_id: 1,
-            secret_key: vec![0; 32],
+            secret_key: rand::thread_rng().gen::<[u8; 32]>().to_vec(),
         }
     }
 
@@ -422,13 +425,12 @@ impl AuthServer {
     }
 
     fn sign_token(&self, session_id: SessionId, player_id: u64, expires_at: u64) -> Vec<u8> {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        session_id.0.hash(&mut hasher);
-        player_id.hash(&mut hasher);
-        expires_at.hash(&mut hasher);
-        self.secret_key.hash(&mut hasher);
-        hasher.finish().to_be_bytes().to_vec()
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.secret_key)
+            .expect("HMAC can take key of any size");
+        mac.update(&session_id.0.to_be_bytes());
+        mac.update(&player_id.to_be_bytes());
+        mac.update(&expires_at.to_be_bytes());
+        mac.finalize().into_bytes().to_vec()
     }
 
     pub fn validate_token(&self, token: &AuthToken) -> Result<&Session, String> {
@@ -530,5 +532,64 @@ mod tests {
         );
 
         assert!(matches!(result, AuthResult::Success { .. }));
+    }
+
+    #[test]
+    fn hmac_signature_is_secure() {
+        let mut server = AuthServer::new();
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap();
+
+        let result = server.authenticate(
+            Credentials {
+                username: "test".into(),
+                auth_token: "".into(),
+                client_version: "1.0".into(),
+                timestamp: now,
+            },
+            addr,
+        );
+
+        if let AuthResult::Success { token } = result {
+            assert_eq!(token.signature.len(), 32, "HMAC-SHA256 should produce 32-byte signature");
+            assert_ne!(token.signature, vec![0u8; 32], "Signature should not be all zeros");
+        } else {
+            panic!("Expected successful authentication");
+        }
+    }
+
+    #[test]
+    fn secret_key_is_random() {
+        let server1 = AuthServer::new();
+        let server2 = AuthServer::new();
+        assert_ne!(server1.secret_key, server2.secret_key, "Secret keys should be unique per server");
+    }
+
+    #[test]
+    fn signature_tampering_detected() {
+        let mut server = AuthServer::new();
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap();
+
+        let result = server.authenticate(
+            Credentials {
+                username: "test".into(),
+                auth_token: "".into(),
+                client_version: "1.0".into(),
+                timestamp: now,
+            },
+            addr,
+        );
+
+        if let AuthResult::Success { mut token } = result {
+            token.signature[0] ^= 0xFF;
+            assert!(server.validate_token(&token).is_err(), "Tampered signature should be rejected");
+        }
     }
 }

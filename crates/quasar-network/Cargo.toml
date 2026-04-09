@@ -16,6 +16,9 @@ quinn = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 rcgen = { workspace = true, optional = true }
+hmac = "0.12"
+sha2 = "0.10"
+rand = "0.8"
 
 [features]
 default = []

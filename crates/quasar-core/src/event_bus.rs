@@ -154,7 +154,7 @@ struct ReaderState {
 /// multiple `EventReader`s while ensuring safe writes from `EventWriter`s.
 pub struct EventBus {
     channels: FxHashMap<TypeId, Box<dyn EventChannel>>,
-    reader_states: RwLock<FxHashMap<TypeId, Vec<ReaderState>>>,
+    reader_states: RwLock<FxHashMap<TypeId, FxHashMap<u64, ReaderState>>>,
 }
 
 impl EventBus {
@@ -206,11 +206,7 @@ impl EventBus {
         let type_id = TypeId::of::<T>();
         let reader_id = next_reader_id();
         let mut states = self.reader_states.write();
-        let readers = states.entry(type_id).or_default();
-        readers.push(ReaderState {
-            reader_id,
-            last_seen_index: 0,
-        });
+        states.entry(type_id).or_default().insert(reader_id, ReaderState { reader_id, last_seen_index: 0 });
         reader_id
     }
 
@@ -221,7 +217,7 @@ impl EventBus {
             let states = self.reader_states.read();
             states
                 .get(&type_id)
-                .and_then(|readers| readers.iter().find(|r| r.reader_id == reader_id))
+                .and_then(|readers| readers.get(&reader_id))
                 .map(|r| r.last_seen_index)
                 .unwrap_or(0)
         };
@@ -246,7 +242,7 @@ impl EventBus {
         {
             let mut states = self.reader_states.write();
             if let Some(readers) = states.get_mut(&type_id) {
-                if let Some(reader) = readers.iter_mut().find(|r| r.reader_id == reader_id) {
+                if let Some(reader) = readers.get_mut(&reader_id) {
                     reader.last_seen_index = new_index;
                 }
             }
@@ -263,7 +259,7 @@ impl EventBus {
         }
         let mut states = self.reader_states.write();
         if let Some(readers) = states.get_mut(&type_id) {
-            for reader in readers {
+            for reader in readers.values_mut() {
                 reader.last_seen_index = 0;
             }
         }
@@ -276,7 +272,7 @@ impl EventBus {
         }
         let mut states = self.reader_states.write();
         for readers in states.values_mut() {
-            for reader in readers {
+            for reader in readers.values_mut() {
                 reader.last_seen_index = 0;
             }
         }

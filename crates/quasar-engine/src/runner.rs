@@ -26,6 +26,7 @@ use quasar_core::asset::AssetManager;
 use quasar_core::profiler::Profiler;
 use quasar_core::scene::SceneGraph;
 use quasar_core::{App, TimeSnapshot};
+#[cfg(feature = "editor")]
 use quasar_editor::{renderer::EditorRenderer, Editor};
 use quasar_render::deferred::{DeferredLightingPass, GBuffer};
 use quasar_render::{
@@ -33,6 +34,7 @@ use quasar_render::{
     HdrRenderTarget, LightData, LightsUniform, MeshCache, MeshShape, OrbitController, PointLight,
     PostProcessPass, RenderConfig, Renderer, ShadowCamera, ShadowMap, SpotLight, TonemappingPass,
 };
+#[cfg(feature = "ui")]
 use quasar_ui::{UiRenderPass, UiResource};
 use quasar_window::{Input, MouseButton, QuasarWindow, WindowConfig};
 
@@ -43,7 +45,9 @@ struct RunnerState {
     renderer: Renderer,
     camera: Camera,
     orbit: OrbitController,
+    #[cfg(feature = "editor")]
     editor: Editor,
+    #[cfg(feature = "editor")]
     editor_renderer: EditorRenderer,
     mesh_cache: MeshCache,
     /// Default directional light for scenes without explicit lights
@@ -69,6 +73,7 @@ struct RunnerState {
     /// Deferred lighting pass (when enabled)
     deferred_lighting: Option<DeferredLightingPass>,
     /// UI render pass for in-game UI
+    #[cfg(feature = "ui")]
     ui_render_pass: UiRenderPass,
 }
 
@@ -133,7 +138,9 @@ impl ApplicationHandler for QuasarRunner {
 
         let camera = Camera::new(size.width, size.height);
 
+        #[cfg(feature = "editor")]
         let editor = Editor::new();
+        #[cfg(feature = "editor")]
         let editor_renderer =
             EditorRenderer::new(&window, &renderer.device, renderer.config.format);
 
@@ -154,6 +161,7 @@ impl ApplicationHandler for QuasarRunner {
         }
 
         // Register UiPlugin for in-game UI
+        #[cfg(feature = "ui")]
         self.app.add_plugin(quasar_ui::UiPlugin);
 
         let shadow_map = ShadowMap::new(&renderer.device, 2048);
@@ -185,6 +193,7 @@ impl ApplicationHandler for QuasarRunner {
         };
 
         // Create UI render pass for in-game UI
+        #[cfg(feature = "ui")]
         let ui_render_pass = UiRenderPass::new(&renderer.device, renderer.config.format);
 
         self.state = Some(RunnerState {
@@ -192,7 +201,9 @@ impl ApplicationHandler for QuasarRunner {
             renderer,
             camera,
             orbit: OrbitController::new(5.0),
+            #[cfg(feature = "editor")]
             editor,
+            #[cfg(feature = "editor")]
             editor_renderer,
             mesh_cache: MeshCache::new(),
             default_light: DirectionalLight::default(),
@@ -206,6 +217,7 @@ impl ApplicationHandler for QuasarRunner {
             gpu_profiler,
             gbuffer,
             deferred_lighting,
+            #[cfg(feature = "ui")]
             ui_render_pass,
         });
 
@@ -227,7 +239,10 @@ impl ApplicationHandler for QuasarRunner {
         };
 
         // ── Let egui have first crack at the event ────────────────
+        #[cfg(feature = "editor")]
         let egui_consumed = state.editor_renderer.handle_event(&state.window, &event);
+        #[cfg(not(feature = "editor"))]
+        let egui_consumed = false;
 
         match event {
             // ── Close ─────────────────────────────────────────────
@@ -240,6 +255,7 @@ impl ApplicationHandler for QuasarRunner {
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(key) = event.physical_key {
                     // F12 toggles the editor regardless.
+                    #[cfg(feature = "editor")]
                     if key == KeyCode::F12 && event.state.is_pressed() {
                         state.editor.toggle();
                     }
@@ -333,11 +349,12 @@ impl ApplicationHandler for QuasarRunner {
 
                 // Insert simulation state so physics/audio/scripting systems
                 // know whether to run this frame.
-                self.app
-                    .world
-                    .insert_resource(quasar_core::SimulationState {
-                        should_tick: state.editor.state.should_tick(),
-                    });
+                self.app.world.insert_resource(quasar_core::SimulationState {
+                    #[cfg(feature = "editor")]
+                    should_tick: state.editor.state.should_tick(),
+                    #[cfg(not(feature = "editor"))]
+                    should_tick: true,
+                });
 
                 // Run one full ECS frame (updates time, runs all systems).
                 state.profiler.begin_scope("ecs_tick");
@@ -345,6 +362,7 @@ impl ApplicationHandler for QuasarRunner {
                 state.profiler.end_scope("ecs_tick");
 
                 // Periodically check for asset changes (every ~1 second when playing)
+                #[cfg(feature = "editor")]
                 if state.editor.state.should_tick() {
                     let frame_count = self
                         .app
@@ -737,6 +755,7 @@ impl ApplicationHandler for QuasarRunner {
                         }
 
                         // In-game UI pass (rendered after 3D/tonemapping, before editor)
+                        #[cfg(feature = "ui")]
                         if let Some(ui_resource) = self.app.world.resource::<UiResource>() {
                             let gpu_ui = state.gpu_profiler.begin_pass(&mut encoder, "ui");
                             let size = state.window.inner_size();
@@ -773,6 +792,7 @@ impl ApplicationHandler for QuasarRunner {
                         }
 
                         // egui pass (editor overlay).
+                        #[cfg(feature = "editor")]
                         let egui_commands = if state.editor.enabled {
                             // Build entity name list for the hierarchy panel.
                             // Use SceneGraph names when available, fall back to generic.
@@ -870,6 +890,8 @@ impl ApplicationHandler for QuasarRunner {
                         } else {
                             None
                         };
+                        #[cfg(not(feature = "editor"))]
+                        let egui_commands: Option<wgpu::CommandBuffer> = None;
 
                         // Resolve GPU profiler timestamps before submit.
                         state.gpu_profiler.resolve(&mut encoder);
@@ -882,11 +904,14 @@ impl ApplicationHandler for QuasarRunner {
                         state.renderer.queue.submit(buffers);
 
                         // Collect GPU profiler results and feed to editor.
-                        state.gpu_profiler.request_results();
-                        if let Some(timings) =
-                            state.gpu_profiler.try_collect(&state.renderer.device)
+                        #[cfg(feature = "editor")]
                         {
-                            state.editor.gpu_pass_timings = timings.to_vec();
+                            state.gpu_profiler.request_results();
+                            if let Some(timings) =
+                                state.gpu_profiler.try_collect(&state.renderer.device)
+                            {
+                                state.editor.gpu_pass_timings = timings.to_vec();
+                            }
                         }
 
                         output.present();

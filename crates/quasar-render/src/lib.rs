@@ -38,6 +38,7 @@ pub mod decal;
 #[cfg(feature = "deferred")]
 pub mod deferred;
 pub mod environment;
+pub mod foliage;
 pub mod gltf_loader;
 pub mod gpu_memory;
 pub mod gpu_profiler;
@@ -91,6 +92,7 @@ pub mod vertex;
 pub mod virtual_shadow;
 #[cfg(feature = "volumetric")]
 pub mod volumetric;
+pub mod vfx_graph;
 
 pub use asset_loader::{AssetLoader, GpuMaterial, GpuMesh, GpuTexture, RenderAssetManager};
 pub use bindless::{
@@ -102,7 +104,7 @@ pub use cascade_shadow::{
     Cascade, CascadeShadowMap, CascadeUniform, CASCADE_COUNT, SHADOW_MAP_SIZE,
 };
 pub use components::TextureHandle;
-pub use culling::{Aabb, Frustum};
+pub use culling::{Aabb, Frustum, Plane, RenderStats, cull_objects_slice, sort_by_mesh};
 pub use environment::{EnvironmentMap, EnvironmentMapLoader, IBL_MIP_LEVELS};
 pub use gltf_loader::{
     load_gltf, load_gltf_animations, load_gltf_morph_targets, sample_quat, sample_vec3,

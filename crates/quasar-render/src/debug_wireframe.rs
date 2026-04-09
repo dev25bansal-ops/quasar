@@ -11,54 +11,23 @@
 //!
 //! ```ignore
 //! use quasar_render::debug_wireframe::{DebugWireframeRenderer, DebugLine};
+//! use quasar_core::debug_draw::{DebugDraw, DebugDrawConfig};
 //!
 //! let mut debug_renderer = DebugWireframeRenderer::new(device);
 //!
-//! // In render loop:
-//! let lines = vec![
-//!     DebugLine::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]),
-//! ];
+//! // Generate lines from any system implementing DebugDraw:
+//! let lines = physics_world.generate_debug_lines(&DebugDrawConfig::default());
 //! debug_renderer.update(device, queue, &lines);
 //! debug_renderer.render(encoder, view, depth_view, camera_matrix);
 //! ```
 
 use bytemuck::{Pod, Zeroable};
-use serde::{Deserialize, Serialize};
 use std::mem;
 
+// Re-export DebugLine from core so consumers can use it from this module.
+pub use quasar_core::debug_draw::DebugLine;
+
 pub const MAX_DEBUG_LINES: usize = 65536;
-
-/// A single debug line segment in world space.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DebugLine {
-    pub start: [f32; 3],
-    pub end: [f32; 3],
-    pub color: [f32; 4],
-}
-
-impl DebugLine {
-    pub fn new(start: [f32; 3], end: [f32; 3], color: [f32; 4]) -> Self {
-        Self { start, end, color }
-    }
-
-    pub fn from_points(start: glam::Vec3, end: glam::Vec3, color: [f32; 4]) -> Self {
-        Self {
-            start: start.to_array(),
-            end: end.to_array(),
-            color,
-        }
-    }
-}
-
-impl From<quasar_physics::debug_draw::DebugLine> for DebugLine {
-    fn from(line: quasar_physics::debug_draw::DebugLine) -> Self {
-        Self {
-            start: line.start,
-            end: line.end,
-            color: line.color,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 #[repr(C)]

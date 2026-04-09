@@ -1,9 +1,9 @@
 [package]
 name = "web-demo"
 description = "WebGPU demo for Quasar Engine running in browser"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
 publish = false
 
 [lib]
@@ -13,11 +13,12 @@ crate-type = ["cdylib", "rlib"]
 quasar-core = { path = "../../crates/quasar-core" }
 quasar-math = { path = "../../crates/quasar-math" }
 quasar-render = { path = "../../crates/quasar-render" }
-wgpu = { workspace = true }
-winit = { workspace = true }
-log = { workspace = true }
-glam = { workspace = true }
-bytemuck = { workspace = true }
+quasar-engine = { path = "../../crates/quasar-engine", default-features = false, features = ["ui", "editor"] }
+wgpu = "24"
+winit = "0.30"
+log = "0.4"
+glam = { version = "0.29", features = ["bytemuck", "serde"] }
+bytemuck = { version = "1", features = ["derive"] }
 
 # WASM dependencies
 wasm-bindgen = "0.2"
@@ -31,7 +32,3 @@ web-sys = { version = "0.3", features = [
 ] }
 console_log = "1"
 console_error_panic_hook = "0.1"
-
-[dependencies.quasar-engine]
-path = "../../crates/quasar-engine"
-default-features = false

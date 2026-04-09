@@ -2,17 +2,23 @@
 //!
 //! A minimal WebGPU demo running in the browser.
 //!
-//! This demonstrates Quasar Engine's rendering capabilities using WebGPU.
+//! This demonstrates Quasar Engine''s rendering capabilities using WebGPU.
 //! Due to WASM limitations, this demo only includes core rendering -
 //! no audio, physics, or Lua scripting.
 
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use quasar_core::{App, Entity, TimeSnapshot, World};
+#[cfg(target_arch = "wasm32")]
 use quasar_math::{Transform, Vec3};
+#[cfg(target_arch = "wasm32")]
 use quasar_render::{Camera, MeshCache, MeshShape, RenderConfig, Renderer};
 
+#[cfg(target_arch = "wasm32")]
 use std::sync::Arc;
 
+#[cfg(target_arch = "wasm32")]
 const SHADER_SOURCE: &str = r#"
 struct Uniforms {
     mvp: mat4x4<f32>,
@@ -39,6 +45,7 @@ fn fs_main(@location(0) color: vec3<f32>) -> @location(0) vec4<f32> {
 }
 "#;
 
+#[cfg(target_arch = "wasm32")]
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
@@ -46,12 +53,14 @@ struct Vertex {
     normal: [f32; 3],
 }
 
+#[cfg(target_arch = "wasm32")]
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct Uniforms {
     mvp: [[f32; 4]; 4],
 }
 
+#[cfg(target_arch = "wasm32")]
 fn create_cube_vertices() -> Vec<Vertex> {
     let positions = [
         [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5,  0.5, -0.5], [-0.5,  0.5, -0.5],
@@ -93,12 +102,13 @@ fn create_cube_vertices() -> Vec<Vertex> {
     vertices
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     console_error_panic_hook::set_once();
     console_log::init_with_level(log::Level::Info).expect("Failed to initialize logging");
 
-    log::info!("Quasar Engine — Web Demo initializing...");
+    log::info!("Quasar Engine - Web Demo initializing...");
 
     let window = web_sys::window().ok_or("no window")?;
     let document = window.document().ok_or("no document")?;
@@ -164,7 +174,7 @@ pub async fn start() -> Result<(), JsValue> {
         desired_maximum_frame_latency: 2,
     });
 
-    log::info!("WebGPU surface configured — format {:?}", format);
+    log::info!("WebGPU surface configured - format {:?}", format);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Cube Shader"),
@@ -292,7 +302,7 @@ pub async fn start() -> Result<(), JsValue> {
         });
     });
 
-    log::info!("App configured — WebGPU rendering active!");
+    log::info!("App configured - WebGPU rendering active!");
 
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -397,5 +407,11 @@ pub async fn start() -> Result<(), JsValue> {
         g.borrow().as_ref().unwrap().as_ref().unchecked_ref()
     );
 
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn start() -> Result<(), ()> {
+    // web_demo is only available for wasm32 target
     Ok(())
 }

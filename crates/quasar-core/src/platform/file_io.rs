@@ -8,6 +8,9 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
+#[cfg(target_arch = "wasm32")]
+use web_sys::window;
+
 /// Trait for platform-specific asset loading.
 pub trait AssetLoader: Send + Sync {
     /// Read an asset file asynchronously.
@@ -62,16 +65,26 @@ async fn read_file_desktop(path: &Path) -> Result<Vec<u8>, FileError> {
 #[cfg(target_arch = "wasm32")]
 async fn read_file_wasm(path: &Path) -> Result<Vec<u8>, FileError> {
     let url = format!("/assets/{}", path.display());
-    
-    wasm_bindgen_futures::JsFuture::from(
-        web_sys::window()
-            .ok_or_else(|| FileError::Platform("No window object".into()))?
-            .fetch_with_str(&url)
+
+    let resp = window()
+        .ok_or_else(|| FileError::Platform("No window object".into()))?
+        .fetch_with_str(&url);
+
+    let resp = wasm_bindgen_futures::JsFuture::from(resp)
+        .await
+        .map_err(|e| FileError::Platform(format!("{:?}", e)))?;
+
+    let resp: web_sys::Response = resp.into();
+
+    let array_buffer = wasm_bindgen_futures::JsFuture::from(
+        resp.array_buffer()
+            .map_err(|e| FileError::Platform(format!("{:?}", e)))?,
     )
     .await
     .map_err(|e| FileError::Platform(format!("{:?}", e)))?;
-    
-    Ok(vec![])
+
+    let uint8_array = js_sys::Uint8Array::new(&array_buffer);
+    Ok(uint8_array.to_vec())
 }
 
 /// Android implementation using registered AssetLoader.

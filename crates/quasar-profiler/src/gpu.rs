@@ -119,7 +119,7 @@ impl GpuProfiler {
             mapped_at_creation: false,
         });
 
-        encoder.resolve_query_set(&query_set, 0, 2, &resolve_buffer, 0);
+        encoder.resolve_query_set(&query_set, 0..2, &resolve_buffer, 0);
         encoder.copy_buffer_to_buffer(&resolve_buffer, 0, &read_buffer, 0, 16);
     }
 

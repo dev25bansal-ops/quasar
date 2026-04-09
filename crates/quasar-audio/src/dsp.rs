@@ -358,6 +358,8 @@ pub struct ConvolutionReverb {
     pub ir: ConvolutionImpulseResponse,
     /// Tail buffer holding the overlap from previous frames.
     tail: Vec<f32>,
+    /// Pre-allocated wet buffer to avoid per-frame allocation.
+    wet_buffer: Vec<f32>,
     /// Wet/dry mix (0.0 = fully dry, 1.0 = fully wet).
     pub wet_mix: f32,
 }
@@ -368,6 +370,7 @@ impl ConvolutionReverb {
         Self {
             ir,
             tail: vec![0.0; tail_len],
+            wet_buffer: Vec::new(),
             wet_mix: wet_mix.clamp(0.0, 1.0),
         }
     }
@@ -381,34 +384,29 @@ impl ConvolutionReverb {
         }
 
         let n = buffer.len();
-        // Direct convolution: output[i] = sum_{j=0..ir_len-1} input[i-j] * ir[j]
-        // We accumulate into a temporary wet buffer.
-        let mut wet = vec![0.0f32; n + ir_len - 1];
+        let wet_len = n + ir_len - 1;
+        self.wet_buffer.resize(wet_len, 0.0);
+        self.wet_buffer.iter_mut().for_each(|s| *s = 0.0);
 
         for (i, &sample) in buffer.iter().enumerate() {
             for (j, &ir_sample) in self.ir.samples.iter().enumerate() {
-                wet[i + j] += sample * ir_sample;
+                self.wet_buffer[i + j] += sample * ir_sample;
             }
         }
 
-        // Add tail from previous frame.
         for (i, &t) in self.tail.iter().enumerate().take(n) {
-            wet[i] += t;
+            self.wet_buffer[i] += t;
         }
 
-        // Mix wet into the buffer.
         let mix = self.wet_mix;
         for (i, s) in buffer.iter_mut().enumerate() {
-            *s = *s * (1.0 - mix) + wet[i] * mix;
+            *s = *s * (1.0 - mix) + self.wet_buffer[i] * mix;
         }
 
-        // Save tail for next frame.
         self.tail.resize(ir_len, 0.0);
-        if n + ir_len > n {
-            for (i, t) in self.tail.iter_mut().enumerate() {
-                let idx = n + i;
-                *t = if idx < wet.len() { wet[idx] } else { 0.0 };
-            }
+        for (i, t) in self.tail.iter_mut().enumerate() {
+            let idx = n + i;
+            *t = if idx < self.wet_buffer.len() { self.wet_buffer[idx] } else { 0.0 };
         }
     }
 
@@ -696,6 +694,8 @@ impl HrtfDatabase {
 struct EarConvolver {
     ir: Vec<f32>,
     tail: Vec<f32>,
+    /// Pre-allocated wet buffer to avoid per-frame allocation.
+    wet_buffer: Vec<f32>,
 }
 
 impl EarConvolver {
@@ -704,6 +704,7 @@ impl EarConvolver {
         Self {
             ir,
             tail: vec![0.0; len],
+            wet_buffer: Vec::new(),
         }
     }
 
@@ -718,21 +719,23 @@ impl EarConvolver {
             return;
         }
         let n = input.len();
-        let mut wet = vec![0.0f32; n + ir_len - 1];
+        let wet_len = n + ir_len - 1;
+        self.wet_buffer.resize(wet_len, 0.0);
+        self.wet_buffer.iter_mut().for_each(|s| *s = 0.0);
         for (i, &s) in input.iter().enumerate() {
             for (j, &h) in self.ir.iter().enumerate() {
-                wet[i + j] += s * h;
+                self.wet_buffer[i + j] += s * h;
             }
         }
         for (i, &t) in self.tail.iter().enumerate().take(n) {
-            wet[i] += t;
+            self.wet_buffer[i] += t;
         }
         for (i, o) in output.iter_mut().enumerate().take(n) {
-            *o = wet[i];
+            *o = self.wet_buffer[i];
         }
         for (i, t) in self.tail.iter_mut().enumerate() {
             let idx = n + i;
-            *t = if idx < wet.len() { wet[idx] } else { 0.0 };
+            *t = if idx < self.wet_buffer.len() { self.wet_buffer[idx] } else { 0.0 };
         }
     }
 
@@ -746,6 +749,9 @@ impl EarConvolver {
 pub struct HrtfProcessor {
     left: EarConvolver,
     right: EarConvolver,
+    /// Pre-allocated output buffers to avoid per-frame allocation.
+    left_buf: Vec<f32>,
+    right_buf: Vec<f32>,
     /// Current direction (elevation, azimuth) in degrees.
     pub elevation: f32,
     pub azimuth: f32,
@@ -757,6 +763,8 @@ impl HrtfProcessor {
         Self {
             left: EarConvolver::new(ir.left),
             right: EarConvolver::new(ir.right),
+            left_buf: Vec::new(),
+            right_buf: Vec::new(),
             elevation,
             azimuth,
         }
@@ -774,14 +782,16 @@ impl HrtfProcessor {
     /// Convolve a mono input buffer into interleaved stereo (L, R, L, R, …).
     pub fn process(&mut self, mono_input: &[f32], stereo_output: &mut [f32]) {
         let n = mono_input.len();
-        let mut left_buf = vec![0.0f32; n];
-        let mut right_buf = vec![0.0f32; n];
-        self.left.process(mono_input, &mut left_buf);
-        self.right.process(mono_input, &mut right_buf);
+        self.left_buf.resize(n, 0.0);
+        self.right_buf.resize(n, 0.0);
+        self.left_buf.iter_mut().for_each(|s| *s = 0.0);
+        self.right_buf.iter_mut().for_each(|s| *s = 0.0);
+        self.left.process(mono_input, &mut self.left_buf);
+        self.right.process(mono_input, &mut self.right_buf);
         for i in 0..n {
             if i * 2 + 1 < stereo_output.len() {
-                stereo_output[i * 2] = left_buf[i];
-                stereo_output[i * 2 + 1] = right_buf[i];
+                stereo_output[i * 2] = self.left_buf[i];
+                stereo_output[i * 2 + 1] = self.right_buf[i];
             }
         }
     }

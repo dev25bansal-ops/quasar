@@ -116,9 +116,7 @@ mod inner {
     /// Command from WASM script to host.
     #[derive(Debug, Clone)]
     pub enum WasmEcsCommand {
-        Spawn {
-            result_entity_id: Arc<Mutex<u32>>,
-        },
+        Spawn { wasm_id: u32 },,
         Despawn {
             entity: u32,
         },

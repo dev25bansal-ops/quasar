@@ -87,16 +87,38 @@ impl QuinnBackend {
     }
 
     fn build_client_config() -> ClientConfig {
-        let crypto = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
-            .with_no_client_auth();
+        #[cfg(feature = "dev")]
+        {
+            // Development mode: skip certificate verification for LAN play.
+            // WARNING: This allows MITM attacks. Never use in production.
+            let crypto = rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(SkipServerVerification))
+                .with_no_client_auth();
 
-        #[allow(clippy::expect_used)]
-        let quic_config =
-            quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+            #[allow(clippy::expect_used)]
+            let quic_config =
+                quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
 
-        ClientConfig::new(Arc::new(quic_config))
+            ClientConfig::new(Arc::new(quic_config))
+        }
+
+        #[cfg(not(feature = "dev"))]
+        {
+            // Production mode: use system root certificates for proper TLS verification.
+            let root_store = rustls::RootCertStore {
+                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+            };
+            let crypto = rustls::ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth();
+
+            #[allow(clippy::expect_used)]
+            let quic_config =
+                quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+
+            ClientConfig::new(Arc::new(quic_config))
+        }
     }
 
     /// Spawn a background task that accepts new incoming connections.
@@ -175,8 +197,8 @@ impl QuicTransportBackend for QuinnBackend {
         let endpoint = if let Some(ep) = self.endpoint.as_ref() {
             ep.clone()
         } else {
-            #[allow(clippy::unwrap_used)]
-            let mut ep = Endpoint::client("0.0.0.0:0".parse().unwrap())
+            let any_addr: SocketAddr = ([0, 0, 0, 0], 0).into();
+            let mut ep = Endpoint::client(any_addr)
                 .map_err(|e| NetworkError(format!("quinn endpoint: {e}")))?;
             ep.set_default_client_config(client_cfg);
             self.endpoint = Some(ep.clone());
@@ -283,12 +305,15 @@ impl QuicTransportBackend for QuinnBackend {
 }
 
 // ---------------------------------------------------------------------------
-// Insecure cert verifier for development / LAN play.
+// Insecure cert verifier for development / LAN play (ONLY with `dev` feature).
+// WARNING: This allows MITM attacks. Never use in production.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "dev")]
 #[derive(Debug)]
 struct SkipServerVerification;
 
+#[cfg(feature = "dev")]
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
@@ -414,10 +439,8 @@ impl Transport for QuinnBackend {
                     .map_err(|e| NetworkError(format!("local_addr: {e}")))
             })
             .unwrap_or_else(|| {
-                #[allow(clippy::unwrap_used)]
-                {
-                    Ok("0.0.0.0:0".parse().unwrap())
-                }
+                // Return a zero address if no endpoint is bound yet.
+                Ok(SocketAddr::from(([0, 0, 0, 0], 0)))
             })
     }
 }

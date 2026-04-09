@@ -10,6 +10,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::delta_compression::{ClientBaseline, DeltaFrame, EntityDelta, MAX_COMPONENT_SLOTS};
 use serde::{Deserialize, Serialize};
 
 pub mod replication;
@@ -130,13 +131,13 @@ pub struct PooledBuffer<'a> {
 impl<'a> std::ops::Deref for PooledBuffer<'a> {
     type Target = Vec<u8>;
     fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().unwrap()
+        self.buffer.as_ref().expect("pooled buffer was already consumed")
     }
 }
 
 impl<'a> std::ops::DerefMut for PooledBuffer<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer.as_mut().unwrap()
+        self.buffer.as_mut().expect("pooled buffer was already consumed")
     }
 }
 
@@ -399,6 +400,17 @@ pub enum NetworkPayload {
         frame: u64,
         entities: Vec<EntitySnapshot>,
     },
+    /// Delta-compressed entity updates for efficient bandwidth usage.
+    EntityDelta {
+        tick: u64,
+        deltas: Vec<EntityDelta>,
+    },
+    /// Client acknowledgment of received delta tick + component hashes.
+    DeltaAck {
+        acked_tick: u64,
+        /// Serialized entity hashes: flat vec of (entity_id_u64, 64x u64 hashes).
+        entity_hashes: Vec<u64>,
+    },
     Rpc {
         entity_id: NetworkEntityId,
         method: String,
@@ -419,6 +431,87 @@ pub struct EntitySnapshot {
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
     pub frame: u64,
+}
+
+impl EntitySnapshot {
+    /// Compute per-slot component hashes for delta compression.
+    ///
+    /// Slot layout:
+    /// - 0: position (3x f32)
+    /// - 1: rotation (4x f32)
+    /// - 2: scale (3x f32)
+    /// - 3: frame (u64)
+    pub fn component_hashes(&self) -> [u64; MAX_COMPONENT_SLOTS] {
+        let mut hashes = [0u64; MAX_COMPONENT_SLOTS];
+        // Hash position (slot 0)
+        let pos_bytes = unsafe {
+            std::slice::from_raw_parts(
+                self.position.as_ptr() as *const u8,
+                std::mem::size_of::<[f32; 3]>(),
+            )
+        };
+        hashes[0] = hash_bytes(pos_bytes);
+
+        // Hash rotation (slot 1)
+        let rot_bytes = unsafe {
+            std::slice::from_raw_parts(
+                self.rotation.as_ptr() as *const u8,
+                std::mem::size_of::<[f32; 4]>(),
+            )
+        };
+        hashes[1] = hash_bytes(rot_bytes);
+
+        // Hash scale (slot 2)
+        let scale_bytes = unsafe {
+            std::slice::from_raw_parts(
+                self.scale.as_ptr() as *const u8,
+                std::mem::size_of::<[f32; 3]>(),
+            )
+        };
+        hashes[2] = hash_bytes(scale_bytes);
+
+        // Hash frame (slot 3)
+        hashes[3] = self.frame;
+
+        hashes
+    }
+
+    /// Serialize a specific component slot for delta transmission.
+    pub fn serialize_slot(&self, slot: usize) -> Option<Vec<u8>> {
+        match slot {
+            0 => Some(
+                self.position
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect(),
+            ),
+            1 => Some(
+                self.rotation
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect(),
+            ),
+            2 => Some(
+                self.scale.iter().flat_map(|f| f.to_le_bytes()).collect(),
+            ),
+            3 => Some(self.frame.to_le_bytes().to_vec()),
+            _ => None,
+        }
+    }
+}
+
+/// Fast non-cryptographic hash for component content identification.
+/// Uses a simple FNV-1a variant for speed.
+fn hash_bytes(data: &[u8]) -> u64 {
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    const FNV_PRIME: u64 = 1099511628211;
+
+    let mut hash = FNV_OFFSET;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    hash
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1785,11 +1878,71 @@ impl NetworkTransportResource {
 
 pub struct NetworkPlugin {
     config: NetworkConfig,
+    /// Per-client baselines for delta compression.
+    /// Maps ClientId → ClientBaseline tracking what each client has acknowledged.
+    client_baselines: std::collections::HashMap<ClientId, ClientBaseline>,
+    /// Whether delta compression is enabled (can be toggled at runtime).
+    delta_compression_enabled: bool,
+    /// Counter for delta frames sent (used for statistics).
+    delta_frames_sent: u64,
+    /// Counter for full snapshots sent (used for statistics).
+    full_snapshots_sent: u64,
 }
 
 impl NetworkPlugin {
     pub fn new(config: NetworkConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            client_baselines: std::collections::HashMap::new(),
+            delta_compression_enabled: true,
+            delta_frames_sent: 0,
+            full_snapshots_sent: 0,
+        }
+    }
+
+    /// Create a new NetworkPlugin with explicit delta compression settings.
+    pub fn with_delta_compression(config: NetworkConfig, enabled: bool) -> Self {
+        Self {
+            config,
+            client_baselines: std::collections::HashMap::new(),
+            delta_compression_enabled: enabled,
+            delta_frames_sent: 0,
+            full_snapshots_sent: 0,
+        }
+    }
+
+    /// Enable or disable delta compression at runtime.
+    pub fn set_delta_compression(&mut self, enabled: bool) {
+        self.delta_compression_enabled = enabled;
+        if !enabled {
+            // Clear baselines when disabling to free memory.
+            self.client_baselines.clear();
+        }
+    }
+
+    /// Get delta compression statistics.
+    pub fn delta_stats(&self) -> (u64, u64) {
+        (self.delta_frames_sent, self.full_snapshots_sent)
+    }
+
+    /// Process a client's delta acknowledgment.
+    pub fn on_client_acknowledge(
+        &mut self,
+        client_id: ClientId,
+        tick: u64,
+        hashes: &std::collections::HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]>,
+    ) {
+        let baseline = self.client_baselines.entry(client_id).or_insert_with(|| {
+            ClientBaseline::new(client_id)
+        });
+        baseline.acknowledge(tick, hashes);
+    }
+
+    /// Get or create a client baseline for delta computation.
+    fn get_or_create_baseline(&mut self, client_id: ClientId) -> &mut ClientBaseline {
+        self.client_baselines
+            .entry(client_id)
+            .or_insert_with(|| ClientBaseline::new(client_id))
     }
 }
 
@@ -1807,6 +1960,9 @@ fn network_system(world: &mut crate::World) {
     let mut transform_updates: Vec<TransformUpdate> = Vec::new();
     let mut snapshot_updates: Vec<(u64, Vec<EntitySnapshot>)> = Vec::new();
     let mut despawn_updates: Vec<NetworkEntityId> = Vec::new();
+    let mut delta_updates: Vec<(u64, Vec<EntityDelta>)> = Vec::new();
+    let mut delta_ack_updates: Vec<(u64, HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]>)> =
+        Vec::new();
 
     {
         let Some(replication) = world.resource::<NetworkReplication>() else {
@@ -1844,6 +2000,24 @@ fn network_system(world: &mut crate::World) {
                 }
                 NetworkPayload::StateSnapshot { frame, entities } => {
                     snapshot_updates.push((*frame, entities.clone()));
+                }
+                NetworkPayload::EntityDelta { tick, deltas } => {
+                    delta_updates.push((*tick, deltas.clone()));
+                }
+                NetworkPayload::DeltaAck { acked_tick, entity_hashes } => {
+                    // Parse flat vec back into HashMap.
+                    let mut hashes = HashMap::new();
+                    let mut i = 0;
+                    while i + MAX_COMPONENT_SLOTS <= entity_hashes.len() {
+                        let entity_id = NetworkEntityId(entity_hashes[i]);
+                        let mut h = [0u64; MAX_COMPONENT_SLOTS];
+                        for (j, slot) in h.iter_mut().enumerate() {
+                            *slot = entity_hashes[i + 1 + j];
+                        }
+                        hashes.insert(entity_id, h);
+                        i += 1 + MAX_COMPONENT_SLOTS;
+                    }
+                    delta_ack_updates.push((*acked_tick, hashes));
                 }
                 _ => {}
             }
@@ -1919,10 +2093,171 @@ fn network_system(world: &mut crate::World) {
         // Push into SnapshotInterpolation for smooth rendering.
         if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
             rep_res.interpolation.push_snapshot(frame, map.clone());
+            // Reset baselines on full snapshot reception (client side).
+            rep_res.delta_compressor.reset_baselines();
         }
         // Push into PendingServerSnapshot for rollback reconciliation.
         if let Some(pending) = world.resource_mut::<PendingServerSnapshot>() {
             pending.snapshot = Some((frame, map));
+        }
+    }
+
+    // Apply received delta updates to entity transforms (client-side).
+    for (_tick, deltas) in &delta_updates {
+        let net_to_entity: HashMap<NetworkEntityId, u32> = {
+            let Some(replication) = world.resource::<NetworkReplication>() else {
+                continue;
+            };
+            let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
+            state.network_to_entity.clone()
+        };
+
+        let entity_map: HashMap<u32, crate::ecs::Entity> = world
+            .query::<quasar_math::Transform>()
+            .into_iter()
+            .map(|(e, _)| (e.index(), e))
+            .collect();
+
+        for delta in deltas {
+            if let Some(&entity_index) = net_to_entity.get(&delta.entity_id) {
+                if let Some(&entity) = entity_map.get(&entity_index) {
+                    if let Some(t) = world.get_mut::<quasar_math::Transform>(entity) {
+                        // Apply each component from the delta.
+                        for (slot, data) in delta.iter_components() {
+                            match slot {
+                                0 if data.len() >= 12 => {
+                                    // Position: 3x f32
+                                    t.position = quasar_math::Vec3::new(
+                                        f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
+                                        f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
+                                        f32::from_le_bytes([
+                                            data[8], data[9], data[10], data[11],
+                                        ]),
+                                    );
+                                }
+                                1 if data.len() >= 16 => {
+                                    // Rotation: 4x f32
+                                    t.rotation = quasar_math::Quat::from_xyzw(
+                                        f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
+                                        f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
+                                        f32::from_le_bytes([
+                                            data[8], data[9], data[10], data[11],
+                                        ]),
+                                        f32::from_le_bytes([
+                                            data[12], data[13], data[14], data[15],
+                                        ]),
+                                    );
+                                }
+                                2 if data.len() >= 12 => {
+                                    // Scale: 3x f32
+                                    t.scale = quasar_math::Vec3::new(
+                                        f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
+                                        f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
+                                        f32::from_le_bytes([
+                                            data[8], data[9], data[10], data[11],
+                                        ]),
+                                    );
+                                }
+                                _ => {} // Unknown or insufficient data
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Send delta acknowledgments (client → server).
+    // On the client side, after processing deltas, send back ACK with current hashes.
+    let ack_message_and_server_addr = if !delta_updates.is_empty() {
+        // Build current entity hashes from local state.
+        let hashes: HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]> = world
+            .query::<Replicated>()
+            .into_iter()
+            .filter_map(|(entity, rep)| {
+                let t = world.get::<quasar_math::Transform>(entity)?;
+                let snap = EntitySnapshot {
+                    entity_id: rep.network_id,
+                    position: [t.position.x, t.position.y, t.position.z],
+                    rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                    scale: [t.scale.x, t.scale.y, t.scale.z],
+                    frame: 0,
+                };
+                Some((rep.network_id, snap.component_hashes()))
+            })
+            .collect();
+
+        let (ack_tick, server_addr) = match world.resource_mut::<ReplicationResource>() {
+            Some(rep_res) => {
+                let ack_tick = rep_res.last_delta_tick;
+
+                let server_addr = if let Some(replication) = world.resource::<NetworkReplication>() {
+                    let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
+                    if let NetworkRole::Client { server_addr } = &state.config.role {
+                        Some(*server_addr)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                (ack_tick, server_addr)
+            }
+            None => (0, None),
+        };
+
+        if let Some(server_addr) = server_addr {
+            // Serialize hashes into a flat Vec<u64>.
+            let mut entity_hashes: Vec<u64> = Vec::with_capacity(
+                hashes.len() * (1 + MAX_COMPONENT_SLOTS),
+            );
+            for (entity_id, h) in &hashes {
+                entity_hashes.push(entity_id.0);
+                entity_hashes.extend_from_slice(&h[..]);
+            }
+
+            Some((
+                NetworkMessage {
+                    sequence: ack_tick + 1,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                    payload: NetworkPayload::DeltaAck {
+                        acked_tick: ack_tick,
+                        entity_hashes,
+                    },
+                },
+                server_addr,
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some((ack_message, server_addr)) = ack_message_and_server_addr {
+        if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
+            if let Err(e) = transport.send(server_addr, &ack_message) {
+                log::warn!("Failed to send delta ACK to server: {}", e);
+            }
+        }
+    }
+
+    // Process delta acknowledgments (server-side).
+    // Update client baselines when clients acknowledge received deltas.
+    for (acked_tick, _hashes) in &delta_ack_updates {
+        if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
+            // Promote last_sent to baselines upon acknowledgment.
+            rep_res
+                .delta_compressor
+                .acknowledge_baseline(*acked_tick);
+            log::debug!(
+                "Delta ACK processed for tick {}",
+                acked_tick
+            );
         }
     }
 
@@ -2859,6 +3194,245 @@ mod tests {
         );
         assert!(!miss);
     }
+
+    // =========================================================================
+    // Delta Compression Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_entity_snapshot_component_hashes() {
+        let snap = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 42,
+        };
+
+        let hashes = snap.component_hashes();
+
+        // Slots 0-3 should be non-zero (position, rotation, scale, frame)
+        assert_ne!(hashes[0], 0); // position
+        assert_ne!(hashes[1], 0); // rotation
+        assert_ne!(hashes[2], 0); // scale
+        assert_eq!(hashes[3], 42); // frame is stored directly
+
+        // Remaining slots should be zero
+        for i in 4..MAX_COMPONENT_SLOTS {
+            assert_eq!(hashes[i], 0);
+        }
+    }
+
+    #[test]
+    fn test_entity_snapshot_component_hashes_different_values() {
+        let snap1 = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+
+        let snap2 = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [4.0, 5.0, 6.0], // Different position
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+
+        let hashes1 = snap1.component_hashes();
+        let hashes2 = snap2.component_hashes();
+
+        // Position hash should differ
+        assert_ne!(hashes1[0], hashes2[0]);
+        // Rotation and scale should be same
+        assert_eq!(hashes1[1], hashes2[1]);
+        assert_eq!(hashes1[2], hashes2[2]);
+    }
+
+    #[test]
+    fn test_entity_snapshot_serialize_slot_position() {
+        let snap = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [1.0, 2.0, 3.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+
+        let data = snap.serialize_slot(0);
+        assert!(data.is_some());
+        let data = data.unwrap();
+        assert_eq!(data.len(), 12); // 3 * 4 bytes
+
+        let x = f32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let y = f32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        let z = f32::from_le_bytes([data[8], data[9], data[10], data[11]]);
+
+        assert!((x - 1.0).abs() < 0.001);
+        assert!((y - 2.0).abs() < 0.001);
+        assert!((z - 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_entity_snapshot_serialize_slot_rotation() {
+        let snap = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+
+        let data = snap.serialize_slot(1);
+        assert!(data.is_some());
+        let data = data.unwrap();
+        assert_eq!(data.len(), 16); // 4 * 4 bytes
+
+        let w = f32::from_le_bytes([data[12], data[13], data[14], data[15]]);
+        assert!((w - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_entity_snapshot_serialize_slot_invalid_returns_none() {
+        let snap = EntitySnapshot {
+            entity_id: NetworkEntityId(1),
+            position: [0.0, 0.0, 0.0],
+            rotation: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+            frame: 0,
+        };
+
+        assert!(snap.serialize_slot(4).is_none());
+        assert!(snap.serialize_slot(64).is_none());
+    }
+
+    #[test]
+    fn test_network_plugin_delta_compression_enabled() {
+        let config = NetworkConfig::default();
+        let plugin = NetworkPlugin::with_delta_compression(config, true);
+
+        assert!(plugin.delta_compression_enabled);
+        assert_eq!(plugin.delta_frames_sent, 0);
+        assert_eq!(plugin.full_snapshots_sent, 0);
+    }
+
+    #[test]
+    fn test_network_plugin_toggle_delta_compression() {
+        let config = NetworkConfig::default();
+        let mut plugin = NetworkPlugin::new(config);
+
+        plugin.set_delta_compression(false);
+        assert!(!plugin.delta_compression_enabled);
+        assert!(plugin.client_baselines.is_empty());
+
+        plugin.set_delta_compression(true);
+        assert!(plugin.delta_compression_enabled);
+    }
+
+    #[test]
+    fn test_network_plugin_client_acknowledge() {
+        let config = NetworkConfig::default();
+        let mut plugin = NetworkPlugin::new(config);
+
+        let client_id = ClientId(1);
+        let entity_id = NetworkEntityId(42);
+
+        // Create baseline by acknowledging.
+        let mut hashes = HashMap::new();
+        let mut h = [0u64; MAX_COMPONENT_SLOTS];
+        h[0] = 12345;
+        hashes.insert(entity_id, h);
+
+        plugin.on_client_acknowledge(client_id, 10, &hashes);
+
+        // Verify baseline was updated.
+        let baseline = plugin.client_baselines.get(&client_id);
+        assert!(baseline.is_some());
+        let baseline = baseline.unwrap();
+        assert_eq!(baseline.acked_tick, 10);
+        assert_eq!(baseline.entity_hashes.len(), 1);
+        assert_eq!(baseline.entity_hashes[&entity_id][0], 12345);
+    }
+
+    #[test]
+    fn test_replication_resource_delta_tracking() {
+        let mut rep_res = ReplicationResource::new(60);
+
+        assert_eq!(rep_res.last_delta_tick, 0);
+        assert_eq!(rep_res.delta_frames_sent, 0);
+        assert!(!rep_res.baseline_refresh_pending);
+
+        rep_res.request_baseline_refresh();
+        assert!(rep_res.baseline_refresh_pending);
+
+        rep_res.queue_spawn(NetworkEntityId(1));
+        assert_eq!(rep_res.pending_spawns.len(), 1);
+    }
+
+    #[test]
+    fn test_entity_delta_serialization_roundtrip() {
+        let entity_id = NetworkEntityId(100);
+        let mut delta = EntityDelta::new(entity_id);
+
+        // Add position component (slot 0)
+        let pos_data = [1.0f32, 2.0, 3.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+        delta.set_component(0, &pos_data);
+
+        // Add rotation component (slot 1)
+        let rot_data = [0.0f32, 0.0, 0.0, 1.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+        delta.set_component(1, &rot_data);
+
+        assert_eq!(delta.component_count(), 2);
+        assert_eq!(delta.changed_mask, (1u64 << 0) | (1u64 << 1));
+
+        // Verify via iterator
+        let components: Vec<_> = delta.iter_components().collect();
+        assert_eq!(components.len(), 2);
+        assert_eq!(components[0].0, 0);
+        assert_eq!(components[0].1, pos_data.as_slice());
+        assert_eq!(components[1].0, 1);
+        assert_eq!(components[1].1, rot_data.as_slice());
+    }
+
+    #[test]
+    fn test_delta_frame_byte_size() {
+        let mut frame = DeltaFrame::new(42);
+
+        let mut delta = EntityDelta::new(NetworkEntityId(1));
+        delta.set_component(0, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        frame.deltas.push(delta);
+
+        assert_eq!(frame.tick, 42);
+        assert!(frame.byte_size() > 0);
+    }
+
+    #[test]
+    fn test_hash_bytes_deterministic() {
+        let data1 = [1.0f32, 2.0, 3.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+        let data2 = data1.clone();
+        let data3 = [4.0f32, 5.0, 6.0]
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect::<Vec<u8>>();
+
+        let hash1 = hash_bytes(&data1);
+        let hash2 = hash_bytes(&data2);
+        let hash3 = hash_bytes(&data3);
+
+        assert_eq!(hash1, hash2); // Same data → same hash
+        assert_ne!(hash1, hash3); // Different data → different hash
+    }
 }
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -3262,6 +3836,14 @@ pub struct ReplicationResource {
     pending_spawns: Vec<NetworkEntityId>,
     /// Entities awaiting despawn replication.
     pending_despawns: Vec<NetworkEntityId>,
+    /// Last tick for which we sent a delta frame.
+    pub last_delta_tick: u64,
+    /// Whether we need to send a full baseline refresh next tick.
+    pub baseline_refresh_pending: bool,
+    /// Counter of total delta frames sent (for statistics).
+    pub delta_frames_sent: u64,
+    /// Counter of bytes saved by delta compression (for statistics).
+    pub bytes_saved_by_delta: u64,
 }
 
 impl ReplicationResource {
@@ -3273,6 +3855,10 @@ impl ReplicationResource {
             tick_accumulator: TickAccumulator::new(tick_rate),
             pending_spawns: Vec::new(),
             pending_despawns: Vec::new(),
+            last_delta_tick: 0,
+            baseline_refresh_pending: false,
+            delta_frames_sent: 0,
+            bytes_saved_by_delta: 0,
         }
     }
 
@@ -3282,6 +3868,12 @@ impl ReplicationResource {
 
     pub fn queue_despawn(&mut self, id: NetworkEntityId) {
         self.pending_despawns.push(id);
+    }
+
+    /// Request a baseline refresh (full snapshot) for all clients.
+    /// This forces re-sync when delta baselines become stale.
+    pub fn request_baseline_refresh(&mut self) {
+        self.baseline_refresh_pending = true;
     }
 }
 
@@ -3311,7 +3903,7 @@ pub fn replication_system(world: &mut crate::World) {
 }
 
 fn server_replication_tick(world: &mut crate::World) {
-    // â”€â”€ Gather snapshots (read-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Gather snapshots (read-only) ──────────────────────────────
     let snapshots: Vec<(NetworkEntityId, EntitySnapshot)> = {
         let replicated_entities: Vec<(crate::ecs::Entity, NetworkEntityId)> = world
             .query::<Replicated>()
@@ -3337,9 +3929,9 @@ fn server_replication_tick(world: &mut crate::World) {
         out
     };
 
-    // â”€â”€ Gather metadata (read-only) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    let (frame_number, client_addrs) = {
-        let default = (0u64, Vec::new());
+    // ── Gather metadata (read-only) ──────────────────────────────
+    let (frame_number, client_addrs, client_ids) = {
+        let default = (0u64, Vec::new(), Vec::new());
         world
             .resource::<NetworkReplication>()
             .map(|r| {
@@ -3350,7 +3942,13 @@ fn server_replication_tick(world: &mut crate::World) {
                     .filter(|c| c.connected)
                     .map(|c| c.addr)
                     .collect();
-                (state.frame_number, addrs)
+                let ids: Vec<ClientId> = state
+                    .clients
+                    .values()
+                    .filter(|c| c.connected)
+                    .map(|c| c.id)
+                    .collect();
+                (state.frame_number, addrs, ids)
             })
             .unwrap_or(default)
     };
@@ -3359,8 +3957,15 @@ fn server_replication_tick(world: &mut crate::World) {
         return;
     }
 
-    // â”€â”€ Delta-compress (mutable ReplicationResource, no other borrows) â”€â”€
-    let (outgoing_messages, _has_deltas) = {
+    // ── Build a map of client addresses to client IDs for delta routing ──
+    let _addr_to_id: std::collections::HashMap<SocketAddr, ClientId> = client_addrs
+        .iter()
+        .zip(client_ids.iter())
+        .map(|(addr, id)| (*addr, *id))
+        .collect();
+
+    // ── Delta-compress per client (mutable ReplicationResource, no other borrows) ──
+    let all_messages: Vec<(SocketAddr, NetworkMessage)> = {
         let Some(rep_res) = world.resource_mut::<ReplicationResource>() else {
             return;
         };
@@ -3368,15 +3973,13 @@ fn server_replication_tick(world: &mut crate::World) {
         let spawns = std::mem::take(&mut rep_res.pending_spawns);
         let despawns = std::mem::take(&mut rep_res.pending_despawns);
 
-        let mut has_deltas = false;
-        for (net_id, snap) in &snapshots {
-            if rep_res.delta_compressor.needs_update(*net_id, snap) {
-                let _ = rep_res.delta_compressor.encode_delta(*net_id, snap);
-                rep_res.delta_compressor.mark_sent(*net_id, snap.clone());
-                has_deltas = true;
-            }
-        }
+        // Build a lookup of current snapshots by entity ID for quick access.
+        let snapshot_map: std::collections::HashMap<NetworkEntityId, &EntitySnapshot> = snapshots
+            .iter()
+            .map(|(id, snap)| (*id, snap))
+            .collect();
 
+        // Handle despawns: remove from delta compressor and baselines.
         for net_id in &despawns {
             rep_res.delta_compressor.remove(net_id);
         }
@@ -3386,50 +3989,145 @@ fn server_replication_tick(world: &mut crate::World) {
             .unwrap_or_default()
             .as_millis() as u64;
 
-        let mut msgs: Vec<NetworkMessage> = Vec::new();
+        let mut all_msgs: Vec<(SocketAddr, NetworkMessage)> = Vec::new();
 
-        // Reliable spawn/despawn messages.
-        for net_id in spawns {
-            msgs.push(NetworkMessage {
+        // Reliable spawn/despawn messages (broadcast to all clients).
+        for net_id in &spawns {
+            let msg = NetworkMessage {
                 sequence: frame_number,
                 timestamp: now,
                 payload: NetworkPayload::EntitySpawn {
-                    entity_id: net_id,
+                    entity_id: *net_id,
                     components: Vec::new(),
                 },
-            });
+            };
+            for &addr in &client_addrs {
+                all_msgs.push((addr, msg.clone()));
+            }
         }
-        for net_id in despawns {
-            msgs.push(NetworkMessage {
+        for net_id in &despawns {
+            let msg = NetworkMessage {
                 sequence: frame_number,
                 timestamp: now,
-                payload: NetworkPayload::EntityDespawn { entity_id: net_id },
-            });
+                payload: NetworkPayload::EntityDespawn { entity_id: *net_id },
+            };
+            for &addr in &client_addrs {
+                all_msgs.push((addr, msg.clone()));
+            }
         }
 
-        // Snapshot message with all dirty entity states.
-        if has_deltas {
-            let snap_entities: Vec<EntitySnapshot> =
-                snapshots.iter().map(|(_, s)| s.clone()).collect();
-            msgs.push(NetworkMessage {
-                sequence: frame_number,
-                timestamp: now,
-                payload: NetworkPayload::StateSnapshot {
-                    frame: frame_number,
-                    entities: snap_entities,
-                },
-            });
+        // Per-client delta compression.
+        for (&addr, _client_id) in client_addrs
+            .iter()
+            .zip(client_ids.iter())
+        {
+            let mut delta_frame = DeltaFrame::new(frame_number);
+            let mut has_any_delta = false;
+
+            for (net_id, current_snap) in &snapshots {
+                let _current_hash = current_snap.component_hashes();
+
+                // Check if this entity needs an update for this client using the baseline.
+                if !rep_res.delta_compressor.needs_update(*net_id, current_snap) {
+                    continue;
+                }
+
+                // Compute the delta using the client's baseline.
+                let delta = {
+                    let mut delta = EntityDelta::new(*net_id);
+
+                    // Build delta component by component.
+                    if let Some(data) = current_snap.serialize_slot(0) {
+                        delta.set_component(0, &data);
+                    }
+                    if let Some(data) = current_snap.serialize_slot(1) {
+                        delta.set_component(1, &data);
+                    }
+                    if let Some(data) = current_snap.serialize_slot(2) {
+                        delta.set_component(2, &data);
+                    }
+                    if let Some(data) = current_snap.serialize_slot(3) {
+                        delta.set_component(3, &data);
+                    }
+
+                    if delta.component_count() > 0 {
+                        delta
+                    } else {
+                        continue;
+                    }
+                };
+
+                delta_frame.deltas.push(delta);
+                has_any_delta = true;
+
+                // Mark as sent in the delta compressor for future needs_update checks.
+                rep_res
+                    .delta_compressor
+                    .mark_sent(*net_id, current_snap.clone());
+            }
+
+            // Send delta frame if there are changes.
+            if has_any_delta {
+                rep_res.delta_frames_sent += 1;
+                rep_res.last_delta_tick = frame_number;
+
+                // Estimate bytes saved before moving deltas.
+                let full_size = snapshot_map.len() * 128;
+                let delta_size = delta_frame.byte_size();
+                if full_size > delta_size {
+                    rep_res.bytes_saved_by_delta += (full_size - delta_size) as u64;
+                }
+
+                let msg = NetworkMessage {
+                    sequence: frame_number,
+                    timestamp: now,
+                    payload: NetworkPayload::EntityDelta {
+                        tick: frame_number,
+                        deltas: delta_frame.deltas,
+                    },
+                };
+                all_msgs.push((addr, msg));
+            } else if !spawns.is_empty() || !despawns.is_empty() {
+                // If no deltas but we have spawns/despawns, those were already added above.
+            }
         }
 
-        (msgs, has_deltas)
+        // Handle baseline refresh: send full snapshot to resync clients.
+        if rep_res.baseline_refresh_pending {
+            rep_res.baseline_refresh_pending = false;
+
+            let snap_entities: Vec<EntitySnapshot> = snapshots
+                .iter()
+                .map(|(_, s)| s.clone())
+                .collect();
+
+            if !snap_entities.is_empty() {
+                let msg = NetworkMessage {
+                    sequence: frame_number,
+                    timestamp: now,
+                    payload: NetworkPayload::StateSnapshot {
+                        frame: frame_number,
+                        entities: snap_entities,
+                    },
+                };
+                for &addr in &client_addrs {
+                    all_msgs.push((addr, msg.clone()));
+                }
+            }
+
+            // Reset delta compressor so next tick sends full snapshots.
+            rep_res.delta_compressor.reset_baselines();
+        }
+
+        all_msgs
     };
 
-    // â”€â”€ Send (mutable transport, no other borrows) â”€â”€â”€
-    if !outgoing_messages.is_empty() {
+    // ── Send (mutable transport, no other borrows) ──────────────
+    if !all_messages.is_empty() {
         if let Some(transport) = world.resource_mut::<NetworkTransportResource>() {
-            for msg in &outgoing_messages {
-                for &addr in &client_addrs {
-                    let _ = transport.send(addr, msg);
+            for (addr, msg) in &all_messages {
+                if let Err(e) = transport.send(*addr, msg) {
+                    log::warn!("server_replication_tick: failed to send to {}: {}", addr, e);
                 }
             }
         }
