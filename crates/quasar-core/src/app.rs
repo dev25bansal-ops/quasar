@@ -3,6 +3,7 @@
 use crate::ecs::{ParallelSchedule, Schedule, SystemNode, SystemStage, World};
 use crate::event::Events;
 use crate::plugin::Plugin;
+use crate::state::{AppExt, State, StateManager, StateTransitionSystem, StateUpdateSystem};
 use crate::time::{FixedUpdateAccumulator, Time};
 
 /// A lightweight, clonable snapshot of frame timing data.
@@ -178,5 +179,65 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl AppExt for App {
+    fn add_state<S: State>(&mut self) -> &mut Self {
+        // Insert the state manager
+        self.world.insert_resource(StateManager::<S>::new());
+
+        // Add state update system (runs every frame)
+        self.schedule.add_system(
+            SystemStage::Update,
+            Box::new(StateUpdateSystem::<S>::new()),
+        );
+
+        // Add state transition system (runs at end of frame)
+        self.schedule.add_system(
+            SystemStage::PostUpdate,
+            Box::new(StateTransitionSystem::<S>::new()),
+        );
+
+        log::info!("State machine registered for {:?}", std::any::type_name::<S>());
+        self
+    }
+
+    fn add_system_to_state<S: State>(
+        &mut self,
+        state: S,
+        name: impl Into<String>,
+        func: impl FnMut(&mut World) + Send + Sync + 'static,
+    ) -> &mut Self {
+        use crate::state::StateGuardedSystem;
+
+        let system = StateGuardedSystem {
+            state,
+            inner: Box::new(func),
+            name: name.into(),
+            _marker: std::marker::PhantomData,
+        };
+
+        self.schedule.add_system(SystemStage::Update, Box::new(system));
+        self
+    }
+
+    fn add_system_to_states<S: State>(
+        &mut self,
+        states: &[S],
+        name: impl Into<String>,
+        func: impl FnMut(&mut World) + Send + Sync + 'static,
+    ) -> &mut Self {
+        use crate::state::StatesGuardedSystem;
+
+        let system = StatesGuardedSystem {
+            states: states.to_vec(),
+            inner: Box::new(func),
+            name: name.into(),
+            _marker: std::marker::PhantomData,
+        };
+
+        self.schedule.add_system(SystemStage::Update, Box::new(system));
+        self
     }
 }

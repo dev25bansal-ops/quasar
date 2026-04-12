@@ -92,6 +92,7 @@ pub mod reflect;
 pub mod save_load;
 pub mod scene;
 pub mod scene_serde;
+pub mod state;
 pub mod time;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_platform;
@@ -154,6 +155,9 @@ pub use profiler::{AllocTracker, FrameBudget, FrameStats, Profiler, ProfilerPlug
 pub use save_load::{capture_game_save, load_game_save, GameSave, SaveMeta, SavedEntity};
 pub use scene::{Scene, SceneGraph};
 pub use scene_serde::{EntityData, SceneData};
+pub use state::{
+    AppExt, State, StateManager, StateTransition, StateUpdateSystem, StateTransitionSystem,
+};
 pub use time::{FixedUpdateAccumulator, Time};
 
 /// Commonly used types for convenience.
@@ -172,4 +176,5 @@ pub mod prelude {
     pub use crate::time::{FixedUpdateAccumulator, Time};
     pub use crate::app::{App, TimeSnapshot, SimulationState, simulation_active};
     pub use crate::plugin::Plugin;
+    pub use crate::state::{AppExt, State, StateManager, StateTransition};
 }
