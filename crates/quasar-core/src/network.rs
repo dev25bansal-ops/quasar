@@ -2034,11 +2034,13 @@ fn network_system(world: &mut crate::World) {
             state.network_to_entity.clone()
         };
 
-        let entity_map: HashMap<u32, crate::ecs::Entity> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
-            .map(|(e, _)| (e.index(), e))
-            .collect();
+        let entity_map: HashMap<u32, crate::ecs::Entity> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+            query
+                .iter(world)
+                .map(|(e, _)| (e.index(), e))
+                .collect()
+        };
 
         for (net_id, position, rotation, scale) in &transform_updates {
             if let Some(&entity_index) = net_to_entity.get(net_id) {
@@ -2071,9 +2073,9 @@ fn network_system(world: &mut crate::World) {
             state.network_to_entity.get(net_id).copied()
         };
         if let Some(idx) = entity_index {
-            let all_entities: Vec<crate::ecs::Entity> = world
-                .query::<quasar_math::Transform>()
-                .into_iter()
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+            let all_entities: Vec<crate::ecs::Entity> = query
+                .iter(world)
                 .map(|(e, _)| e)
                 .collect();
             for entity in all_entities {
@@ -2112,11 +2114,13 @@ fn network_system(world: &mut crate::World) {
             state.network_to_entity.clone()
         };
 
-        let entity_map: HashMap<u32, crate::ecs::Entity> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
-            .map(|(e, _)| (e.index(), e))
-            .collect();
+        let entity_map: HashMap<u32, crate::ecs::Entity> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+            query
+                .iter(world)
+                .map(|(e, _)| (e.index(), e))
+                .collect()
+        };
 
         for delta in deltas {
             if let Some(&entity_index) = net_to_entity.get(&delta.entity_id) {
@@ -2171,21 +2175,23 @@ fn network_system(world: &mut crate::World) {
     // On the client side, after processing deltas, send back ACK with current hashes.
     let ack_message_and_server_addr = if !delta_updates.is_empty() {
         // Build current entity hashes from local state.
-        let hashes: HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]> = world
-            .query::<Replicated>()
-            .into_iter()
-            .filter_map(|(entity, rep)| {
-                let t = world.get::<quasar_math::Transform>(entity)?;
-                let snap = EntitySnapshot {
-                    entity_id: rep.network_id,
-                    position: [t.position.x, t.position.y, t.position.z],
-                    rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
-                    scale: [t.scale.x, t.scale.y, t.scale.z],
-                    frame: 0,
-                };
-                Some((rep.network_id, snap.component_hashes()))
-            })
-            .collect();
+        let hashes: HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&Replicated>::new();
+            query
+                .iter(world)
+                .filter_map(|(entity, rep)| {
+                    let t = world.get::<quasar_math::Transform>(entity)?;
+                    let snap = EntitySnapshot {
+                        entity_id: rep.network_id,
+                        position: [t.position.x, t.position.y, t.position.z],
+                        rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                        scale: [t.scale.x, t.scale.y, t.scale.z],
+                        frame: 0,
+                    };
+                    Some((rep.network_id, snap.component_hashes()))
+                })
+                .collect()
+        };
 
         let (ack_tick, server_addr) = match world.resource_mut::<ReplicationResource>() {
             Some(rep_res) => {
@@ -2336,9 +2342,9 @@ fn network_system(world: &mut crate::World) {
     const MAX_ENTITIES_PER_CLIENT: usize = 128;
 
     let _spatial_grid: SpatialGrid = {
-        let entities_with_transforms: Vec<(crate::ecs::Entity, &quasar_math::Transform)> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+        let entities_with_transforms: Vec<(crate::ecs::Entity, &quasar_math::Transform)> = query
+            .iter(world)
             .collect();
 
         let mut grid = SpatialGrid::new(20.0);
@@ -2355,44 +2361,48 @@ fn network_system(world: &mut crate::World) {
         };
         let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
 
-        let transforms: Vec<_> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
-            .filter_map(|(entity, t)| {
-                state.entity_to_network.get(&entity.index()).map(|net_id| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    (
-                        *net_id,
-                        entity.index(),
-                        NetworkMessage {
-                            sequence: state.frame_number,
-                            timestamp: now,
-                            payload: NetworkPayload::EntityTransform {
-                                entity_id: *net_id,
-                                position: [t.position.x, t.position.y, t.position.z],
-                                rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
-                                scale: [t.scale.x, t.scale.y, t.scale.z],
+        let transforms: Vec<_> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+            query
+                .iter(world)
+                .filter_map(|(entity, t)| {
+                    state.entity_to_network.get(&entity.index()).map(|net_id| {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        (
+                            *net_id,
+                            entity.index(),
+                            NetworkMessage {
+                                sequence: state.frame_number,
+                                timestamp: now,
+                                payload: NetworkPayload::EntityTransform {
+                                    entity_id: *net_id,
+                                    position: [t.position.x, t.position.y, t.position.z],
+                                    rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                                    scale: [t.scale.x, t.scale.y, t.scale.z],
+                                },
                             },
-                        },
-                        Vec3::new(t.position.x, t.position.y, t.position.z),
-                    )
+                            Vec3::new(t.position.x, t.position.y, t.position.z),
+                        )
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
 
         // Build client positions from controlled entities (entities with owner matching client).
         // For simplicity, use AudioListener position if available, else origin.
-        let client_positions: HashMap<ClientId, Vec3> = world
-            .query::<(Replicated, quasar_math::Transform)>()
-            .into_iter()
-            .filter_map(|(_, (rep, t))| {
-                rep.owner
-                    .map(|owner| (owner, Vec3::new(t.position.x, t.position.y, t.position.z)))
-            })
-            .collect();
+        let client_positions: HashMap<ClientId, Vec3> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<(&Replicated, &quasar_math::Transform)>::new();
+            query
+                .iter(world)
+                .filter_map(|(_, (rep, t))| {
+                    rep.owner
+                        .map(|owner| (owner, Vec3::new(t.position.x, t.position.y, t.position.z)))
+                })
+                .collect()
+        };
 
         let addrs: Vec<(SocketAddr, Option<ClientId>, Option<Vec3>)> = state
             .clients
@@ -3905,9 +3915,9 @@ pub fn replication_system(world: &mut crate::World) {
 fn server_replication_tick(world: &mut crate::World) {
     // ── Gather snapshots (read-only) ──────────────────────────────
     let snapshots: Vec<(NetworkEntityId, EntitySnapshot)> = {
-        let replicated_entities: Vec<(crate::ecs::Entity, NetworkEntityId)> = world
-            .query::<Replicated>()
-            .into_iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&Replicated>::new();
+        let replicated_entities: Vec<(crate::ecs::Entity, NetworkEntityId)> = query
+            .iter(world)
             .map(|(e, rep)| (e, rep.network_id))
             .collect();
 
@@ -4165,9 +4175,9 @@ fn client_interpolation_tick(world: &mut crate::World) {
     };
 
     // Find entities and apply transforms.
-    let all_entities: Vec<(crate::ecs::Entity, u32)> = world
-        .query::<quasar_math::Transform>()
-        .into_iter()
+    let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+    let all_entities: Vec<(crate::ecs::Entity, u32)> = query
+        .iter(world)
         .map(|(e, _)| (e, e.index()))
         .collect();
 
@@ -4219,9 +4229,9 @@ pub fn rollback_system(world: &mut crate::World) {
 
     // 1. Save current predicted state.
     let current_entities: HashMap<NetworkEntityId, EntitySnapshot> = {
-        world
-            .query::<Replicated>()
-            .into_iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&Replicated>::new();
+        query
+            .iter(world)
             .filter_map(|(entity, rep)| {
                 let t = world.get::<quasar_math::Transform>(entity)?;
                 Some((
@@ -4292,11 +4302,13 @@ pub fn rollback_system(world: &mut crate::World) {
             state.network_to_entity.clone()
         };
 
-        let all_entities: Vec<(crate::ecs::Entity, u32)> = world
-            .query::<quasar_math::Transform>()
-            .into_iter()
-            .map(|(e, _)| (e, e.index()))
-            .collect();
+        let all_entities: Vec<(crate::ecs::Entity, u32)> = {
+            let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
+            query
+                .iter(world)
+                .map(|(e, _)| (e, e.index()))
+                .collect()
+        };
 
         for (net_id, snap) in &corrected {
             if let Some(&target_idx) = entity_map.get(net_id) {

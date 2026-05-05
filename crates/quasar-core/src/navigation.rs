@@ -509,9 +509,9 @@ impl System for NavMeshAgentSystem {
             .map(|t| t.delta_seconds)
             .unwrap_or(1.0 / 60.0);
 
-        let agents: Vec<(Entity, NavMeshAgent)> = world
-            .query::<NavMeshAgent>()
-            .into_iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&NavMeshAgent>::new();
+        let agents: Vec<(Entity, NavMeshAgent)> = query
+            .iter(world)
             .filter(|(_, a)| !a.arrived)
             .map(|(e, a)| (e, a.clone()))
             .collect();

@@ -15,6 +15,7 @@
 
 pub mod bridge;
 pub mod component_registry;
+pub mod hot_reload;
 pub mod plugin;
 pub mod wasm_scripting;
 use crossbeam_channel::{unbounded, Receiver};
@@ -555,20 +556,31 @@ impl ScriptEngine {
     }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 /// ECS component that attaches a Lua script to an entity.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ScriptComponent {
     /// Path to the Lua script file.
     pub path: String,
-    /// Whether the script has been loaded initially.
-    pub loaded: bool,
+    /// Whether the script has been loaded initially (using AtomicBool for interior mutability).
+    pub loaded: AtomicBool,
 }
 
 impl ScriptComponent {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            loaded: false,
+            loaded: AtomicBool::new(false),
+        }
+    }
+}
+
+impl Clone for ScriptComponent {
+    fn clone(&self) -> Self {
+        Self {
+            path: self.path.clone(),
+            loaded: AtomicBool::new(self.loaded.load(Ordering::Relaxed)),
         }
     }
 }

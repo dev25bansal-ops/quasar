@@ -29,7 +29,7 @@
 //! let loaded = GameSave::load_from_binary_file("save.qsave")?;
 //! ```
 
-use crate::ecs::{Entity, World};
+use crate::ecs::{CachedArchetypeQueryState, Entity, World};
 use crate::scene::SceneGraph;
 use crate::scene_serde::{EntityData, SceneData};
 use flate2::read::GzDecoder;
@@ -413,9 +413,11 @@ fn crc32(data: &[u8]) -> u32 {
 /// The returned `GameSave` has `meta.timestamp` auto-populated from the
 /// system clock (UTC, RFC-3339). Callers should set `meta.slot_name`.
 pub fn capture_game_save(world: &World) -> GameSave {
-    let transforms: Vec<(Entity, Transform)> = world
-        .query::<Transform>()
-        .into_iter()
+    // Use CachedArchetypeQueryState for zero-allocation iteration
+    let mut query: CachedArchetypeQueryState<&Transform, ()> =
+        CachedArchetypeQueryState::new();
+    let transforms: Vec<(Entity, Transform)> = query
+        .iter(world)
         .map(|(e, t)| (e, *t))
         .collect();
 
@@ -611,7 +613,7 @@ impl SaveSlotManager {
 
         for (i, meta) in self.slots.iter().enumerate() {
             if let Some(m) = meta {
-                if oldest.is_none() || m.timestamp < oldest.as_ref().unwrap().1 {
+                if oldest.is_none() || m.timestamp < *oldest.as_ref().map(|o| &o.1).unwrap_or(&String::new()) {
                     oldest = Some((i, m.timestamp.clone()));
                 }
             }

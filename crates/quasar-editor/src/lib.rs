@@ -7,11 +7,20 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod ai_editor;
+pub mod ai_debug_overlay;
+pub mod animation_editor;
 pub mod asset_browser;
 pub mod asset_metadata;
 pub mod asset_processor;
+pub mod blackboard_debugger;
+pub mod behavior_tree_graph;
+pub mod bt_simulation;
+pub mod bt_serialization;
+pub mod brush_tools;
 pub mod console;
 pub mod editor_state;
+pub mod foliage_editor;
 pub mod gizmos;
 pub mod hierarchy;
 pub mod inspector;
@@ -19,12 +28,24 @@ pub mod inspector_commands;
 pub mod logic_graph;
 pub mod logic_graph_editor;
 pub mod logic_graph_system;
+pub mod particle_editor;
+pub mod quest_editor;
 pub mod reflect;
 pub mod renderer;
 pub mod shader_graph_editor;
+pub mod splat_editor;
+pub mod terrain_editor;
+pub mod timeline;
+pub mod vfx_graph;
 
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
 pub use asset_processor::{AssetHandle, AssetImporter, LoadedAsset};
+pub use ai_editor::{AiBehaviorEditor, AiBehaviorTree, BehaviorTemplate, TemplateCategory};
+pub use behavior_tree_graph::{
+    BtEditorNode, BtEditorNodeType, BtGraphState, GraphConnectionId, GraphNodeId,
+};
+pub use bt_simulation::{BtSimulation, SimNodeStatus, SimulationState, SimulationStats, TraceEntry};
+pub use bt_serialization::{BtDeserializer, BtRuntimeConverter, BtSerializer};
 pub use console::ConsoleLog;
 pub use editor_state::{
     DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
@@ -37,12 +58,37 @@ pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
 pub use logic_graph_editor::LogicGraphEditorState;
 pub use logic_graph_system::{LogicGraphAttachment, LogicGraphSystem};
 use quasar_core::ecs::Entity;
+pub use particle_editor::{
+    presets, EditorTab as ParticleEditorTab, ParticleEditorState, SimulationMode,
+};
+pub use quest_editor::{
+    EditorTab, ObjectiveDef, PrerequisiteDef, QuestDef, QuestEditor, RewardDef,
+    RewardTypeEditor, TestModeState,
+};
 pub use quasar_derive::Inspect as DeriveInspect;
 pub use reflect::{
     widget_bool, widget_color3, widget_color4, widget_f32, widget_f64, widget_i32, widget_string,
     widget_u32, widget_vec3, FieldDescriptor, FieldMeta, Inspect, InspectFn, ReflectionRegistry,
 };
 pub use shader_graph_editor::ShaderGraphEditor;
+pub use splat_editor::{
+    splat_editor_ui, BlendMode, SplatEditorState, SplatmapData, TerrainMaterial,
+};
+pub use terrain_editor::{
+    QuickBrush, TerrainEditor, TerrainEditorMode,
+};
+pub use foliage_editor::{
+    foliage_editor_ui, FoliageEditorState, FoliageInstance, FoliageTypeDef, FoliageKind,
+};
+pub use brush_tools::{
+    apply_brush_heightmap, apply_brush_splatmap, BrushSettings, BrushStroke, BrushType,
+    FalloffType, HeightmapSnapshot, SplatmapSnapshot, generate_brush_preview,
+};
+pub use quasar_render::terrain::{
+    TerrainData, TerrainMaterial as RenderTerrainMaterial, TerrainBlendMode,
+    TerrainBounds, TerrainFoliageInstance, TerrainConfig,
+};
+pub use vfx_graph::{graph_to_particle_system, VfxGraphEditorState};
 
 // ---------------------------------------------------------------------------
 // Animation Timeline Panel
@@ -411,6 +457,20 @@ pub struct Editor {
     pub show_gpu_profiler: bool,
     /// GPU pass timing data (name, duration_ms) from the last frame.
     pub gpu_pass_timings: Vec<(String, f64)>,
+    /// Show the particle editor panel.
+    pub show_particle_editor: bool,
+    /// Particle editor state.
+    pub particle_editor: ParticleEditorState,
+    /// Show the AI behavior editor panel.
+    pub show_ai_editor: bool,
+    /// AI behavior editor state.
+    pub ai_behavior_editor: AiBehaviorEditor,
+    /// Show the animation editor panel.
+    pub show_animation_editor: bool,
+    /// Animation editor panel state.
+    pub animation_editor: animation_editor::AnimationEditorPanel,
+    /// Advanced timeline widget.
+    pub timeline_widget: timeline::TimelineWidget,
 }
 
 impl Editor {
@@ -445,6 +505,13 @@ impl Editor {
             spawn_logic_graph_requested: false,
             show_gpu_profiler: false,
             gpu_pass_timings: Vec::new(),
+            show_particle_editor: false,
+            particle_editor: ParticleEditorState::new(),
+            show_ai_editor: false,
+            ai_behavior_editor: AiBehaviorEditor::new(),
+            show_animation_editor: false,
+            animation_editor: animation_editor::AnimationEditorPanel::new(),
+            timeline_widget: timeline::TimelineWidget::new(),
         }
     }
 
@@ -485,8 +552,11 @@ impl Editor {
                 ui.toggle_value(&mut self.show_shader_graph, "🔗 Shader Graph");
                 ui.toggle_value(&mut self.show_lua_repl, "🖥 Lua REPL");
                 ui.toggle_value(&mut self.show_timeline, "🎬 Timeline");
+                ui.toggle_value(&mut self.show_animation_editor, "🎞 Animation Editor");
                 ui.toggle_value(&mut self.show_logic_graph, "📜 Logic Graph");
                 ui.toggle_value(&mut self.show_gpu_profiler, "⏱ GPU Profiler");
+                ui.toggle_value(&mut self.show_particle_editor, "✨ Particles");
+                ui.toggle_value(&mut self.show_ai_editor, "🧠 AI Behavior Editor");
                 ui.separator();
 
                 // Play/Pause/Stop buttons
@@ -744,6 +814,31 @@ impl Editor {
                             });
                         }
                     }
+                });
+        }
+
+        // Particle editor panel
+        if self.show_particle_editor {
+            self.particle_editor.ui(ctx);
+        }
+
+        // AI Behavior Editor panel
+        if self.show_ai_editor {
+            self.ai_behavior_editor.ui(ctx);
+        }
+
+        // Animation Editor panel
+        if self.show_animation_editor {
+            self.animation_editor.ui(ctx);
+        }
+
+        // Timeline widget panel
+        if self.show_timeline {
+            egui::TopBottomPanel::bottom("timeline_widget")
+                .default_height(200.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.timeline_widget.ui(ui);
                 });
         }
 

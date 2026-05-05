@@ -16,7 +16,7 @@ pub mod gpu_reverb;
 pub mod plugin;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kira::manager::{backend::DefaultBackend, AudioManager, AudioManagerSettings};
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
@@ -87,6 +87,30 @@ impl BusManager {
             track.set_volume(kira::Volume::Amplitude(volume), Tween::default());
         }
     }
+
+    /// Get the mutable track handle for a bus (for adding effects).
+    pub fn track_for_mut(&mut self, bus: &AudioBus) -> Option<&mut TrackHandle> {
+        self.tracks.get_mut(bus)
+    }
+}
+
+/// Validates that a path is within the allowed assets directory to prevent path traversal attacks.
+fn validate_path(path: &Path) -> Result<PathBuf, String> {
+    // Get absolute path using canonicalize
+    let absolute = path.canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
+
+    // Check if path is within current directory or assets subdirectory
+    let current_dir = std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+
+    // Allow paths that are within current directory or an "assets" subdirectory
+    let is_allowed = absolute.starts_with(&current_dir)
+        || absolute.starts_with(&current_dir.join("assets"));
+
+    if !is_allowed {
+        return Err(format!("Path traversal not allowed: {}", absolute.display()));
+    }
+
+    Ok(absolute)
 }
 
 /// Handle wrapper that unifies static and streaming playback.
@@ -204,11 +228,15 @@ impl AudioSystem {
     /// Play a sound routed through the specified audio bus.
     pub fn play_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let path_str = path.as_ref().to_string_lossy().to_string();
+        
+        // Validate path to prevent path traversal attacks
+        let validated_path = validate_path(path.as_ref()).ok()?;
+        
+        let path_str = validated_path.to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
             cached.clone()
         } else {
-            let loaded = StaticSoundData::from_file(&path_str).ok()?;
+            let loaded = StaticSoundData::from_file(&validated_path).ok()?;
             self.sound_cache.insert(path_str.clone(), loaded.clone());
             loaded
         };
@@ -236,11 +264,15 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let path_str = path.as_ref().to_string_lossy().to_string();
+        
+        // Validate path to prevent path traversal attacks
+        let validated_path = validate_path(path.as_ref()).ok()?;
+        
+        let path_str = validated_path.to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
             cached.clone()
         } else {
-            let loaded = StaticSoundData::from_file(&path_str).ok()?;
+            let loaded = StaticSoundData::from_file(&validated_path).ok()?;
             self.sound_cache.insert(path_str.clone(), loaded.clone());
             loaded
         };
@@ -270,14 +302,39 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let path_str = path.as_ref().to_string_lossy().to_string();
-        let mut data = StreamingSoundData::from_file(&path_str).ok()?;
+        
+        // Validate path to prevent path traversal attacks
+        let validated_path = match validate_path(path.as_ref()) {
+            Ok(path) => path,
+            Err(e) => {
+                log::error!("Failed to validate path for streaming audio: {}", e);
+                return None;
+            }
+        };
+        
+        let path_str = validated_path.to_string_lossy().to_string();
+        let mut data = match StreamingSoundData::from_file(&validated_path) {
+            Ok(data) => data,
+            Err(e) => {
+                log::error!("Failed to load streaming audio from {}: {}", path_str, e);
+                return None;
+            }
+        };
+        
         if let Some(ref mut bus_mgr) = self.bus_manager {
             if let Some(track) = bus_mgr.track_for(bus, manager) {
                 data.settings.output_destination = kira::OutputDestination::Track(track.id());
             }
         }
-        let handle = manager.play(data).ok()?;
+        
+        let handle = match manager.play(data) {
+            Ok(handle) => handle,
+            Err(e) => {
+                log::error!("Failed to play streaming audio {}: {}", path_str, e);
+                return None;
+            }
+        };
+        
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, SoundHandle::Streaming(handle));
@@ -296,15 +353,41 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        let path_str = path.as_ref().to_string_lossy().to_string();
-        let mut data = StreamingSoundData::from_file(&path_str).ok()?;
+        
+        // Validate path to prevent path traversal attacks
+        let validated_path = match validate_path(path.as_ref()) {
+            Ok(path) => path,
+            Err(e) => {
+                log::error!("Failed to validate path for looped streaming audio: {}", e);
+                return None;
+            }
+        };
+        
+        let path_str = validated_path.to_string_lossy().to_string();
+        let mut data = match StreamingSoundData::from_file(&validated_path) {
+            Ok(data) => data,
+            Err(e) => {
+                log::error!("Failed to load looped streaming audio from {}: {}", path_str, e);
+                return None;
+            }
+        };
+        
         data.settings.loop_region = Some(kira::sound::Region::default());
+        
         if let Some(ref mut bus_mgr) = self.bus_manager {
             if let Some(track) = bus_mgr.track_for(bus, manager) {
                 data.settings.output_destination = kira::OutputDestination::Track(track.id());
             }
         }
-        let handle = manager.play(data).ok()?;
+        
+        let handle = match manager.play(data) {
+            Ok(handle) => handle,
+            Err(e) => {
+                log::error!("Failed to play looped streaming audio {}: {}", path_str, e);
+                return None;
+            }
+        };
+        
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, SoundHandle::Streaming(handle));
@@ -418,6 +501,11 @@ impl AudioSystem {
     /// Call this from your audio backend callback with the output buffer.
     /// Returns the processed stereo interleaved buffer.
     pub fn process_all_dsp(&mut self, output_buffer: &mut [f32], sidechain: Option<&[f32]>) {
+        // Process each bus graph (EQ, compression, etc. per bus)
+        for bus in [AudioBus::Music, AudioBus::Sfx, AudioBus::Voice, AudioBus::Ambient] {
+            self.process_bus_dsp(&bus, output_buffer, sidechain);
+        }
+        
         // Process master graph (limiter, final EQ, etc.)
         self.process_master_dsp(output_buffer, sidechain);
     }

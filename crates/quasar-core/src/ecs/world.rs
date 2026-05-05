@@ -961,7 +961,50 @@ impl World {
             .unwrap_or(0)
     }
 
+    // ------------------------------------------------------------------
+    // Compile-time SystemParam support
+    // ------------------------------------------------------------------
+
+    /// Initialize a pre-computed `SystemState` for a system parameter tuple.
+    ///
+    /// This is called once when a system is registered, building all the
+    /// cached query state needed for zero-allocation execution every frame.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use quasar_core::ecs::system_param::{SystemState, SystemQuery, SystemQueryMut};
+    ///
+    /// // Build state once
+    /// let state = world.init_system_state::<(SystemQuery<&Position>, SystemQueryMut<&mut Velocity>)>();
+    ///
+    /// // Reuse every frame
+    /// for (e, pos) in state.get_params(&world).0.iter() { ... }
+    /// ```
+    pub fn init_system_state<P: crate::ecs::system_param::SystemParam>(
+        &mut self,
+    ) -> crate::ecs::system_param::SystemState<P> {
+        crate::ecs::system_param::SystemState::new(self)
+    }
+
     /// Iterate over all `(Entity, &T)` pairs via archetype SoA columns.
+    ///
+    /// **Deprecated**: This method allocates a `Vec` for every call. Prefer using
+    /// [`CachedArchetypeQueryState`] for zero-allocation, cache-friendly iteration.
+    ///
+    /// # Migration
+    /// ```ignore
+    /// // Before:
+    /// let results = world.query::<Position>();
+    ///
+    /// // After (zero-allocation, reusable):
+    /// let mut query = CachedArchetypeQueryState::<&Position>::new();
+    /// for (entity, pos) in query.iter(&world) { ... }
+    /// ```
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState` instead for zero-allocation, cache-friendly iteration. \
+                This method allocates a Vec every call."
+    )]
     pub fn query<T: Component>(&self) -> Vec<(Entity, &T)> {
         let type_id = TypeId::of::<T>();
         let matching = self.archetype_graph.find_with_components(&[type_id]);
@@ -987,6 +1030,14 @@ impl World {
     }
     /// Iterate over all `(Entity, &mut T)` pairs using a callback.
     /// Stamps per-row change ticks for each entity visited.
+    ///
+    /// **Deprecated**: Prefer using [`CachedArchetypeQueryState`] for iteration
+    /// combined with `world.get_mut::<T>(entity)` for mutable access.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState` for iteration and `world.get_mut` for mutable access. \
+                This method allocates intermediate Vecs and uses callback-based iteration."
+    )]
     pub fn for_each_mut<T, F>(&mut self, mut f: F)
     where
         T: Component,
@@ -1020,6 +1071,14 @@ impl World {
 
     /// Iterate over all entities with both components `A` and `B`, providing mutable access.
     /// Stamps per-row change ticks for each entity visited.
+    ///
+    /// **Deprecated**: Prefer using [`CachedArchetypeQueryState`] for iteration
+    /// combined with `world.get_mut::<T>(entity)` for mutable access.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState` for iteration and `world.get_mut` for mutable access. \
+                This method allocates intermediate Vecs and uses callback-based iteration."
+    )]
     pub fn for_each_mut2<A, B, F>(&mut self, mut f: F)
     where
         A: Component,
@@ -1084,6 +1143,13 @@ impl World {
     }
 
     /// Query entities that have **both** components `A` and `B` via archetype SoA.
+    ///
+    /// **Deprecated**: This method allocates a `Vec` for every call. Prefer using
+    /// [`CachedArchetypeQueryState`] for zero-allocation, cache-friendly iteration.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState::<(&A, &B), ()>` instead for zero-allocation, cache-friendly iteration."
+    )]
     pub fn query2<A: Component, B: Component>(&self) -> Vec<(Entity, &A, &B)> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
@@ -1115,6 +1181,13 @@ impl World {
     }
 
     /// Query entities that have components `A`, `B`, **and** `C` via archetype SoA.
+    ///
+    /// **Deprecated**: This method allocates a `Vec` for every call. Prefer using
+    /// [`CachedArchetypeQueryState`] for zero-allocation, cache-friendly iteration.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState::<(&A, &B, &C), ()>` instead for zero-allocation, cache-friendly iteration."
+    )]
     pub fn query3<A: Component, B: Component, C: Component>(&self) -> Vec<(Entity, &A, &B, &C)> {
         let type_a = TypeId::of::<A>();
         let type_b = TypeId::of::<B>();
@@ -1160,6 +1233,13 @@ impl World {
     }
 
     /// Query entities that have components `A`, `B`, `C`, **and** `D` via archetype SoA.
+    ///
+    /// **Deprecated**: This method allocates a `Vec` for every call. Prefer using
+    /// [`CachedArchetypeQueryState`] for zero-allocation, cache-friendly iteration.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState::<(&A, &B, &C, &D), ()>` instead for zero-allocation, cache-friendly iteration."
+    )]
     pub fn query4<A: Component, B: Component, C: Component, D: Component>(
         &self,
     ) -> Vec<(Entity, &A, &B, &C, &D)> {
@@ -1409,12 +1489,14 @@ impl World {
     ///     // only entities whose Velocity changed since this system last ran
     /// }
     /// ```
-    pub fn query_filtered<Q, F>(&self) -> crate::ecs::query::QueryIter<'_, Q, F>
+    pub fn query_filtered<'a, Q, F>(&'a self) -> crate::ecs::query::QueryIter<'a, Q, F>
     where
-        Q: crate::ecs::query::WorldQuery,
-        F: crate::ecs::query::QueryFilter,
+        Q: crate::ecs::query::WorldQuery + 'a,
+        F: crate::ecs::query::QueryFilter + 'a,
     {
-        crate::ecs::query::QueryState::<Q, F>::new().iter(self)
+        let state = crate::ecs::query::QueryState::<Q, F>::new();
+        #[allow(deprecated)]
+        state.iter(self)
     }
 
     // ------------------------------------------------------------------
@@ -1784,11 +1866,11 @@ impl World {
         use quasar_math::transform::{GlobalTransform, Transform};
 
         // Phase 1: roots — entities with Transform but no Parent
-        let roots: Vec<Entity> = self
-            .query::<Transform>()
-            .iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&Transform>::new();
+        let roots: Vec<Entity> = query
+            .iter(self)
             .filter(|(e, _)| self.get::<Parent>(*e).is_none())
-            .map(|(e, _)| *e)
+            .map(|(e, _)| e)
             .collect();
 
         for root in &roots {
@@ -1993,6 +2075,7 @@ impl<'w> EntityBuilder<'w> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::query;

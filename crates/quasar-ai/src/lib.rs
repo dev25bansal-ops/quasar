@@ -33,6 +33,7 @@ pub mod sensors;
 pub mod navigation;
 pub mod steering;
 pub mod debug;
+pub mod editor;
 
 pub use blackboard::{Blackboard, BlackboardKey, BlackboardValue};
 pub use behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext, BtState};
@@ -42,6 +43,7 @@ pub use sensors::{SensorSystem, Perception, AwarenessLevel};
 pub use navigation::{NavAgent, PathRequest, PathResult};
 pub use steering::{SteeringBehavior, SteeringOutput};
 pub use debug::{AiDebugger, DebugDraw};
+pub use editor::{AiAgentConfig, AiAgentRegistry, AiEditorManager, EditorBehaviorTree};
 
 pub mod prelude {
     pub use crate::blackboard::{Blackboard, BlackboardKey, BlackboardValue};
@@ -52,4 +54,5 @@ pub mod prelude {
     pub use crate::navigation::{NavAgent, PathRequest, PathResult};
     pub use crate::steering::{SteeringBehavior, SteeringOutput};
     pub use crate::debug::{AiDebugger, DebugDraw};
+    pub use crate::editor::{AiAgentConfig, AiAgentRegistry, AiEditorManager, EditorBehaviorTree};
 }

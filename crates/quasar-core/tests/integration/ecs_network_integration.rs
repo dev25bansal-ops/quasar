@@ -347,8 +347,8 @@ fn test_spatial_grid_insert_and_query() {
 // 3. Verify prediction/rollback with entity updates
 // ---------------------------------------------------------------------------
 
-use quasar_core::network::replication::ReplicationRegistry;
-use quasar_network::replication::{
+
+use quasar_core::network::{
     EntitySnapshot as NetEntitySnapshot, InputData, InputType, NetworkEntityId,
 };
 
@@ -751,7 +751,7 @@ fn test_networked_components_with_change_detection() {
     );
 
     // Record the tick before modification
-    let tick_before = world.current_tick();
+    let tick_before = world.current_tick::<NetworkedPosition>();
 
     // Modify the component
     let pos = world.get_mut::<NetworkedPosition>(entity).unwrap();

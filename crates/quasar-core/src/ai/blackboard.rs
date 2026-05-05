@@ -149,6 +149,10 @@ impl Blackboard {
         self.dirty_keys.contains(&key.to_string())
     }
 
+    pub fn all_keys(&self) -> Vec<String> {
+        self.values.keys().cloned().collect()
+    }
+
     pub fn increment(&mut self, key: &str, amount: i64) {
         let current = self.get_int(key);
         self.set(key, BlackboardValue::Int(current + amount));

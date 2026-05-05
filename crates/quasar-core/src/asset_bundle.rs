@@ -1,11 +1,76 @@
 //! Asset Bundle System for Quasar Engine.
 //!
-//! Provides:
-//! - **Bundle format** — container for packaged assets
+//! This module provides a comprehensive asset bundling system for packaging game assets
+//! into efficient, compressed bundles with content addressing and dependency tracking.
+//!
+//! # Features
+//!
+//! - **Bundle format** — container for packaged assets with metadata
 //! - **Streaming support** — load assets on-demand from bundles
-//! - **Compression** — optional LZ4/Zstd compression
+//! - **Compression** — optional LZ4/Zstd compression for reduced storage
 //! - **Content-addressed** — deduplication via content hashes
 //! - **Dependency tracking** — bundles can depend on other bundles
+//! - **Asset flags** — mark assets as streamable, preload, encrypted, or deleted
+//!
+//! # Basic Usage
+//!
+//! ```rust,no_run
+//! use quasar_core::asset_bundle::{BundleWriter, BundleId, CompressionType, AssetFlags};
+//!
+//! // Create a new bundle writer
+//! let mut writer = BundleWriter::new(
+//!     BundleId(1),
+//!     "my_assets".to_string()
+//! )
+//! .with_compression(CompressionType::Lz4);
+//!
+//! // Add assets to the bundle
+//! let asset_data = b"Hello, World!";
+//! writer.add_asset(
+//!     "textures/hello.png",
+//!     "texture",
+//!     asset_data,
+//!     AssetFlags::STREAMABLE
+//! );
+//!
+//! // Finalize and write the bundle
+//! let bundle_bytes = writer.finalize();
+//! std::fs::write("assets.bundle", &bundle_bytes).unwrap();
+//! ```
+//!
+//! # Reading Bundles
+//!
+//! ```rust,no_run
+//! use quasar_core::asset_bundle::{BundleReader, BundleId};
+//!
+//! // Read an existing bundle
+//! let bundle_data = std::fs::read("assets.bundle").unwrap();
+//! let reader = BundleReader::new(&bundle_data).unwrap();
+//!
+//! // Check if an asset exists
+//! if reader.has_asset("textures/hello.png") {
+//!     // Load the asset
+//!     let asset = reader.load_asset("textures/hello.png").unwrap();
+//!     println!("Loaded {} bytes", asset.data.len());
+//! }
+//! ```
+//!
+//! # Compression
+//!
+//! The bundle system supports multiple compression algorithms:
+//!
+//! - `CompressionType::None` — No compression (fastest, largest size)
+//! - `CompressionType::Lz4` — LZ4 compression (fast, good compression)
+//! - `CompressionType::Zstd` — Zstandard compression (slower, best compression)
+//!
+//! # Asset Flags
+//!
+//! Assets can be marked with various flags:
+//!
+//! - `AssetFlags::STREAMABLE` — Asset can be loaded on-demand
+//! - `AssetFlags::PRELOAD` — Asset should be loaded immediately
+//! - `AssetFlags::ENCRYPTED` — Asset is encrypted (requires decryption)
+//! - `AssetFlags::DELETED` — Asset is marked as deleted (for incremental updates)
 
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
@@ -16,16 +81,42 @@ use serde::{Deserialize, Serialize};
 pub const BUNDLE_MAGIC: u32 = 0x51534247;
 pub const BUNDLE_VERSION: u32 = 1;
 
+/// Unique identifier for an asset bundle.
+///
+/// Each bundle has a unique ID that can be used for dependency tracking
+/// and content addressing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BundleId(pub u64);
 
+/// Unique identifier for an asset entry within a bundle.
+///
+/// Each asset within a bundle has a unique ID for internal referencing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AssetEntryId(pub u64);
 
+/// Compression type for asset data.
+///
+/// # Examples
+///
+/// ```rust
+/// use quasar_core::asset_bundle::CompressionType;
+///
+/// // No compression
+/// let no_compression = CompressionType::None;
+///
+/// // Fast LZ4 compression
+/// let lz4 = CompressionType::Lz4;
+///
+/// // High-compression Zstandard
+/// let zstd = CompressionType::Zstd;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionType {
+    /// No compression - fastest but largest size
     None = 0,
+    /// LZ4 compression - fast with good compression ratio
     Lz4 = 1,
+    /// Zstandard compression - slower with best compression ratio
     Zstd = 2,
 }
 
@@ -35,6 +126,22 @@ impl Default for CompressionType {
     }
 }
 
+/// Header for an asset bundle.
+///
+/// Contains metadata about the bundle including its ID, name, compression settings,
+/// dependencies, and checksum.
+///
+/// # Fields
+///
+/// - `magic` — Magic number for bundle identification (0x51534247)
+/// - `version` — Bundle format version
+/// - `bundle_id` — Unique identifier for this bundle
+/// - `name` — Human-readable name for the bundle
+/// - `asset_count` — Number of assets in the bundle
+/// - `compression` — Compression type used for asset data
+/// - `dependencies` — List of bundle IDs this bundle depends on
+/// - `checksum` — BLAKE3 hash of the bundle content
+/// - `created_timestamp` — Unix timestamp when bundle was created
 #[derive(Debug, Clone)]
 pub struct BundleHeader {
     pub magic: u32,
@@ -64,6 +171,21 @@ impl Default for BundleHeader {
     }
 }
 
+/// Entry for an asset within a bundle.
+///
+/// Contains metadata about a single asset including its path, type, location,
+/// size, content hash, and flags.
+///
+/// # Fields
+///
+/// - `id` — Unique identifier for this asset entry
+/// - `path` — Virtual path for the asset (e.g., "textures/player.png")
+/// - `asset_type` — Type identifier for the asset (e.g., "texture", "model")
+/// - `offset` — Byte offset of the asset data in the bundle
+/// - `uncompressed_size` — Size of the asset data before compression
+/// - `compressed_size` — Size of the asset data after compression
+/// - `content_hash` — BLAKE3 hash of the uncompressed asset data
+/// - `flags` — Asset flags (streamable, preload, encrypted, deleted)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetEntry {
     pub id: AssetEntryId,
@@ -76,13 +198,36 @@ pub struct AssetEntry {
     pub flags: AssetFlags,
 }
 
+/// Flags for asset entries.
+///
+/// # Examples
+///
+/// ```rust
+/// use quasar_core::asset_bundle::AssetFlags;
+///
+/// // Mark asset as streamable
+/// let flags = AssetFlags::STREAMABLE;
+///
+/// // Combine multiple flags
+/// let flags = AssetFlags::STREAMABLE | AssetFlags::PRELOAD;
+///
+/// // Check if flag is set
+/// if flags.contains(AssetFlags::STREAMABLE) {
+///     println!("Asset is streamable");
+/// }
+/// ```
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub struct AssetFlags: u32 {
+        /// No flags set
         const NONE = 0;
+        /// Asset can be loaded on-demand (streaming)
         const STREAMABLE = 1 << 0;
+        /// Asset should be preloaded when bundle is loaded
         const PRELOAD = 1 << 1;
+        /// Asset data is encrypted
         const ENCRYPTED = 1 << 2;
+        /// Asset is marked as deleted (for incremental updates)
         const DELETED = 1 << 3;
     }
 }
@@ -93,6 +238,37 @@ impl Default for AssetFlags {
     }
 }
 
+/// Manifest for an asset bundle.
+///
+/// Contains the bundle header and all asset entries with a path-based index
+/// for efficient asset lookup.
+///
+/// # Examples
+///
+/// ```rust
+/// use quasar_core::asset_bundle::{BundleManifest, BundleHeader, BundleId, AssetEntry, AssetEntryId, CompressionType};
+///
+/// let header = BundleHeader {
+///     bundle_id: BundleId(1),
+///     name: "my_bundle".to_string(),
+///     ..Default::default()
+/// };
+///
+/// let mut manifest = BundleManifest::new(header);
+///
+/// // Add an entry
+/// let entry = AssetEntry {
+///     id: AssetEntryId(1),
+///     path: "textures/player.png".to_string(),
+///     ..Default::default()
+/// };
+/// manifest.add_entry(entry);
+///
+/// // Look up by path
+/// if let Some(found) = manifest.get_entry("textures/player.png") {
+///     println!("Found asset: {}", found.path);
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct BundleManifest {
     pub header: BundleHeader,
@@ -133,6 +309,37 @@ impl BundleManifest {
     }
 }
 
+/// Writer for creating asset bundles.
+///
+/// Provides a fluent API for adding assets to a bundle and finalizing it
+/// with optional compression and dependency tracking.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use quasar_core::asset_bundle::{BundleWriter, BundleId, CompressionType, AssetFlags};
+///
+/// // Create a new bundle writer
+/// let mut writer = BundleWriter::new(
+///     BundleId(1),
+///     "my_assets".to_string()
+/// )
+/// .with_compression(CompressionType::Lz4)
+/// .with_dependencies(vec![BundleId(0)]);
+///
+/// // Add assets
+/// let texture_data = std::fs::read("player.png").unwrap();
+/// writer.add_asset(
+///     "textures/player.png",
+///     "texture",
+///     &texture_data,
+///     AssetFlags::STREAMABLE
+/// );
+///
+/// // Finalize the bundle
+/// let bundle_bytes = writer.finalize();
+/// std::fs::write("assets.bundle", &bundle_bytes).unwrap();
+/// ```
 pub struct BundleWriter {
     manifest: BundleManifest,
     data: Vec<u8>,
@@ -141,6 +348,23 @@ pub struct BundleWriter {
 }
 
 impl BundleWriter {
+    /// Creates a new bundle writer with the given ID and name.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle_id` — Unique identifier for the bundle
+    /// * `name` — Human-readable name for the bundle
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use quasar_core::asset_bundle::{BundleWriter, BundleId};
+    ///
+    /// let writer = BundleWriter::new(
+    ///     BundleId(1),
+    ///     "my_assets".to_string()
+    /// );
+    /// ```
     pub fn new(bundle_id: BundleId, name: String) -> Self {
         let header = BundleHeader {
             bundle_id,
@@ -155,17 +379,73 @@ impl BundleWriter {
         }
     }
 
+    /// Sets the compression type for the bundle.
+    ///
+    /// # Arguments
+    ///
+    /// * `compression` — Compression type to use
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use quasar_core::asset_bundle::{BundleWriter, BundleId, CompressionType};
+    ///
+    /// let writer = BundleWriter::new(BundleId(1), "assets".to_string())
+    ///     .with_compression(CompressionType::Lz4);
+    /// ```
     pub fn with_compression(mut self, compression: CompressionType) -> Self {
         self.compression = compression;
         self.manifest.header.compression = compression;
         self
     }
 
+    /// Sets the bundle dependencies.
+    ///
+    /// # Arguments
+    ///
+    /// * `deps` — List of bundle IDs this bundle depends on
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use quasar_core::asset_bundle::{BundleWriter, BundleId};
+    ///
+    /// let writer = BundleWriter::new(BundleId(1), "assets".to_string())
+    ///     .with_dependencies(vec![BundleId(0)]);
+    /// ```
     pub fn with_dependencies(mut self, deps: Vec<BundleId>) -> Self {
         self.manifest.header.dependencies = deps;
         self
     }
 
+    /// Adds an asset to the bundle.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` — Virtual path for the asset (e.g., "textures/player.png")
+    /// * `asset_type` — Type identifier for the asset (e.g., "texture", "model")
+    /// * `data` — Raw asset data
+    /// * `flags` — Asset flags (streamable, preload, encrypted, deleted)
+    ///
+    /// # Returns
+    ///
+    /// The unique ID assigned to this asset entry
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use quasar_core::asset_bundle::{BundleWriter, BundleId, AssetFlags};
+    ///
+    /// let mut writer = BundleWriter::new(BundleId(1), "assets".to_string());
+    ///
+    /// let texture_data = std::fs::read("player.png").unwrap();
+    /// let entry_id = writer.add_asset(
+    ///     "textures/player.png",
+    ///     "texture",
+    ///     &texture_data,
+    ///     AssetFlags::STREAMABLE
+    /// );
+    /// ```
     pub fn add_asset(
         &mut self,
         path: &str,
@@ -539,19 +819,27 @@ impl BundleStreamer {
 }
 
 fn compress_lz4(data: &[u8]) -> (Vec<u8>, usize) {
-    (data.to_vec(), data.len())
+    let compressed = lz4::compress_block(data);
+    let original_size = data.len();
+    (compressed, original_size)
 }
 
-fn decompress_lz4(_data: &[u8], _expected_size: usize) -> Result<Vec<u8>, BundleError> {
-    Ok(Vec::new())
+fn decompress_lz4(data: &[u8], expected_size: usize) -> Result<Vec<u8>, BundleError> {
+    lz4::decompress_block(data, expected_size)
+        .map_err(|e| BundleError::DecompressionError(format!("LZ4 decompression failed: {}", e)))
 }
 
 fn compress_zstd(data: &[u8]) -> (Vec<u8>, usize) {
-    (data.to_vec(), data.len())
+    let compressed = zstd::encode_all(data, 3)
+        .map_err(|e| BundleError::CompressionError(format!("Zstd compression failed: {}", e)))
+        .unwrap_or_else(|_| (data.to_vec(), data.len()));
+    let original_size = data.len();
+    (compressed, original_size)
 }
 
-fn decompress_zstd(_data: &[u8], _expected_size: usize) -> Result<Vec<u8>, BundleError> {
-    Ok(Vec::new())
+fn decompress_zstd(data: &[u8], expected_size: usize) -> Result<Vec<u8>, BundleError> {
+    zstd::decode_all(data, expected_size)
+        .map_err(|e| BundleError::DecompressionError(format!("Zstd decompression failed: {}", e)))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -584,6 +872,10 @@ pub enum BundleError {
     NotStreamable,
     #[error("Range out of bounds")]
     RangeOutOfBounds,
+    #[error("Compression failed: {0}")]
+    CompressionError(String),
+    #[error("Decompression failed: {0}")]
+    DecompressionError(String),
 }
 
 #[cfg(test)]

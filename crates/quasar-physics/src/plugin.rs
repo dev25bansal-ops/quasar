@@ -42,6 +42,14 @@ impl PhysicsResource {
             accumulator: 0.0,
         }
     }
+
+    /// Set the collision event handler to receive collision events.
+    pub fn set_collision_event_handler(
+        &mut self,
+        sender: crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent>,
+    ) {
+        self.physics.set_collision_event_handler(sender);
+    }
 }
 
 impl Default for PhysicsResource {
@@ -369,10 +377,12 @@ impl System for CharacterControllerSystem {
             }
         }
 
-        // Write back grounded state.
+        // Write back grounded state and effective velocity.
         for (entity, result) in results {
             if let Some(cc) = world.get_mut::<CharacterControllerComponent>(entity) {
                 cc.grounded = result.grounded;
+                cc.effective_velocity = result.effective_translation;
+                cc.ground_normal = result.ground_normal;
             }
         }
         if let Some(p) = world.resource_mut::<quasar_core::Profiler>() {
@@ -565,8 +575,22 @@ impl quasar_core::Plugin for PhysicsPlugin {
     }
 
     fn build(&self, app: &mut quasar_core::App) {
+        // Create collision event system first to get the sender
+        let collision_event_system = if self.enable_collision_events {
+            Some(CollisionEventSystem::new())
+        } else {
+            None
+        };
+
         // Insert physics resource with accumulator
-        app.world.insert_resource(PhysicsResource::new());
+        let mut physics_resource = PhysicsResource::new();
+        
+        // Connect collision event system to physics world
+        if let Some(ref collision_system) = collision_event_system {
+            physics_resource.set_collision_event_handler(collision_system.channel());
+        }
+        
+        app.world.insert_resource(physics_resource);
 
         // PreUpdate: Write transforms back to physics (before step)
         app.schedule.add_system(
@@ -598,10 +622,11 @@ impl quasar_core::Plugin for PhysicsPlugin {
             Box::new(ColliderSyncSystem),
         );
 
-        if self.enable_collision_events {
+        // Register collision event system
+        if let Some(collision_system) = collision_event_system {
             app.schedule.add_system(
                 quasar_core::ecs::SystemStage::PostUpdate,
-                Box::new(CollisionEventSystem::new()),
+                Box::new(collision_system),
             );
         }
 

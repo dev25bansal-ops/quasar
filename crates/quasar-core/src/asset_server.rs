@@ -65,21 +65,21 @@ impl std::error::Error for AssetError {}
 
 pub struct AssetServer {
     assets_dir: PathBuf,
-    loaders: HashMap<TypeId, Box<dyn AnyAssetLoader>>,
-    asset_handles: RwLock<HashMap<AssetId, AssetMeta>>,
-    asset_storage: RwLock<HashMap<TypeId, HashMap<AssetId, Arc<dyn Any + Send + Sync>>>>,
+    loaders: HashMap<TypeId, Arc<dyn AnyAssetLoader>>,
+    asset_handles: Arc<RwLock<HashMap<AssetId, AssetMeta>>>,
+    asset_storage: Arc<RwLock<HashMap<TypeId, HashMap<AssetId, Arc<dyn Any + Send + Sync>>>>>,
     next_id: Mutex<AssetId>,
     watcher: Option<RecommendedWatcher>,
     event_receiver: Receiver<AssetEvent>,
     event_sender: Sender<AssetEvent>,
     _watch_thread: Option<JoinHandle<()>>,
-    _pending_reloads: RwLock<Vec<(AssetId, PathBuf)>>,
+    _pending_reloads: Arc<RwLock<Vec<(AssetId, PathBuf)>>>,
     /// Unified generational asset manager — all new code should use this
     /// instead of the raw `asset_storage` map. Legacy storage is kept for
     /// backward compat with existing loaders.
     manager: Mutex<crate::asset::AssetManager>,
     /// Dependency graph for hot-reload propagation.
-    dep_graph: RwLock<crate::asset::AssetDepGraph>,
+    dep_graph: Arc<RwLock<crate::asset::AssetDepGraph>>,
 }
 
 impl AssetServer {
@@ -137,6 +137,7 @@ pub enum ReloadKind {
     Scene,
     Prefab,
     Audio,
+    Animation,
     Other,
 }
 
@@ -159,6 +160,15 @@ impl AssetReloadedEvent {
             Some("scene" | "scn") => ReloadKind::Scene,
             Some("prefab") => ReloadKind::Prefab,
             Some("wav" | "ogg" | "mp3" | "flac") => ReloadKind::Audio,
+            Some("json" | "anim") => {
+                // Check if it's an animation file by examining the path or filename pattern
+                let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                if file_stem.contains("anim") || file_stem.contains("clip") || path.to_string_lossy().contains("animation") {
+                    ReloadKind::Animation
+                } else {
+                    ReloadKind::Other
+                }
+            }
             _ => ReloadKind::Other,
         };
         Self {
@@ -175,23 +185,23 @@ impl AssetServer {
         Self {
             assets_dir: assets_dir.as_ref().to_path_buf(),
             loaders: HashMap::new(),
-            asset_handles: RwLock::new(HashMap::new()),
-            asset_storage: RwLock::new(HashMap::new()),
+            asset_handles: Arc::new(RwLock::new(HashMap::new())),
+            asset_storage: Arc::new(RwLock::new(HashMap::new())),
             next_id: Mutex::new(1),
             watcher: None,
             event_receiver: receiver,
             event_sender: sender.clone(),
             _watch_thread: None,
-            _pending_reloads: RwLock::new(Vec::new()),
+            _pending_reloads: Arc::new(RwLock::new(Vec::new())),
             manager: Mutex::new(crate::asset::AssetManager::new()),
-            dep_graph: RwLock::new(crate::asset::AssetDepGraph::new()),
+            dep_graph: Arc::new(RwLock::new(crate::asset::AssetDepGraph::new())),
         }
     }
 
     pub fn register_loader<L: AssetLoader + 'static>(&mut self, loader: L) {
         let type_id = TypeId::of::<L::Asset>();
         self.loaders
-            .insert(type_id, Box::new(LoaderWrapper(loader)));
+            .insert(type_id, Arc::new(LoaderWrapper(loader)));
     }
 
     pub fn load<T: Asset, P: AsRef<Path>>(&self, path: P) -> Result<AssetHandle, AssetError> {
@@ -455,6 +465,22 @@ impl AssetServer {
     ) -> Result<AssetHandle, AssetError> {
         let full_path = self.assets_dir.join(path.as_ref());
 
+        let extension = full_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        let loader = self.loaders.get(&TypeId::of::<T>()).ok_or_else(|| {
+            AssetError(format!(
+                "No loader registered for type {:?}",
+                TypeId::of::<T>()
+            ))
+        })?;
+
+        if !loader.extensions().contains(&extension) {
+            return Err(AssetError(format!(
+                "No loader for extension: {}",
+                extension
+            )));
+        }
+
         let id = {
             let mut next_id = self.next_id.lock().unwrap_or_else(|e| e.into_inner());
             let id = *next_id;
@@ -483,16 +509,50 @@ impl AssetServer {
 
         let sender = self.event_sender.clone();
         let fp = full_path.clone();
+        let type_id = TypeId::of::<T>();
+        let asset_storage = self.asset_storage.clone();
+        let asset_handles = self.asset_handles.clone();
+        
+        // Clone the Arc for use in the thread
+        let loader_arc = loader.clone();
 
-        std::thread::spawn(move || match std::fs::read(&fp) {
-            Ok(_bytes) => {
-                let _ = sender.send(AssetEvent::Loaded { handle, path: fp });
-            }
-            Err(e) => {
-                let _ = sender.send(AssetEvent::Failed {
-                    path: fp,
-                    error: format!("{}", e),
-                });
+        std::thread::spawn(move || {
+            match std::fs::read(&fp) {
+                Ok(bytes) => {
+                    // Process the bytes using the loader
+                    match loader_arc.load(&fp, &bytes) {
+                        Ok(asset) => {
+                            // Store the asset in the asset storage
+                            {
+                                let mut storage = asset_storage.write().unwrap_or_else(|e| e.into_inner());
+                                let type_storage = storage.entry(type_id).or_default();
+                                type_storage.insert(id, Arc::new(asset));
+                            }
+                            
+                            // Update the asset handles to mark it as loaded
+                            {
+                                let mut handles = asset_handles.write().unwrap_or_else(|e| e.into_inner());
+                                if let Some(meta) = handles.get_mut(&id) {
+                                    meta.loaded = true;
+                                }
+                            }
+                            
+                            let _ = sender.send(AssetEvent::Loaded { handle, path: fp });
+                        }
+                        Err(e) => {
+                            let _ = sender.send(AssetEvent::Failed {
+                                path: fp,
+                                error: format!("Failed to load asset: {}", e),
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = sender.send(AssetEvent::Failed {
+                        path: fp,
+                        error: format!("{}", e),
+                    });
+                }
             }
         });
 
@@ -877,8 +937,12 @@ impl crate::ecs::System for HotReloadHandlerSystem {
                 }
                 ReloadKind::Lua => {
                     log::info!("[hot-reload] Lua script reload: {:?}", event.path);
+                    // Mark the asset as dirty so the scripting system knows to reload
+                    if let Some(server) = world.resource_mut::<AssetServer>() {
+                        server.mark_dirty(&event.path);
+                    }
                     // Scripting system picks up file changes via its own
-                    // watcher, but we log here for unified diagnostics.
+                    // watcher, but we also flag it here for unified tracking.
                 }
                 ReloadKind::Scene => {
                     if let Ok(json) = std::fs::read_to_string(&event.path) {
@@ -907,6 +971,15 @@ impl crate::ecs::System for HotReloadHandlerSystem {
                         server.mark_dirty(&event.path);
                     }
                     log::info!("[hot-reload] audio buffer swap queued: {:?}", event.path);
+                }
+                ReloadKind::Animation => {
+                    // Animation hot-reload is handled by the AnimationHotReloadSystem
+                    // which tracks file changes and preserves animation state.
+                    log::info!("[hot-reload] animation clip reload detected: {:?}", event.path);
+                    // Mark dirty for tracking, actual reload handled by animation system
+                    if let Some(server) = world.resource_mut::<AssetServer>() {
+                        server.mark_dirty(&event.path);
+                    }
                 }
                 ReloadKind::Shader | ReloadKind::Other => {
                     // Shaders are already handled by the renderer's own

@@ -81,7 +81,7 @@ impl BlackboardDebugger {
         egui::ScrollArea::vertical().show(ui, |ui| {
             let filter_lower = self.filter.to_lowercase();
 
-            let mut keys: Vec<_> = blackboard.keys().collect();
+            let mut keys = blackboard.keys();
             keys.sort();
 
             for key in keys {
@@ -89,11 +89,11 @@ impl BlackboardDebugger {
                     continue;
                 }
 
-                if let Some(value) = blackboard.get(key) {
-                    ui.push_id(key, |ui| {
+if let Some(value) = blackboard.get(&key) {
+                    ui.push_id(&key, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(key)
+                                RichText::new(&key)
                                     .strong()
                                     .color(Color32::from_rgb(150, 200, 255)),
                             );
@@ -152,7 +152,7 @@ impl BlackboardDebugger {
 
                             ui.label(RichText::new(&value_str).color(color));
 
-                            if blackboard.is_dirty(key) {
+                            if blackboard.is_dirty(&key) {
                                 ui.label(RichText::new("*").color(Color32::YELLOW));
                             }
                         });
@@ -165,12 +165,12 @@ impl BlackboardDebugger {
 
 /// Trait to access keys from blackboard (workaround for private field).
 pub trait BlackboardExt {
-    fn keys(&self) -> Vec<&str>;
+    fn keys(&self) -> Vec<String>;
 }
 
 impl BlackboardExt for Blackboard {
-    fn keys(&self) -> Vec<&str> {
-        Blackboard::keys(self).map(|s| s.as_str()).collect()
+    fn keys(&self) -> Vec<String> {
+        self.all_keys()
     }
 }
 

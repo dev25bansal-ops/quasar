@@ -19,3 +19,9 @@ desktop.ini
 
 # Logs
 *.log
+
+# Temporary files
+temp_errors*.txt
+validate_message_temp.txt
+*.tmp
+temp_*.txt

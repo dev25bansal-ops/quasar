@@ -44,6 +44,8 @@ pub struct QuinnBackend {
     /// Channel for events produced by background accept / recv tasks.
     event_tx: mpsc::UnboundedSender<QuicEvent>,
     event_rx: mpsc::UnboundedReceiver<QuicEvent>,
+    /// Channel for receiving new connections from background tasks.
+    conn_rx: mpsc::UnboundedReceiver<(SocketAddr, quinn::Connection)>,
 }
 
 struct PeerState {
@@ -59,6 +61,7 @@ impl QuinnBackend {
             .map_err(|e| NetworkError(format!("tokio runtime: {e}")))?;
 
         let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (conn_tx, conn_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             rt,
@@ -66,6 +69,7 @@ impl QuinnBackend {
             peers: HashMap::new(),
             event_tx,
             event_rx,
+            conn_rx,
         })
     }
 
@@ -86,6 +90,7 @@ impl QuinnBackend {
         )))
     }
 
+    #[cfg(debug_assertions)]
     fn build_client_config() -> ClientConfig {
         let crypto = rustls::ClientConfig::builder()
             .dangerous()
@@ -99,16 +104,31 @@ impl QuinnBackend {
         ClientConfig::new(Arc::new(quic_config))
     }
 
+    #[cfg(not(debug_assertions))]
+    fn build_client_config() -> ClientConfig {
+        // In release builds, use default certificate verification
+        let crypto = rustls::ClientConfig::builder()
+            .with_no_client_auth();
+
+        #[allow(clippy::expect_used)]
+        let quic_config =
+            quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+
+        ClientConfig::new(Arc::new(quic_config))
+    }
+
     /// Spawn a background task that accepts new incoming connections.
-    fn spawn_accept_loop(endpoint: Endpoint, tx: mpsc::UnboundedSender<QuicEvent>) {
+    fn spawn_accept_loop(endpoint: Endpoint, tx: mpsc::UnboundedSender<QuicEvent>, conn_tx: mpsc::UnboundedSender<(SocketAddr, quinn::Connection)>) {
         tokio::spawn(async move {
             while let Some(incoming) = endpoint.accept().await {
                 let tx = tx.clone();
+                let conn_tx = conn_tx.clone();
                 tokio::spawn(async move {
                     match incoming.await {
                         Ok(conn) => {
                             let addr = conn.remote_address();
                             let _ = tx.send(QuicEvent::Connected(addr));
+                            let _ = conn_tx.send((addr, conn));
                             Self::spawn_recv_loop(conn, addr, tx);
                         }
                         Err(e) => {
@@ -184,13 +204,30 @@ impl QuicTransportBackend for QuinnBackend {
         };
 
         let tx = self.event_tx.clone();
+        let conn_tx = self.conn_rx.as_ref().ok_or_else(|| NetworkError("Connection receiver not available".to_string()))?.clone();
         self.rt.spawn(async move {
             match endpoint.connect(addr, "localhost") {
                 Ok(connecting) => match connecting.await {
                     Ok(conn) => {
                         let _ = tx.send(QuicEvent::Connected(addr));
+                        let _ = conn_tx.send((addr, conn));
                         QuinnBackend::spawn_recv_loop(conn, addr, tx);
                     }
+                    Err(e) => {
+                        let _ = tx.send(QuicEvent::Disconnected(
+                            addr,
+                            format!("connect failed: {e}"),
+                        ));
+                    }
+                },
+                Err(e) => {
+                    let _ = tx.send(QuicEvent::Disconnected(addr, format!("connect error: {e}")));
+                }
+            }
+        });
+
+        Ok(())
+    }
                     Err(e) => {
                         let _ = tx.send(QuicEvent::Disconnected(
                             addr,
@@ -215,8 +252,9 @@ impl QuicTransportBackend for QuinnBackend {
 
         let ep_clone = endpoint.clone();
         let tx = self.event_tx.clone();
+        let conn_tx = self.conn_rx.as_ref().ok_or_else(|| NetworkError("Connection receiver not available".to_string()))?.clone();
         self.rt.spawn(async move {
-            QuinnBackend::spawn_accept_loop(ep_clone, tx);
+            QuinnBackend::spawn_accept_loop(ep_clone, tx, conn_tx);
         });
 
         self.endpoint = Some(endpoint);
@@ -225,10 +263,30 @@ impl QuicTransportBackend for QuinnBackend {
 
     fn poll(&mut self) -> Vec<QuicEvent> {
         let mut events = Vec::new();
+
+        // First, receive any new connections from background tasks
+        while let Ok((addr, conn)) = self.conn_rx.try_recv() {
+            self.peers.insert(addr, PeerState { connection: conn });
+            log::debug!("quinn: stored connection for peer: {}", addr);
+        }
+
+        // Then, process events
         while let Ok(ev) = self.event_rx.try_recv() {
             // Track peers on connect/disconnect.
             match &ev {
-                QuicEvent::Connected(_addr) => {}
+                QuicEvent::Connected(_addr) => {
+                    // Connection already stored via conn_rx
+                }
+                QuicEvent::Disconnected(addr, _) => {
+                    self.peers.remove(addr);
+                }
+                _ => {}
+            }
+            events.push(ev);
+        }
+        events
+    }
+                }
                 QuicEvent::Disconnected(addr, _) => {
                     self.peers.remove(addr);
                 }
@@ -284,11 +342,13 @@ impl QuicTransportBackend for QuinnBackend {
 
 // ---------------------------------------------------------------------------
 // Insecure cert verifier for development / LAN play.
+// WARNING: This is only for development/testing and should NEVER be used in production.
 // ---------------------------------------------------------------------------
-
+#[cfg(debug_assertions)]
 #[derive(Debug)]
 struct SkipServerVerification;
 
+#[cfg(debug_assertions)]
 impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
@@ -300,6 +360,36 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
 
     fn verify_tls12_signature(
         &self,

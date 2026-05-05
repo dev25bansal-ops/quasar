@@ -1,7 +1,10 @@
 [package]
 name = "physics-sandbox"
-version = "0.1.0"
-edition = "2021"
+description = "Physics sandbox demo for Quasar Engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
 
 [dependencies]
 quasar-engine = { path = "../../crates/quasar-engine" }
@@ -10,6 +13,6 @@ quasar-core = { path = "../../crates/quasar-core" }
 quasar-math = { path = "../../crates/quasar-math" }
 quasar-render = { path = "../../crates/quasar-render" }
 quasar-window = { path = "../../crates/quasar-window" }
-env_logger = "0.11"
-log = "0.4"
-glam = "0.29"
+env_logger = { workspace = true }
+log = { workspace = true }
+glam = { workspace = true }

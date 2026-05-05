@@ -4,9 +4,45 @@
 //! stepping the simulation, and synchronising transforms back to the ECS.
 
 use rapier3d::prelude::*;
+use std::sync::Arc;
 
 use crate::collider::ColliderShape;
 use crate::rigidbody::BodyType;
+
+/// Collision event handler that sends events to a channel.
+struct CollisionEventHandler {
+    sender: crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent>,
+}
+
+impl CollisionEventHandler {
+    fn new(sender: crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent>) -> Self {
+        Self { sender }
+    }
+}
+
+impl EventHandler for CollisionEventHandler {
+    fn handle_collision_event(
+        &self,
+        _bodies: &rapier3d::prelude::RigidBodySet,
+        _colliders: &rapier3d::prelude::ColliderSet,
+        event: rapier3d::prelude::CollisionEvent,
+        _contact_pair: Option<&rapier3d::prelude::ContactPair>,
+    ) {
+        // Send the collision event to the channel
+        let _ = self.sender.send(event);
+    }
+
+    fn handle_contact_force_event(
+        &self,
+        _dt: f32,
+        _bodies: &rapier3d::prelude::RigidBodySet,
+        _colliders: &rapier3d::prelude::ColliderSet,
+        _contact_pair: &rapier3d::prelude::ContactPair,
+        _total_force_magnitude: f32,
+    ) {
+        // Contact force events are not used in this implementation
+    }
+}
 
 /// A full physics simulation backed by Rapier3D.
 pub struct PhysicsWorld {
@@ -23,6 +59,7 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     pub(crate) query_pipeline: QueryPipeline,
     pub(crate) query_pipeline_dirty: bool,
+    collision_event_handler: Option<Arc<CollisionEventHandler>>,
 }
 
 impl PhysicsWorld {
@@ -42,6 +79,7 @@ impl PhysicsWorld {
             ccd_solver: CCDSolver::new(),
             query_pipeline: QueryPipeline::new(),
             query_pipeline_dirty: true,
+            collision_event_handler: None,
         }
     }
 
@@ -50,6 +88,14 @@ impl PhysicsWorld {
         let mut world = Self::new();
         world.gravity = nalgebra::vector![gx, gy, gz];
         world
+    }
+
+    /// Set the collision event handler to receive collision events.
+    pub fn set_collision_event_handler(
+        &mut self,
+        sender: crossbeam::channel::Sender<rapier3d::prelude::CollisionEvent>,
+    ) {
+        self.collision_event_handler = Some(Arc::new(CollisionEventHandler::new(sender)));
     }
 
     // ------------------------------------------------------------------
@@ -216,6 +262,7 @@ impl PhysicsWorld {
 
     /// Step the physics simulation by one tick.
     pub fn step(&mut self) {
+        let event_handler = self.collision_event_handler.as_ref().map(|h| h.as_ref() as &dyn EventHandler).unwrap_or(&() as &dyn EventHandler);
         self.pipeline.step(
             &self.gravity,
             &self.integration_parameters,
@@ -227,9 +274,9 @@ impl PhysicsWorld {
             &mut self.impulse_joints,
             &mut self.multibody_joints,
             &mut self.ccd_solver,
-            None,
+            Some(&mut self.query_pipeline),
             &(),
-            &(),
+            event_handler,
         );
         self.query_pipeline_dirty = true;
     }

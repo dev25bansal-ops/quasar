@@ -73,6 +73,7 @@ pub struct SoftBodyConfig {
     pub iterations: usize,
     pub pressure: f32,
     pub volume_stiffness: f32,
+    pub ground_y: Option<f32>,
 }
 
 impl Default for SoftBodyConfig {
@@ -83,6 +84,7 @@ impl Default for SoftBodyConfig {
             iterations: 10,
             pressure: 0.0,
             volume_stiffness: 0.5,
+            ground_y: Some(0.0),
         }
     }
 }
@@ -217,11 +219,22 @@ impl SoftBody {
     pub fn step(&mut self, dt: f32) {
         let gravity = self.config.gravity;
         let damping = self.config.damping;
+        let ground = self.config.ground_y;
 
         for p in &mut self.particles {
             let vel = (p.position - p.prev_position) * damping;
             p.prev_position = p.position;
             p.position += vel + gravity * dt * dt;
+            
+            // Ground collision
+            if let Some(gy) = ground {
+                if p.position.y < gy {
+                    p.position.y = gy;
+                    // Simple friction
+                    p.position.x += (p.prev_position.x - p.position.x) * 0.5;
+                    p.position.z += (p.prev_position.z - p.position.z) * 0.5;
+                }
+            }
         }
 
         for _ in 0..self.config.iterations {

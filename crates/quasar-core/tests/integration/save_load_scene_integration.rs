@@ -240,7 +240,7 @@ fn test_save_json_vs_binary_size_comparison() {
 
     let mut graph = SceneGraph::new();
     for i in 0..50 {
-        let entity = quasar_core::ecs::Entity::from_index(i);
+        let entity = quasar_core::ecs::Entity::from_raw(i as u32, 0);
         graph.set_name(entity, format!("Entity_{}", i));
     }
     world.insert_resource(graph);

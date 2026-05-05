@@ -50,6 +50,7 @@ log = { workspace = true }
 image = { workspace = true }
 glam = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 gltf = { workspace = true }
 fontdue = { workspace = true }
 rayon = { workspace = true }
@@ -61,4 +62,8 @@ criterion = { workspace = true }
 
 [[bench]]
 name = "render_bench"
+harness = false
+
+[[bench]]
+name = "mesh_shader_bench"
 harness = false

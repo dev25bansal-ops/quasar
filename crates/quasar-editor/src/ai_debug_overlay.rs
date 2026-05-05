@@ -473,16 +473,18 @@ impl AiDebugOverlay {
                         }
 
                         if ui
-                            .collapsing(format!("Considerations ({})", action.considerations.len()))
-                            .inner
-                            .open
+                            .collapsing(format!("Considerations ({})", action.considerations.len()), |ui| {
+                                for cons in &action.considerations {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("  {}: {:.3}", cons.name, cons.output));
+                                        ui.small(format!("({} -> {:.2})", cons.input, cons.output));
+                                    });
+                                }
+                            })
+                            .openness
+                            > 0.0
                         {
-                            for cons in &action.considerations {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("  {}: {:.3}", cons.name, cons.output));
-                                    ui.small(format!("({} -> {:.2})", cons.input, cons.output));
-                                });
-                            }
+                            // The content is already rendered in the collapsing closure
                         }
                     }
                 });
@@ -746,9 +748,9 @@ mod tests {
     fn goap_debug_info() {
         let mut info = GoapDebugInfo::new(1);
         info.current_goal = Some("Attack".to_string());
-        info.current_plan.push("FindTarget");
-        info.current_plan.push("Approach");
-        info.current_plan.push("Attack");
+        info.current_plan.push("FindTarget".to_string());
+        info.current_plan.push("Approach".to_string());
+        info.current_plan.push("Attack".to_string());
 
         assert_eq!(info.agent_id, 1);
         assert_eq!(info.current_plan.len(), 3);

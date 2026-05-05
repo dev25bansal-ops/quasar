@@ -1,32 +1,73 @@
 //! Replay System - Record and Playback Game Sessions
 //!
-//! This module provides functionality to record and playback game sessions,
-//! useful for:
-//! - Bug reproduction and debugging
-//! - Highlight/glider recording
-//! - Spectator mode with time controls
-//! - QA and automated testing
+//! This module provides a comprehensive replay system for recording and playing back
+//! game sessions, useful for debugging, testing, and creating highlight reels.
 //!
-//! ## Basic Usage
+//! # Features
 //!
-//! ```rust,ignore
-//! use quasar_core::replay::{ReplayRecorder, ReplayPlayer};
+//! - **Recording** — Capture game state and inputs frame-by-frame
+//! - **Playback** — Replay recorded sessions with time controls
+//! - **Debugging** — Reproduce bugs and analyze game behavior
+//! - **Spectator mode** — Watch recorded sessions with playback controls
+//! - **Automated testing** — Use replays for regression testing
 //!
-//! // Recording
+//! # Basic Usage
+//!
+//! ## Recording
+//!
+//! ```rust,no_run
+//! use quasar_core::replay::{ReplayRecorder, ReplayHeader};
+//!
+//! // Create a recorder with metadata
 //! let mut recorder = ReplayRecorder::new("level_1");
-//! recorder.record_frame(delta_time, |snapshot| {
+//! recorder.set_header(ReplayHeader {
+//!     map_name: "Level 1".to_string(),
+//!     player_name: Some("Player1".to_string()),
+//!     ..Default::default()
+//! });
+//!
+//! // Record frames during gameplay
+//! recorder.record_frame(0.016, |snapshot| {
 //!     snapshot.set_entity_positions(&world);
 //!     snapshot.set_player_inputs(&input_buffer);
 //! });
+//! ```
 //!
-//! // Playback
-//! let mut player = ReplayPlayer::new(recorder.finish());
+//! ## Playback
+//!
+//! ```rust,no_run
+//! use quasar_core::replay::{ReplayPlayer, ReplayState};
+//!
+//! // Create a player from recorded data
+//! let replay_data = recorder.finish();
+//! let mut player = ReplayPlayer::new(replay_data);
+//!
+//! // Control playback
 //! player.play();
 //! player.set_speed(2.0); // 2x speed
-//! player.update(delta_time, |frame| {
+//! player.seek_to_frame(100);
+//!
+//! // Update playback each frame
+//! player.update(0.016, |frame| {
 //!     frame.apply_to_world(&mut world);
 //! });
 //! ```
+//!
+//! # Replay Format
+//!
+//! Replays are stored in a binary format with:
+//!
+//! - Header with metadata (version, map, player, etc.)
+//! - Frame data with entity snapshots and inputs
+//! - Events for game state changes
+//! - Optional compression for reduced storage
+//!
+//! # Performance Considerations
+//!
+//! - Recording adds minimal overhead (~1-2ms per frame)
+//! - Playback is faster than real-time (can be sped up)
+//! - Memory usage scales with replay duration
+//! - Consider compression for long recordings
 
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -35,14 +76,47 @@ use std::time::Duration;
 pub const REPLAY_VERSION: u32 = 1;
 pub const MAX_REPLAY_FRAMES: usize = 3600 * 60; // 1 hour at 60 FPS
 
+/// State of the replay system.
+///
+/// # Examples
+///
+/// ```rust
+/// use quasar_core::replay::ReplayState;
+///
+/// let state = ReplayState::Recording;
+/// let state = ReplayState::Playing;
+/// let state = ReplayState::Paused;
+/// let state = ReplayState::Stopped;
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReplayState {
+    /// Currently recording game session
     Recording,
+    /// Currently playing back a replay
     Playing,
+    /// Playback is paused
     Paused,
+    /// Replay system is stopped
     Stopped,
 }
 
+/// Header for replay file.
+///
+/// Contains metadata about the replay including version, game info,
+/// map name, duration, and custom metadata.
+///
+/// # Examples
+///
+/// ```rust
+/// use quasar_core::replay::ReplayHeader;
+///
+/// let header = ReplayHeader {
+///     map_name: "Level 1".to_string(),
+///     player_name: Some("Player1".to_string()),
+///     fps: 60.0,
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayHeader {
     pub version: u32,
@@ -70,6 +144,10 @@ impl Default for ReplayHeader {
     }
 }
 
+/// Snapshot of an entity's state at a specific frame.
+///
+/// Contains position, rotation, velocity, animation state, and custom data
+/// for a single entity.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntitySnapshot {
     pub entity_id: u64,
@@ -80,12 +158,18 @@ pub struct EntitySnapshot {
     pub custom_data: Vec<u8>,
 }
 
+/// Input data for a specific frame.
+///
+/// Contains the raw input data for a single frame.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InputFrame {
     pub frame_number: u32,
     pub inputs: Vec<u8>,
 }
 
+/// Complete frame data for replay.
+///
+/// Contains entity snapshots, inputs, and events for a single frame.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReplayFrame {
     pub frame_number: u32,
@@ -95,6 +179,10 @@ pub struct ReplayFrame {
     pub events: Vec<ReplayEvent>,
 }
 
+/// Event that occurred during the replay.
+///
+/// Represents game events that need to be replayed such as
+/// entity spawns, despawns, or state changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayEvent {
     pub event_type: String,

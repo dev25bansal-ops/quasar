@@ -284,7 +284,7 @@ impl<S: State> System for StateTransitionSystem<S> {
 
         // Update state manager
         {
-            let mut manager = world.resource_mut::<StateManager<S>>().expect("StateManager should exist");
+            let manager = world.resource_mut::<StateManager<S>>().expect("StateManager should exist");
             manager.previous = Some(old_state);
             manager.current = new_state;
         }

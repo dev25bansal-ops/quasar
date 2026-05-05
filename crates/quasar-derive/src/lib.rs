@@ -276,6 +276,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         net_deser_fields.push(match ty_str.as_str() {
             "f32" => quote! {
                 #field_name: {
+                    if cursor.len() < 4 {
+                        return Default::default();
+                    }
                     let bytes: [u8; 4] = cursor[..4].try_into().unwrap_or([0; 4]);
                     cursor = &cursor[4..];
                     f32::from_le_bytes(bytes)
@@ -283,6 +286,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             },
             "f64" => quote! {
                 #field_name: {
+                    if cursor.len() < 8 {
+                        return Default::default();
+                    }
                     let bytes: [u8; 8] = cursor[..8].try_into().unwrap_or([0; 8]);
                     cursor = &cursor[8..];
                     f64::from_le_bytes(bytes)
@@ -290,6 +296,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             },
             "u32" => quote! {
                 #field_name: {
+                    if cursor.len() < 4 {
+                        return Default::default();
+                    }
                     let bytes: [u8; 4] = cursor[..4].try_into().unwrap_or([0; 4]);
                     cursor = &cursor[4..];
                     u32::from_le_bytes(bytes)
@@ -297,6 +306,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             },
             "i32" => quote! {
                 #field_name: {
+                    if cursor.len() < 4 {
+                        return Default::default();
+                    }
                     let bytes: [u8; 4] = cursor[..4].try_into().unwrap_or([0; 4]);
                     cursor = &cursor[4..];
                     i32::from_le_bytes(bytes)
@@ -451,17 +463,27 @@ fn extract_query_components(ty: &Type, out: &mut Vec<(String, bool)>) {
     }
 }
 
-/// Derive `SystemParam` — auto-generates `DeclareAccess` impl by analyzing field types.
+/// Derive `SystemParam` — auto-generates both legacy `DeclareAccess` and new
+/// compile-time `SystemParam` impl by analyzing field types.
 ///
 /// Reads `Query<'w, (&T, &mut U)>`, `Res<'w, T>`, `ResMut<'w, T>` fields and
-/// generates the corresponding `SystemAccess` declarations.
+/// generates the corresponding access declarations and state extraction code.
 ///
-/// # Example
+/// # Example (legacy runtime API — still supported)
 /// ```ignore
 /// #[derive(SystemParam)]
 /// struct PhysicsParams<'w> {
 ///     bodies: Query<'w, (&RigidBody, &mut Transform)>,
 ///     time: Res<'w, TimeSnapshot>,
+/// }
+/// ```
+///
+/// # Example (new compile-time API)
+/// ```ignore
+/// #[derive(SystemParam)]
+/// struct PhysicsParams<'w, 's> {
+///     positions: quasar_core::ecs::query::SystemQueryMut<&'w mut Position>,
+///     velocities: quasar_core::ecs::query::SystemQuery<&'w Velocity>,
 /// }
 /// ```
 #[proc_macro_derive(SystemParam)]
@@ -494,6 +516,10 @@ pub fn derive_system_param(input: TokenStream) -> TokenStream {
     let mut read_resources = Vec::new();
     let mut write_resources = Vec::new();
 
+    // For new compile-time SystemParam: collect field types and idents
+    let mut field_types: Vec<&Type> = Vec::new();
+    let mut field_idents: Vec<&syn::Ident> = Vec::new();
+
     for field in fields {
         let ty = &field.ty;
         if let Some((wrapper, components)) = extract_wrapper_info(ty) {
@@ -523,9 +549,22 @@ pub fn derive_system_param(input: TokenStream) -> TokenStream {
                 _ => {}
             }
         }
+
+        // Collect for compile-time SystemParam impl
+        if let Some(field_ident) = field.ident.as_ref() {
+            field_types.push(ty);
+            field_idents.push(field_ident);
+        }
     }
 
+    let field_count = field_types.len();
+    let field_indices: Vec<proc_macro2::Literal> = (0..field_count)
+        .map(|i| proc_macro2::Literal::usize_unsuffixed(i))
+        .collect();
+
+    // Generate the expanded code: legacy DeclareAccess + new compile-time SystemParam
     let expanded = quote! {
+        // ── Legacy runtime API (backward compatible) ──
         impl quasar_core::ecs::parallel::DeclareAccess for #name {
             fn access(&self) -> quasar_core::ecs::parallel::SystemAccess {
                 use quasar_core::ecs::parallel::SystemAccess;
@@ -544,6 +583,38 @@ pub fn derive_system_param(input: TokenStream) -> TokenStream {
             fn run(&mut self, _world: &mut quasar_core::ecs::World) {
                 // SystemParam structs are constructed from the world by the scheduler.
                 // Override this in your system implementation.
+            }
+        }
+
+        // ── New compile-time SystemParam API ──
+        // Implements SystemParam by composing each field's SystemParam impl.
+        // The state is a tuple of each field's state, and get_param extracts each
+        // field's item and constructs the derived struct.
+        impl quasar_core::ecs::system_param::SystemParam for #name {
+            type State = (#( <#field_types as quasar_core::ecs::system_param::SystemParam>::State, )*);
+            type Item<'w, 's> = #name;
+
+            fn init_state(world: &mut quasar_core::ecs::World) -> Self::State {
+                (#( <#field_types as quasar_core::ecs::system_param::SystemParam>::init_state(world), )*)
+            }
+
+            fn access() -> quasar_core::ecs::system_param::Access {
+                use quasar_core::ecs::system_param::Access;
+                let mut access = Access::new();
+                #(access = access.merge(&<#field_types as quasar_core::ecs::system_param::SystemParam>::access());)*
+                access
+            }
+
+            #[allow(unused_variables, non_camel_case_types)]
+            unsafe fn get_param<'w, 's>(
+                state: &'s Self::State,
+                world: &'w quasar_core::ecs::World,
+            ) -> Self::Item<'w, 's> {
+                #name {
+                    #(
+                        #field_idents: <#field_types as quasar_core::ecs::system_param::SystemParam>::get_param(&state.#field_indices, world),
+                    )*
+                }
             }
         }
     };

@@ -2574,6 +2574,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "lz4"
+version = "1.28.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a20b523e860d03443e98350ceaac5e71c6ba89aea7d960769ec3ce37f4de5af4"
+dependencies = [
+ "lz4-sys",
+]
+
+[[package]]
+name = "lz4-sys"
+version = "1.11.1+lz4-1.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bd8c0d6c6ed0cd30b3652886bb8711dc4bb01d637a68105a3d5158039b418e6"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3848,6 +3867,7 @@ dependencies = [
  "flate2",
  "glam",
  "log",
+ "lz4",
  "nalgebra",
  "notify",
  "parking_lot",
@@ -3866,10 +3886,12 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "tempfile",
  "tokio",
  "tracy-client",
  "webpki-roots 0.26.11",
  "wgpu 24.0.5",
+ "zstd",
 ]
 
 [[package]]
@@ -3890,14 +3912,19 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "glam",
  "log",
  "notify",
+ "quasar-ai",
  "quasar-audio",
  "quasar-core",
  "quasar-derive",
  "quasar-math",
  "quasar-physics",
  "quasar-render",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
  "wgpu 24.0.5",
  "winit",
 ]
@@ -4060,6 +4087,7 @@ dependencies = [
  "rand 0.8.5",
  "rayon",
  "serde",
+ "serde_json",
  "wgpu 24.0.5",
  "winit",
 ]
@@ -4079,6 +4107,7 @@ dependencies = [
  "quasar-math",
  "quasar-physics",
  "quasar-window",
+ "tempfile",
  "wasmtime",
  "winit",
 ]
@@ -4102,6 +4131,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "criterion",
+ "egui",
  "fontdue",
  "log",
  "quasar-core",

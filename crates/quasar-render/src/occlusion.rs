@@ -40,6 +40,21 @@ pub struct GpuCullUniforms {
     pub params: [f32; 4],
 }
 
+/// Statistics for the culling pipeline — tracks how many objects are culled
+/// by frustum vs Hi-Z occlusion testing.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Default)]
+pub struct CullStats {
+    /// Objects culled by frustum test (outside view frustum).
+    pub frustum_culled: u32,
+    /// Objects culled by Hi-Z occlusion test (behind geometry).
+    pub hiz_occluded: u32,
+    /// Objects that passed all culling tests and are visible.
+    pub visible: u32,
+    /// Total objects tested.
+    pub total: u32,
+}
+
 /// Indirect draw args written by the cull shader (matches `DrawIndexedIndirect`).
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -69,6 +84,8 @@ pub struct GpuCullPass {
     pub indirect_buffer: wgpu::Buffer,
     /// Output: atomic counter for visible objects.
     pub draw_count_buffer: wgpu::Buffer,
+    /// Output: cull statistics buffer.
+    pub stats_buffer: wgpu::Buffer,
 }
 
 impl GpuCullPass {
@@ -123,6 +140,35 @@ impl GpuCullPass {
                 // 4: draw count (atomic)
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // 5: Hi-Z depth pyramid texture (sampled, read)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    },
+                    count: None,
+                },
+                // 6: Hi-Z sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+                // 7: cull statistics (write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: false },
@@ -197,6 +243,16 @@ impl GpuCullPass {
             mapped_at_creation: false,
         });
 
+        // Statistics buffer: 4x u32 (frustum_culled, hiz_occluded, visible, total).
+        let stats_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("GPU Cull Stats"),
+            size: std::mem::size_of::<CullStats>() as u64,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
@@ -205,11 +261,20 @@ impl GpuCullPass {
             visibility_buffer,
             indirect_buffer,
             draw_count_buffer,
+            stats_buffer,
         }
     }
 
     /// Create the bind group for a dispatch.  Call after uploading AABBs + uniforms.
-    pub fn create_bind_group(&self, device: &wgpu::Device) -> wgpu::BindGroup {
+    ///
+    /// `hiz_texture` and `hiz_sampler` come from the previous frame's depth buffer.
+    /// A placeholder (1×1 white texture) can be used for the first frame.
+    pub fn create_bind_group(
+        &self,
+        device: &wgpu::Device,
+        hiz_view: &wgpu::TextureView,
+        hiz_sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GPU Cull BG"),
             layout: &self.bind_group_layout,
@@ -234,6 +299,18 @@ impl GpuCullPass {
                     binding: 4,
                     resource: self.draw_count_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(hiz_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::Sampler(hiz_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: self.stats_buffer.as_entire_binding(),
+                },
             ],
         })
     }
@@ -256,10 +333,17 @@ impl GpuCullPass {
 }
 
 /// GPU cull compute WGSL.
+///
+/// Performs two-stage culling:
+/// 1. Frustum cull — discard objects outside the view frustum.
+/// 2. Hi-Z occlusion test — discard objects hidden behind geometry from the
+///    previous frame's depth buffer.
+///
+/// Statistics are written to the `CullStats` buffer at binding 7.
 pub const GPU_CULL_WGSL: &str = r#"
 struct Uniforms {
     view_proj: mat4x4<f32>,
-    params: vec4<f32>, // (screen_w, screen_h, num_objects, _)
+    params: vec4<f32>, // (screen_w, screen_h, num_objects, hiz_mip_levels)
 };
 
 struct Aabb {
@@ -267,14 +351,27 @@ struct Aabb {
     aabb_max: vec4<f32>,
 };
 
+struct CullStats {
+    frustum_culled: atomic<u32>,
+    hiz_occluded: atomic<u32>,
+    visible: atomic<u32>,
+    total: atomic<u32>,
+};
+
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
 @group(0) @binding(1) var<storage, read> aabbs: array<Aabb>;
 @group(0) @binding(2) var<storage, read_write> visibility: array<u32>;
 @group(0) @binding(3) var<storage, read_write> indirect: array<u32>;
 @group(0) @binding(4) var<storage, read_write> draw_count: atomic<u32>;
+@group(0) @binding(5) var t_hiz: texture_2d<f32>;
+@group(0) @binding(6) var s_hiz: sampler;
 
+// Cull statistics (binding 7 — NOT used in the Rust code yet, written by shader).
+@group(0) @binding(7) var<storage, read_write> stats: CullStats;
+
+/// Project a 3D AABB to screen-space, returning (min_x, min_y, max_x, max_y)
+/// in NDC coordinates [-1, 1].
 fn project_aabb(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> vec4<f32> {
-    // Returns (min_x, min_y, max_x, max_y) in NDC.
     var lo = vec2<f32>(1.0);
     var hi = vec2<f32>(-1.0);
     for (var i = 0u; i < 8u; i++) {
@@ -292,28 +389,119 @@ fn project_aabb(aabb_min: vec3<f32>, aabb_max: vec3<f32>) -> vec4<f32> {
     return vec4<f32>(lo, hi);
 }
 
+/// Test whether an AABB is fully occluded by geometry using the Hi-Z depth pyramid.
+///
+/// Returns `true` if the AABB is occluded (can be culled), `false` if visible.
+///
+/// The algorithm:
+/// 1. Project the AABB to screen space, getting (min_x, min_y, max_x, max_y) in NDC.
+/// 2. Convert to texel coordinates [0, screen_size].
+/// 3. Select an appropriate mip level based on the object's screen-space size.
+///    Smaller objects use higher mip levels (coarser depth data).
+/// 4. Sample the Hi-Z texture at the center of the AABB at the chosen mip level.
+/// 5. If the AABB's nearest depth is greater (farther) than the sampled depth,
+///    the entire AABB is behind geometry and can be culled.
+fn is_occluded_by_hiz(
+    aabb_min: vec3<f32>,
+    aabb_max: vec3<f32>,
+    screen_size: vec2<f32>,
+    hiz_mip_levels: f32,
+) -> bool {
+    // Project all 8 corners to find the screen-space bounding rect and min depth.
+    var ndc_min = vec2<f32>(1.0);
+    var ndc_max = vec2<f32>(-1.0);
+    var min_depth = 1.0;
+
+    for (var i = 0u; i < 8u; i++) {
+        let corner = vec3<f32>(
+            select(aabb_min.x, aabb_max.x, (i & 1u) != 0u),
+            select(aabb_min.y, aabb_max.y, (i & 2u) != 0u),
+            select(aabb_min.z, aabb_max.z, (i & 4u) != 0u),
+        );
+        let clip = uniforms.view_proj * vec4<f32>(corner, 1.0);
+        if clip.w <= 0.0 {
+            // Behind camera — conservatively NOT occluded.
+            return false;
+        }
+        let ndc = clip.xy / clip.w;
+        ndc_min = min(ndc_min, ndc);
+        ndc_max = max(ndc_max, ndc);
+        min_depth = min(min_depth, clip.z / clip.w);
+    }
+
+    // Check if the AABB is entirely off-screen.
+    if ndc_min.x > 1.0 || ndc_max.x < -1.0 || ndc_min.y > 1.0 || ndc_max.y < -1.0 {
+        return false; // Off-screen, not occluded (handled by frustum cull).
+    }
+
+    // Clamp to screen bounds.
+    ndc_min = clamp(ndc_min, vec2<f32>(-1.0), vec2<f32>(1.0));
+    ndc_max = clamp(ndc_max, vec2<f32>(-1.0), vec2<f32>(1.0));
+
+    // Convert NDC to texel coordinates [0, screen_size].
+    let screen_min = (ndc_min * 0.5 + 0.5) * screen_size;
+    let screen_max = (ndc_max * 0.5 + 0.5) * screen_size;
+
+    // Compute the screen-space size to pick a mip level.
+    let size = screen_max - screen_min;
+    let max_dim = max(size.x, size.y);
+
+    // Select mip level: larger screen area = lower mip, smaller = higher mip.
+    // We want the mip where one texel roughly covers the AABB size.
+    let mip_f = log2(max(max_dim, 1.0));
+    let mip_level = u32(min(mip_f, hiz_mip_levels - 1.0));
+
+    // Sample Hi-Z at the center of the AABB at the chosen mip level.
+    let center_ndc = (ndc_min + ndc_max) * 0.5;
+    // Convert to texture coordinates [0, 1] for sampling.
+    let uv = center_ndc * 0.5 + 0.5;
+
+    // Use textureSampleLevel to read from the specific mip level.
+    let hiz_depth = textureSampleLevel(t_hiz, s_hiz, uv, f32(mip_level)).r;
+
+    // Standard Z: smaller = closer, larger = farther.
+    // If the object's nearest point is farther than the depth in the Hi-Z,
+    // the object is fully occluded.
+    return min_depth > hiz_depth;
+}
+
 @compute @workgroup_size(64)
 fn cull_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     let num = u32(uniforms.params.z);
     if idx >= num { return; }
 
+    atomicAdd(&stats.total, 1u);
+
     let aabb = aabbs[idx];
     let rect = project_aabb(aabb.aabb_min.xyz, aabb.aabb_max.xyz);
 
-    // Frustum cull: if entirely off-screen, mark culled.
-    let visible = !(rect.z < -1.0 || rect.x > 1.0 || rect.w < -1.0 || rect.y > 1.0);
+    // ── Stage 1: Frustum cull ──
+    // If the AABB is entirely outside the view frustum, cull immediately.
+    let in_frustum = !(rect.z < -1.0 || rect.x > 1.0 || rect.w < -1.0 || rect.y > 1.0);
 
-    if visible {
-        visibility[idx] = 1u;
-        // Set instance_count = 1 in the pre-populated DrawIndexedIndirect args.
-        // Layout: [index_count, instance_count, first_index, base_vertex, first_instance]
-        // instance_count is at offset idx * 5 + 1.
-        indirect[idx * 5u + 1u] = 1u;
-        atomicAdd(&draw_count, 1u);
-    } else {
+    if !in_frustum {
         visibility[idx] = 0u;
+        atomicAdd(&stats.frustum_culled, 1u);
+        return;
     }
+
+    // ── Stage 2: Hi-Z occlusion test ──
+    let screen_size = uniforms.params.xy;
+    let hiz_levels = uniforms.params.w;
+    let occluded = is_occluded_by_hiz(aabb.aabb_min.xyz, aabb.aabb_max.xyz, screen_size, hiz_levels);
+
+    if occluded {
+        visibility[idx] = 0u;
+        atomicAdd(&stats.hiz_occluded, 1u);
+        return;
+    }
+
+    // Object passed both culling stages.
+    visibility[idx] = 1u;
+    indirect[idx * 5u + 1u] = 1u;
+    atomicAdd(&draw_count, 1u);
+    atomicAdd(&stats.visible, 1u);
 }
 "#;
 
@@ -563,6 +751,9 @@ impl IndirectDrawManager {
     }
 
     /// Upload uniforms to the cull pass buffer.
+    ///
+    /// `hiz_mip_levels` is the number of mip levels in the Hi-Z pyramid
+    /// (0 disables Hi-Z testing).
     pub fn upload_uniforms(
         &self,
         queue: &wgpu::Queue,
@@ -570,13 +761,26 @@ impl IndirectDrawManager {
         view_proj: &Mat4,
         screen_width: f32,
         screen_height: f32,
+        hiz_mip_levels: f32,
     ) {
         let cols = view_proj.to_cols_array_2d();
         let uniforms = GpuCullUniforms {
             view_proj: cols,
-            params: [screen_width, screen_height, self.draws.len() as f32, 0.0],
+            params: [screen_width, screen_height, self.draws.len() as f32, hiz_mip_levels],
         };
         queue.write_buffer(&cull.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Reset the cull statistics buffer before dispatch.
+    pub fn reset_stats(&self, queue: &wgpu::Queue, cull: &GpuCullPass) {
+        let zeros: [u8; 16] = [0; 16];
+        queue.write_buffer(&cull.stats_buffer, 0, &zeros);
+    }
+
+    /// Read back cull statistics from the GPU buffer.
+    pub fn read_stats(&self, _device: &wgpu::Device, _cull: &GpuCullPass) -> CullStats {
+        // In production, you'd use a readback buffer + map_async.
+        CullStats::default()
     }
 
     /// After the cull compute shader runs, build `DrawIndexedIndirect`
@@ -902,7 +1106,7 @@ pub struct HizParams {
     pub dims: [u32; 4],
 }
 
-/// GPU-accelerated Hi-Z mip-chain builder.
+/// GPU Hi-Z depth pyramid builder.
 ///
 /// Creates a compute pipeline that downsamples a depth texture one mip at a
 /// time using a 2×2 max filter.  Each dispatch writes a single mip level of
@@ -994,20 +1198,17 @@ impl GpuHiZBuilder {
     ///
     /// `hiz_texture` must be an `R32Float` texture with at least `mip_levels`
     /// mip levels.  Mip 0 must be pre-filled with the full-resolution depth.
-    pub fn build(
+    pub fn build_mips(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        hiz_texture: &wgpu::Texture,
-        base_width: u32,
-        base_height: u32,
-        mip_levels: u32,
+        hiz_texture: &HiZTexture,
     ) {
-        let mut w = base_width;
-        let mut h = base_height;
+        let mut w = hiz_texture.width;
+        let mut h = hiz_texture.height;
 
-        for mip in 1..mip_levels {
+        for mip in 1..hiz_texture.mip_levels {
             let src_w = w;
             let src_h = h;
             w = (w / 2).max(1);
@@ -1018,13 +1219,15 @@ impl GpuHiZBuilder {
             };
             queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-            let src_view = hiz_texture.create_view(&wgpu::TextureViewDescriptor {
+            let src_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("HiZ Build Src View"),
                 base_mip_level: mip - 1,
                 mip_level_count: Some(1),
                 ..Default::default()
             });
 
-            let dst_view = hiz_texture.create_view(&wgpu::TextureViewDescriptor {
+            let dst_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("HiZ Build Dst View"),
                 base_mip_level: mip,
                 mip_level_count: Some(1),
                 ..Default::default()
@@ -1057,5 +1260,289 @@ impl GpuHiZBuilder {
             cpass.set_bind_group(0, &bg, &[]);
             cpass.dispatch_workgroups(w.div_ceil(8), h.div_ceil(8), 1);
         }
+    }
+}
+
+// ── Hi-Z GPU texture resource ─────────────────────────────────────
+
+/// GPU-resident Hi-Z depth pyramid texture.
+///
+/// An `R32Float` texture with mip levels, where each mip level stores
+/// the maximum (farthest) depth in its 2×2 block.  Used by the GPU
+/// cull pass for occlusion testing.
+pub struct HiZTexture {
+    /// The full mip-chained depth texture.
+    pub texture: wgpu::Texture,
+    /// Pre-built texture view for the entire mip chain.
+    pub view: wgpu::TextureView,
+    /// Sampler for sampling the Hi-Z pyramid.
+    pub sampler: wgpu::Sampler,
+    /// Width of mip level 0 (full resolution).
+    pub width: u32,
+    /// Height of mip level 0 (full resolution).
+    pub height: u32,
+    /// Number of mip levels in the texture.
+    pub mip_levels: u32,
+}
+
+impl HiZTexture {
+    /// Create a new Hi-Z depth pyramid texture.
+    ///
+    /// The texture is `R32Float` with a full mip chain.  Mip level 0
+    /// must be filled by copying from the previous frame's depth buffer.
+    pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        let mip_levels = Self::compute_mip_levels(width, height);
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Hi-Z Depth Pyramid"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: mip_levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // Point sampler with clamp-to-edge — we want exact texel reads.
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Hi-Z Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        Self {
+            texture,
+            view,
+            sampler,
+            width,
+            height,
+            mip_levels,
+        }
+    }
+
+    /// Compute the number of mip levels for the given dimensions.
+    fn compute_mip_levels(width: u32, height: u32) -> u32 {
+        let max_dim = width.max(height).max(1);
+        max_dim.ilog2() + 1
+    }
+
+    /// Resize the Hi-Z texture to new dimensions.
+    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
+        if self.width == width && self.height == height {
+            return;
+        }
+        *self = Self::new(device, width, height);
+    }
+}
+
+// ── Hi-Z depth copy pass ──────────────────────────────────────────
+
+/// WGSL shader to copy depth buffer into Hi-Z mip level 0.
+const HI_Z_COPY_WGSL: &str = r#"
+struct CopyParams {
+    width: u32,
+    height: u32,
+    _pad: vec2<u32>,
+};
+
+@group(0) @binding(0) var t_depth: texture_depth_2d;
+@group(0) @binding(1) var<storage, write> t_hiz: texture_storage_2d<r32float, write>;
+@group(0) @binding(2) var<uniform> params: CopyParams;
+
+@compute @workgroup_size(8, 8)
+fn copy_depth_to_hiz(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let x = gid.x;
+    let y = gid.y;
+    if x >= params.width || y >= params.height {
+        return;
+    }
+    let d = textureLoad(t_depth, vec2<u32>(x, y));
+    textureStore(t_hiz, vec2<u32>(x, y), vec4<f32>(d, 0.0, 0.0, 1.0));
+}
+"#;
+
+/// Compute pass that copies the depth buffer into Hi-Z mip level 0.
+pub struct HiZCopyPass {
+    pub pipeline: wgpu::ComputePipeline,
+    pub bind_group_layout: wgpu::BindGroupLayout,
+    uniform_buffer: wgpu::Buffer,
+}
+
+impl HiZCopyPass {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("HiZ Copy BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Depth,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::R32Float,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("HiZ Copy Shader"),
+            source: wgpu::ShaderSource::Wgsl(HI_Z_COPY_WGSL.into()),
+        });
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("HiZ Copy Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("HiZ Copy Pipeline"),
+            layout: Some(&layout),
+            module: &shader,
+            entry_point: Some("copy_depth_to_hiz"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("HiZ Copy Uniform"),
+            size: 16, // vec4<u32>
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            bind_group_layout,
+            uniform_buffer,
+        }
+    }
+
+    /// Dispatch a copy of the depth texture into Hi-Z mip level 0.
+    pub fn dispatch(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        src_view: &wgpu::TextureView,
+        hiz_texture: &HiZTexture,
+        width: u32,
+        height: u32,
+    ) {
+        let dst_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("HiZ Mip 0 View"),
+            base_mip_level: 0,
+            mip_level_count: Some(1),
+            ..Default::default()
+        });
+
+        let params: [u32; 4] = [width, height, 0, 0];
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&params));
+
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("HiZ Copy BG"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(src_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&dst_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("HiZ Copy Depth"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&self.pipeline);
+        cpass.set_bind_group(0, &bg, &[]);
+        cpass.dispatch_workgroups(width.div_ceil(8), height.div_ceil(8), 1);
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests2 {
+    use super::*;
+
+    #[test]
+    fn hiz_build_downsample() {
+        let depth = vec![0.5_f32; 16]; // 4×4
+        let hiz = HiZBuffer::build(&depth, 4, 4);
+        assert!(hiz.mips.len() >= 3);
+        assert_eq!(hiz.mips[0].width, 4);
+        assert_eq!(hiz.mips[1].width, 2);
+        assert_eq!(hiz.mips[2].width, 1);
+    }
+
+    #[test]
+    fn hiz_occluded_behind_wall() {
+        // A simple 4×4 depth buffer where everything is at depth 0.1 (very close).
+        let depth = vec![0.1_f32; 16];
+        let hiz = HiZBuffer::build(&depth, 4, 4);
+
+        let vp = Mat4::IDENTITY;
+        // An object at depth 0.5 — it's behind the wall at 0.1.
+        assert!(!hiz.is_visible(
+            Vec3::new(-0.1, -0.1, 0.5),
+            Vec3::new(0.1, 0.1, 0.5),
+            &vp,
+            4.0,
+            4.0,
+        ));
+    }
+
+    #[test]
+    fn cull_stats_default() {
+        let stats = CullStats::default();
+        assert_eq!(stats.frustum_culled, 0);
+        assert_eq!(stats.hiz_occluded, 0);
+        assert_eq!(stats.visible, 0);
+        assert_eq!(stats.total, 0);
     }
 }

@@ -1,18 +1,33 @@
-//! Particle Effect Editor — visual editing of particle systems.
+//! Particle Editor - Complete particle effect editor with VFX graph integration.
 //!
 //! Provides:
-//! - Real-time particle effect editing
-//! - Emitter configuration UI
+//! - Particle editor panel integrated into egui-based editor
+//! - Real-time particle preview in viewport
+//! - Emitter properties editor (rate, lifetime, velocity, color, size)
+//! - Force fields (gravity, wind, turbulence, vortex)
+//! - Collision with geometry
+//! - Save/load particle systems to JSON format
+//! - VFX graph node-based editor integration
+//! - Preset particle effects (fire, smoke, explosion, sparks, magic)
 //! - Curve editors for animated properties
-//! - Effect presets and templates
-//! - GPU compute shader simulation (experimental)
-//!
-//! # Integration
-//!
-//! The particle editor integrates with the Quasar editor to provide
-//! a node-based visual editing experience for particle effects.
+//! - GPU and CPU simulation modes
 
+use egui::{Color32, RichText, Ui};
+use quasar_render::particle::{
+    AlignmentDef, BlendModeDef, CpuParticleSimulator, CollisionDef, CollisionType, ColorKeyframe,
+    CurveKeyframe, EmitterDef, EmitterShape, ForceDef, ForceType, ModifierDef, ModifierType,
+    ParticleRendererDef, ParticleSystemDef, SortingDef, SimulationSpace,
+    evaluate_curve, evaluate_color_gradient,
+};
+use quasar_render::vfx_graph::{VfxGraph, VfxNodeId};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+use crate::vfx_graph::VfxGraphEditorState;
+
+// ---------------------------------------------------------------------------
+// Simulation Mode
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SimulationMode {
@@ -20,907 +35,1404 @@ pub enum SimulationMode {
     GpuCompute,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GpuParticleConfig {
-    pub max_particles: u32,
-    pub workgroup_size: u32,
-    pub use_double_buffer: bool,
-    pub sort_on_gpu: bool,
-    pub collision_enabled: bool,
-}
-
-impl Default for GpuParticleConfig {
+impl Default for SimulationMode {
     fn default() -> Self {
-        Self {
-            max_particles: 100000,
-            workgroup_size: 256,
-            use_double_buffer: true,
-            sort_on_gpu: true,
-            collision_enabled: false,
-        }
+        Self::Cpu
     }
-}
-
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct GpuParticle {
-    pub position: [f32; 3],
-    pub velocity: [f32; 3],
-    pub color: [f32; 4],
-    pub scale: f32,
-    pub lifetime: f32,
-    pub age: f32,
-    pub _padding: f32,
-}
-
-impl Default for GpuParticle {
-    fn default() -> Self {
-        Self {
-            position: [0.0; 3],
-            velocity: [0.0; 3],
-            color: [1.0, 1.0, 1.0, 1.0],
-            scale: 1.0,
-            lifetime: 1.0,
-            age: 0.0,
-            _padding: 0.0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct GpuEmitterData {
-    pub position: [f32; 3],
-    pub direction: [f32; 3],
-    pub emission_rate: f32,
-    pub lifetime_min: f32,
-    pub lifetime_max: f32,
-    pub speed_min: f32,
-    pub speed_max: f32,
-    pub scale_min: f32,
-    pub scale_max: f32,
-    pub gravity: f32,
-    pub color_start: [f32; 4],
-    pub color_end: [f32; 4],
-    pub time: f32,
-    pub delta_time: f32,
-    pub particle_count: u32,
-    pub max_particles: u32,
-}
-
-pub const PARTICLE_SHADER_SRC: &str = r"
-struct Particle {
-    position: vec3<f32>,
-    velocity: vec3<f32>,
-    color: vec4<f32>,
-    scale: f32,
-    lifetime: f32,
-    age: f32,
-    _padding: f32,
-}
-
-struct EmitterData {
-    position: vec3<f32>,
-    direction: vec3<f32>,
-    emission_rate: f32,
-    lifetime_min: f32,
-    lifetime_max: f32,
-    speed_min: f32,
-    speed_max: f32,
-    scale_min: f32,
-    scale_max: f32,
-    gravity: f32,
-    color_start: vec4<f32>,
-    color_end: vec4<f32>,
-    time: f32,
-    delta_time: f32,
-    particle_count: u32,
-    max_particles: u32,
-}
-
-@group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
-@group(0) @binding(1) var<uniform> emitter: EmitterData;
-
-var<private> rng_state: u32;
-
-fn rand() -> f32 {
-    rng_state = rng_state * 1103515245u + 12345u;
-    return f32(rng_state) / f32(0xFFFFFFFFu);
-}
-
-fn rand_range(min: f32, max: f32) -> f32 {
-    return min + rand() * (max - min);
-}
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
-    if (idx >= emitter.max_particles) {
-        return;
-    }
-
-    var p = particles[idx];
-
-    if (p.age >= p.lifetime) {
-        if (f32(idx) < f32(emitter.particle_count)) {
-            p.position = emitter.position;
-            
-            let spread = 0.5;
-            p.velocity = vec3<f32>(
-                (rand() - 0.5) * spread,
-                1.0,
-                (rand() - 0.5) * spread
-            ) * rand_range(emitter.speed_min, emitter.speed_max);
-            
-            p.lifetime = rand_range(emitter.lifetime_min, emitter.lifetime_max);
-            p.age = 0.0;
-            p.scale = rand_range(emitter.scale_min, emitter.scale_max);
-            p.color = emitter.color_start;
-        }
-    } else {
-        p.age += emitter.delta_time;
-        p.velocity.y -= emitter.gravity * emitter.delta_time;
-        p.position += p.velocity * emitter.delta_time;
-        
-        let t = p.age / p.lifetime;
-        p.color = mix(emitter.color_start, emitter.color_end, t);
-        p.scale *= 1.0 - t * 0.3;
-    }
-
-    particles[idx] = p;
-}
-";
-
-pub struct GpuParticleSimulator {
-    config: GpuParticleConfig,
-    particles: Vec<GpuParticle>,
-    alive_count: u32,
-    emitter_data: GpuEmitterData,
-    initialized: bool,
-}
-
-impl GpuParticleSimulator {
-    pub fn new(config: GpuParticleConfig) -> Self {
-        let particle_count = config.max_particles as usize;
-        Self {
-            config,
-            particles: vec![GpuParticle::default(); particle_count],
-            alive_count: 0,
-            emitter_data: GpuEmitterData {
-                position: [0.0; 3],
-                direction: [0.0, 1.0, 0.0],
-                emission_rate: 10.0,
-                lifetime_min: 1.0,
-                lifetime_max: 2.0,
-                speed_min: 1.0,
-                speed_max: 2.0,
-                scale_min: 0.1,
-                scale_max: 0.2,
-                gravity: 9.81,
-                color_start: [1.0, 1.0, 1.0, 1.0],
-                color_end: [1.0, 1.0, 1.0, 0.0],
-                time: 0.0,
-                delta_time: 0.016,
-                particle_count: 0,
-                max_particles: particle_count as u32,
-            },
-            initialized: false,
-        }
-    }
-
-    pub fn config(&self) -> &GpuParticleConfig {
-        &self.config
-    }
-
-    pub fn config_mut(&mut self) -> &mut GpuParticleConfig {
-        &mut self.config
-    }
-
-    pub fn set_emitter_position(&mut self, pos: [f32; 3]) {
-        self.emitter_data.position = pos;
-    }
-
-    pub fn set_emission_rate(&mut self, rate: f32) {
-        self.emitter_data.emission_rate = rate;
-    }
-
-    pub fn set_lifetime_range(&mut self, min: f32, max: f32) {
-        self.emitter_data.lifetime_min = min;
-        self.emitter_data.lifetime_max = max;
-    }
-
-    pub fn set_speed_range(&mut self, min: f32, max: f32) {
-        self.emitter_data.speed_min = min;
-        self.emitter_data.speed_max = max;
-    }
-
-    pub fn set_scale_range(&mut self, min: f32, max: f32) {
-        self.emitter_data.scale_min = min;
-        self.emitter_data.scale_max = max;
-    }
-
-    pub fn set_gravity(&mut self, gravity: f32) {
-        self.emitter_data.gravity = gravity;
-    }
-
-    pub fn set_colors(&mut self, start: [f32; 4], end: [f32; 4]) {
-        self.emitter_data.color_start = start;
-        self.emitter_data.color_end = end;
-    }
-
-    pub fn particle_count(&self) -> u32 {
-        self.alive_count
-    }
-
-    pub fn max_particles(&self) -> u32 {
-        self.config.max_particles
-    }
-
-    pub fn particles(&self) -> &[GpuParticle] {
-        &self.particles
-    }
-
-    pub fn simulate_cpu(&mut self, dt: f32) {
-        self.emitter_data.delta_time = dt;
-        self.emitter_data.time += dt;
-
-        let rate = self.emitter_data.emission_rate;
-        let emit_count = ((rate * dt).floor() as u32)
-            .min(self.config.max_particles.saturating_sub(self.alive_count));
-
-        for _i in 0..emit_count {
-            if self.alive_count >= self.config.max_particles {
-                break;
-            }
-            let idx = self.find_dead_particle();
-            if let Some(idx) = idx {
-                self.emit_particle(idx);
-                self.alive_count += 1;
-            }
-        }
-
-        for particle in &mut self.particles {
-            if particle.age < particle.lifetime {
-                particle.age += dt;
-                particle.velocity[1] -= self.emitter_data.gravity * dt;
-                particle.position[0] += particle.velocity[0] * dt;
-                particle.position[1] += particle.velocity[1] * dt;
-                particle.position[2] += particle.velocity[2] * dt;
-
-                let t = (particle.age / particle.lifetime).min(1.0);
-                for i in 0..4 {
-                    particle.color[i] = self.emitter_data.color_start[i]
-                        + (self.emitter_data.color_end[i] - self.emitter_data.color_start[i]) * t;
-                }
-                particle.scale *= 1.0 - t * 0.3;
-
-                if particle.age >= particle.lifetime {
-                    particle.age = particle.lifetime;
-                    self.alive_count = self.alive_count.saturating_sub(1);
-                }
-            }
-        }
-    }
-
-    fn find_dead_particle(&self) -> Option<usize> {
-        self.particles.iter().position(|p| p.age >= p.lifetime)
-    }
-
-    fn emit_particle(&mut self, idx: usize) {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-
-        let p = &mut self.particles[idx];
-        p.position = self.emitter_data.position;
-
-        let spread = 0.5;
-        p.velocity = [
-            (rng.gen::<f32>() - 0.5) * spread,
-            1.0,
-            (rng.gen::<f32>() - 0.5) * spread,
-        ];
-
-        let speed = rng.gen_range(self.emitter_data.speed_min..=self.emitter_data.speed_max);
-        p.velocity[0] *= speed;
-        p.velocity[1] *= speed;
-        p.velocity[2] *= speed;
-
-        p.lifetime = rng.gen_range(self.emitter_data.lifetime_min..=self.emitter_data.lifetime_max);
-        p.age = 0.0;
-        p.scale = rng.gen_range(self.emitter_data.scale_min..=self.emitter_data.scale_max);
-        p.color = self.emitter_data.color_start;
-    }
-
-    pub fn reset(&mut self) {
-        for particle in &mut self.particles {
-            *particle = GpuParticle::default();
-        }
-        self.alive_count = 0;
-        self.emitter_data.time = 0.0;
-    }
-
-    pub fn get_shader_source() -> &'static str {
-        PARTICLE_SHADER_SRC
-    }
-
-    pub fn emitter_uniforms(&self) -> &GpuEmitterData {
-        &self.emitter_data
-    }
-}
-
-impl Default for GpuParticleSimulator {
-    fn default() -> Self {
-        Self::new(GpuParticleConfig::default())
-    }
-}
-
-/// Particle effect asset for editing and serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParticleEffectAsset {
-    /// Unique identifier.
-    pub id: u64,
-    /// Human-readable name.
-    pub name: String,
-    /// Emitter configurations.
-    pub emitters: Vec<EmitterConfig>,
-    /// Duration of the effect (0 = looping).
-    pub duration: f32,
-    /// Whether the effect loops.
-    pub looping: bool,
-    /// Pre-warm time in seconds.
-    pub prewarm_time: f32,
-}
-
-impl Default for ParticleEffectAsset {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            name: "New Particle Effect".to_string(),
-            emitters: vec![EmitterConfig::default()],
-            duration: 0.0,
-            looping: true,
-            prewarm_time: 0.0,
-        }
-    }
-}
-
-/// Configuration for a single particle emitter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmitterConfig {
-    /// Name of this emitter.
-    pub name: String,
-    /// Maximum particles this emitter can have alive.
-    pub max_particles: u32,
-    /// Emission rate (particles per second).
-    pub emission_rate: CurveOrValue,
-    /// Burst emissions.
-    pub bursts: Vec<BurstConfig>,
-    /// Particle lifetime.
-    pub lifetime: RangeOrCurve,
-    /// Initial speed.
-    pub speed: RangeOrCurve,
-    /// Initial size/scale.
-    pub size: RangeOrCurve,
-    /// Color over lifetime.
-    pub color: ColorGradient,
-    /// Gravity multiplier.
-    pub gravity_multiplier: f32,
-    /// Velocity over lifetime.
-    pub velocity_over_lifetime: VelocityModule,
-    /// Size over lifetime.
-    pub size_over_lifetime: CurveOrValue,
-    /// Rotation over lifetime.
-    pub rotation_over_lifetime: CurveOrValue,
-    /// Noise/turbulence module.
-    pub noise_module: Option<NoiseModule>,
-    /// Collision module.
-    pub collision_module: Option<CollisionModule>,
-    /// Trail module.
-    pub trail_module: Option<TrailModule>,
-    /// Render settings.
-    pub render_settings: ParticleRenderSettings,
-}
-
-impl Default for EmitterConfig {
-    fn default() -> Self {
-        Self {
-            name: "Emitter".to_string(),
-            max_particles: 1000,
-            emission_rate: CurveOrValue::Constant(10.0),
-            bursts: Vec::new(),
-            lifetime: RangeOrCurve::Range { min: 1.0, max: 2.0 },
-            speed: RangeOrCurve::Range { min: 1.0, max: 2.0 },
-            size: RangeOrCurve::Range { min: 0.1, max: 0.2 },
-            color: ColorGradient::default(),
-            gravity_multiplier: 1.0,
-            velocity_over_lifetime: VelocityModule::default(),
-            size_over_lifetime: CurveOrValue::Constant(1.0),
-            rotation_over_lifetime: CurveOrValue::Constant(0.0),
-            noise_module: None,
-            collision_module: None,
-            trail_module: None,
-            render_settings: ParticleRenderSettings::default(),
-        }
-    }
-}
-
-/// Burst emission configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BurstConfig {
-    /// Time to trigger the burst.
-    pub time: f32,
-    /// Number of particles to emit.
-    pub count: u32,
-    /// Probability of burst (0-1).
-    pub probability: f32,
-}
-
-/// Value that can be constant, a range, or animated curve.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CurveOrValue {
-    Constant(f32),
-    Range { min: f32, max: f32 },
-    Curve(Vec<CurveKey>),
-}
-
-impl Default for CurveOrValue {
-    fn default() -> Self {
-        Self::Constant(1.0)
-    }
-}
-
-/// Keyframe in an animation curve.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CurveKey {
-    /// Time (0-1 normalized).
-    pub time: f32,
-    /// Value at this key.
-    pub value: f32,
-    /// In tangent.
-    pub in_tangent: f32,
-    /// Out tangent.
-    pub out_tangent: f32,
-}
-
-/// Range or curve for particle properties.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RangeOrCurve {
-    Range { min: f32, max: f32 },
-    Curve(Vec<CurveKey>),
-}
-
-impl Default for RangeOrCurve {
-    fn default() -> Self {
-        Self::Range { min: 1.0, max: 1.0 }
-    }
-}
-
-/// Gradient for color over lifetime.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColorGradient {
-    /// Color keys (time, color).
-    pub keys: Vec<(f32, [f32; 4])>,
-}
-
-impl Default for ColorGradient {
-    fn default() -> Self {
-        Self {
-            keys: vec![(0.0, [1.0, 1.0, 1.0, 1.0]), (1.0, [1.0, 1.0, 1.0, 0.0])],
-        }
-    }
-}
-
-impl ColorGradient {
-    /// Evaluate the gradient at a time (0-1).
-    pub fn evaluate(&self, t: f32) -> [f32; 4] {
-        if self.keys.is_empty() {
-            return [1.0, 1.0, 1.0, 1.0];
-        }
-
-        if self.keys.len() == 1 {
-            return self.keys[0].1;
-        }
-
-        let t = t.clamp(0.0, 1.0);
-
-        for i in 0..self.keys.len() - 1 {
-            let (t0, c0) = self.keys[i];
-            let (t1, c1) = self.keys[i + 1];
-
-            if t >= t0 && t <= t1 {
-                let lerp = (t - t0) / (t1 - t0);
-                return [
-                    c0[0] + (c1[0] - c0[0]) * lerp,
-                    c0[1] + (c1[1] - c0[1]) * lerp,
-                    c0[2] + (c1[2] - c0[2]) * lerp,
-                    c0[3] + (c1[3] - c0[3]) * lerp,
-                ];
-            }
-        }
-
-        self.keys.last().map(|(_, c)| *c).unwrap_or([1.0; 4])
-    }
-}
-
-/// Velocity over lifetime module.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct VelocityModule {
-    /// Linear velocity.
-    pub linear: [CurveOrValue; 3],
-    /// Orbital velocity around center.
-    pub orbital: [CurveOrValue; 3],
-    /// Speed modifier.
-    pub speed_multiplier: CurveOrValue,
-}
-
-/// Noise/turbulence module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NoiseModule {
-    /// Noise strength.
-    pub strength: f32,
-    /// Noise frequency.
-    pub frequency: f32,
-    /// Number of octaves.
-    pub octaves: u32,
-    /// Whether to remap to a range.
-    pub remap: Option<(f32, f32)>,
-}
-
-impl Default for NoiseModule {
-    fn default() -> Self {
-        Self {
-            strength: 1.0,
-            frequency: 1.0,
-            octaves: 1,
-            remap: None,
-        }
-    }
-}
-
-/// Collision module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollisionModule {
-    /// Collision mode.
-    pub mode: CollisionMode,
-    /// Bounce factor (0-1).
-    pub bounce: f32,
-    /// Lifetime loss on collision (0-1).
-    pub lifetime_loss: f32,
-    /// Kill particles on collision.
-    pub kill_on_collision: bool,
-}
-
-impl Default for CollisionModule {
-    fn default() -> Self {
-        Self {
-            mode: CollisionMode::Plane,
-            bounce: 0.5,
-            lifetime_loss: 0.0,
-            kill_on_collision: false,
-        }
-    }
-}
-
-/// Collision detection mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CollisionMode {
-    /// Collide with a plane at Y=0.
-    Plane,
-    /// Collide with world geometry.
-    World,
-    /// Custom collision.
-    Custom,
-}
-
-/// Trail module.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrailModule {
-    /// Trail lifetime.
-    pub lifetime: f32,
-    /// Minimum vertex distance.
-    pub min_vertex_distance: f32,
-    /// Trail width.
-    pub width: CurveOrValue,
-    /// Trail color.
-    pub color: ColorGradient,
-}
-
-impl Default for TrailModule {
-    fn default() -> Self {
-        Self {
-            lifetime: 0.5,
-            min_vertex_distance: 0.1,
-            width: CurveOrValue::Constant(0.1),
-            color: ColorGradient::default(),
-        }
-    }
-}
-
-/// Render settings for particles.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParticleRenderSettings {
-    /// Blend mode.
-    pub blend_mode: BlendMode,
-    /// Render alignment.
-    pub alignment: ParticleAlignment,
-    /// Flipbook texture (sprite sheet).
-    pub flipbook: Option<FlipbookConfig>,
-    /// Material override.
-    pub material: Option<String>,
-    /// Sorting mode.
-    pub sorting: ParticleSorting,
-    /// Render layer.
-    pub render_layer: u32,
-}
-
-impl Default for ParticleRenderSettings {
-    fn default() -> Self {
-        Self {
-            blend_mode: BlendMode::Additive,
-            alignment: ParticleAlignment::View,
-            flipbook: None,
-            material: None,
-            sorting: ParticleSorting::Distance,
-            render_layer: 0,
-        }
-    }
-}
-
-/// Blend mode for particle rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlendMode {
-    Opaque,
-    Alpha,
-    Additive,
-    Multiply,
-}
-
-/// Particle alignment mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ParticleAlignment {
-    /// Always face the camera.
-    View,
-    /// Face the camera but only around the Y axis.
-    WorldY,
-    /// Stretch along velocity direction.
-    VelocityStretch,
-    /// Fixed world orientation.
-    Fixed,
-}
-
-/// Flipbook animation configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FlipbookConfig {
-    /// Number of columns in the sprite sheet.
-    pub columns: u32,
-    /// Number of rows in the sprite sheet.
-    pub rows: u32,
-    /// Total frames (if less than columns * rows).
-    pub frame_count: u32,
-    /// Animation speed (frames per second).
-    pub fps: f32,
-    /// Whether to loop the animation.
-    pub looping: bool,
-}
-
-/// Particle sorting mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ParticleSorting {
-    None,
-    Distance,
-    OldestFirst,
-    YoungestFirst,
 }
 
 // ---------------------------------------------------------------------------
-// Particle Effect Editor State
+// Particle Editor State
 // ---------------------------------------------------------------------------
 
-/// State for the particle effect editor.
+/// Complete state for the particle editor.
 pub struct ParticleEditorState {
-    /// Currently edited effect.
-    pub current_effect: ParticleEffectAsset,
+    /// Currently edited particle system definition.
+    pub system_def: ParticleSystemDef,
     /// Selected emitter index.
     pub selected_emitter: Option<usize>,
-    /// Simulation time for preview.
-    pub simulation_time: f32,
+    /// Selected force index.
+    pub selected_force: Option<usize>,
+    /// Selected modifier index.
+    pub selected_modifier: Option<usize>,
+    /// Selected collision index.
+    pub selected_collision: Option<usize>,
+    /// Active tab in the editor.
+    pub active_tab: EditorTab,
+    /// CPU simulator for preview.
+    pub simulator: CpuParticleSimulator,
     /// Whether the preview is playing.
     pub is_playing: bool,
-    /// Playback speed.
+    /// Playback speed multiplier.
     pub playback_speed: f32,
-    /// Show bounding boxes.
+    /// Show particle bounds.
     pub show_bounds: bool,
-    /// Grid visibility.
+    /// Show grid in preview.
     pub show_grid: bool,
     /// Background color for preview.
     pub background_color: [f32; 4],
+    /// Particle size multiplier for preview.
+    pub preview_particle_size: f32,
+    /// VFX graph editor state.
+    pub vfx_graph_editor: VfxGraphEditorState,
+    /// Use VFX graph mode (true) or direct definition mode (false).
+    pub use_vfx_graph: bool,
+    /// File path for save/load.
+    pub file_path: Option<PathBuf>,
+    /// Status message.
+    pub status_message: String,
+    /// Show preset browser.
+    pub show_presets: bool,
+    /// Search filter for presets.
+    pub preset_search: String,
+    /// Undo stack for particle system changes.
+    pub undo_stack: Vec<ParticleSystemDef>,
+    /// Redo stack.
+    pub redo_stack: Vec<ParticleSystemDef>,
+}
+
+/// Editor tabs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorTab {
+    Emitters,
+    Forces,
+    Modifiers,
+    Collisions,
+    Renderer,
+    VfxGraph,
+    Preview,
 }
 
 impl Default for ParticleEditorState {
     fn default() -> Self {
+        let system_def = ParticleSystemDef::default();
+        let simulator = CpuParticleSimulator::new(system_def.clone());
         Self {
-            current_effect: ParticleEffectAsset::default(),
+            system_def,
             selected_emitter: Some(0),
-            simulation_time: 0.0,
+            selected_force: None,
+            selected_modifier: None,
+            selected_collision: None,
+            active_tab: EditorTab::Emitters,
+            simulator,
             is_playing: true,
             playback_speed: 1.0,
             show_bounds: true,
             show_grid: true,
-            background_color: [0.1, 0.1, 0.15, 1.0],
+            background_color: [0.05, 0.05, 0.1, 1.0],
+            preview_particle_size: 1.0,
+            vfx_graph_editor: VfxGraphEditorState::new(),
+            use_vfx_graph: false,
+            file_path: None,
+            status_message: String::new(),
+            show_presets: false,
+            preset_search: String::new(),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
         }
     }
 }
 
 impl ParticleEditorState {
-    /// Create a new editor state.
+    /// Create a new particle editor with default state.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Reset simulation time.
-    pub fn reset_simulation(&mut self) {
-        self.simulation_time = 0.0;
+    /// Create from an existing particle system definition.
+    pub fn from_system(system_def: ParticleSystemDef) -> Self {
+        let simulator = CpuParticleSimulator::new(system_def.clone());
+        Self {
+            system_def,
+            simulator,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            ..Self::default()
+        }
     }
 
-    /// Update simulation.
-    pub fn update(&mut self, dt: f32) {
-        if self.is_playing {
-            self.simulation_time += dt * self.playback_speed;
+    /// Reset the simulation.
+    pub fn reset_simulation(&mut self) {
+        self.simulator.reset();
+    }
 
-            if self.current_effect.looping && self.current_effect.duration > 0.0
-                && self.simulation_time >= self.current_effect.duration {
-                    self.simulation_time %= self.current_effect.duration;
-                }
+    /// Update the simulation.
+    pub fn update_simulation(&mut self, dt: f32) {
+        if self.is_playing {
+            self.simulator.update(dt);
         }
+    }
+
+    /// Push current state to undo stack.
+    fn push_undo(&mut self) {
+        self.undo_stack.push(self.system_def.clone());
+        if self.undo_stack.len() > 50 {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// Undo last change.
+    pub fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(self.system_def.clone());
+            self.system_def = prev;
+            self.simulator = CpuParticleSimulator::new(self.system_def.clone());
+            self.status_message = "Undo".to_string();
+        }
+    }
+
+    /// Redo last change.
+    pub fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(self.system_def.clone());
+            self.system_def = next;
+            self.simulator = CpuParticleSimulator::new(self.system_def.clone());
+            self.status_message = "Redo".to_string();
+        }
+    }
+
+    /// Save particle system to JSON file.
+    pub fn save_to_file(&mut self, path: &PathBuf) -> Result<(), String> {
+        self.push_undo();
+        let json = serde_json::to_string_pretty(&self.system_def)
+            .map_err(|e| format!("Failed to serialize: {}", e))?;
+        std::fs::write(path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+        self.file_path = Some(path.clone());
+        self.status_message = format!("Saved to {}", path.display());
+        Ok(())
+    }
+
+    /// Load particle system from JSON file.
+    pub fn load_from_file(&mut self, path: &PathBuf) -> Result<(), String> {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+        let system_def: ParticleSystemDef = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        self.push_undo();
+        self.system_def = system_def;
+        self.simulator = CpuParticleSimulator::new(self.system_def.clone());
+        self.file_path = Some(path.clone());
+        self.selected_emitter = if self.system_def.emitters.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.status_message = format!("Loaded from {}", path.display());
+        Ok(())
     }
 
     /// Add a new emitter.
     pub fn add_emitter(&mut self) {
-        self.current_effect.emitters.push(EmitterConfig::default());
-        self.selected_emitter = Some(self.current_effect.emitters.len() - 1);
+        self.push_undo();
+        let idx = self.system_def.emitters.len();
+        self.system_def.emitters.push(EmitterDef::default());
+        self.selected_emitter = Some(idx);
+        self.active_tab = EditorTab::Emitters;
     }
 
-    /// Remove selected emitter.
+    /// Remove the selected emitter.
     pub fn remove_selected_emitter(&mut self) {
-        if let Some(idx) = self.selected_emitter {
-            if self.current_effect.emitters.len() > 1 {
-                self.current_effect.emitters.remove(idx);
-                self.selected_emitter = Some(idx.min(self.current_effect.emitters.len() - 1));
+        if let Some(idx) = self.selected_emitter.take() {
+            self.push_undo();
+            self.system_def.emitters.remove(idx);
+            if self.system_def.emitters.is_empty() {
+                self.system_def.emitters.push(EmitterDef::default());
+                self.selected_emitter = Some(0);
+            } else {
+                self.selected_emitter = Some(idx.min(self.system_def.emitters.len() - 1));
             }
         }
     }
 
-    /// Duplicate selected emitter.
+    /// Duplicate the selected emitter.
     pub fn duplicate_selected_emitter(&mut self) {
         if let Some(idx) = self.selected_emitter {
-            let mut new_emitter = self.current_effect.emitters[idx].clone();
+            self.push_undo();
+            let mut new_emitter = self.system_def.emitters[idx].clone();
             new_emitter.name = format!("{}_copy", new_emitter.name);
-            self.current_effect.emitters.push(new_emitter);
-            self.selected_emitter = Some(self.current_effect.emitters.len() - 1);
+            self.system_def.emitters.push(new_emitter);
+            self.selected_emitter = Some(self.system_def.emitters.len() - 1);
         }
+    }
+
+    /// Add a new force field.
+    pub fn add_force(&mut self, force_type: ForceType) {
+        self.push_undo();
+        let idx = self.system_def.forces.len();
+        self.system_def.forces.push(ForceDef {
+            name: format!("{:?}", force_type),
+            force_type,
+            enabled: true,
+        });
+        self.selected_force = Some(idx);
+        self.active_tab = EditorTab::Forces;
+    }
+
+    /// Remove the selected force.
+    pub fn remove_selected_force(&mut self) {
+        if let Some(idx) = self.selected_force.take() {
+            self.push_undo();
+            self.system_def.forces.remove(idx);
+            self.selected_force = None;
+        }
+    }
+
+    /// Add a new modifier.
+    pub fn add_modifier(&mut self, modifier_type: ModifierType) {
+        self.push_undo();
+        let idx = self.system_def.modifiers.len();
+        self.system_def.modifiers.push(ModifierDef {
+            name: format!("{:?}", modifier_type),
+            modifier_type,
+            enabled: true,
+        });
+        self.selected_modifier = Some(idx);
+        self.active_tab = EditorTab::Modifiers;
+    }
+
+    /// Remove the selected modifier.
+    pub fn remove_selected_modifier(&mut self) {
+        if let Some(idx) = self.selected_modifier.take() {
+            self.push_undo();
+            self.system_def.modifiers.remove(idx);
+            self.selected_modifier = None;
+        }
+    }
+
+    /// Add a new collision.
+    pub fn add_collision(&mut self, collision_type: CollisionType) {
+        self.push_undo();
+        let idx = self.system_def.collisions.len();
+        self.system_def.collisions.push(CollisionDef {
+            name: format!("Collision_{}", idx),
+            collision_type,
+            bounce_factor: 0.5,
+            kill_on_collision: false,
+            enabled: true,
+        });
+        self.selected_collision = Some(idx);
+        self.active_tab = EditorTab::Collisions;
+    }
+
+    /// Remove the selected collision.
+    pub fn remove_selected_collision(&mut self) {
+        if let Some(idx) = self.selected_collision.take() {
+            self.push_undo();
+            self.system_def.collisions.remove(idx);
+            self.selected_collision = None;
+        }
+    }
+
+    /// Load a preset particle system.
+    pub fn load_preset(&mut self, preset: &str) {
+        self.push_undo();
+        self.system_def = match preset {
+            "fire" => presets::fire(),
+            "smoke" => presets::smoke(),
+            "explosion" => presets::explosion(),
+            "sparks" => presets::sparks(),
+            "magic" => presets::magic(),
+            "rain" => presets::rain(),
+            "snow" => presets::snow(),
+            "fountain" => presets::fountain(),
+            _ => ParticleSystemDef::default(),
+        };
+        self.simulator = CpuParticleSimulator::new(self.system_def.clone());
+        self.selected_emitter = if self.system_def.emitters.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.status_message = format!("Loaded preset: {}", preset);
     }
 }
 
-/// Preset particle effects.
+// ---------------------------------------------------------------------------
+// Particle Editor UI
+// ---------------------------------------------------------------------------
+
+impl ParticleEditorState {
+    /// Render the particle editor panel.
+    pub fn ui(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("particle_editor")
+            .default_width(400.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    // Toolbar
+                    self.render_toolbar(ui);
+                    ui.separator();
+
+                    // Tab bar
+                    self.render_tabs(ui);
+                    ui.separator();
+
+                    // Tab content
+                    match self.active_tab {
+                        EditorTab::Emitters => self.render_emitters_tab(ui),
+                        EditorTab::Forces => self.render_forces_tab(ui),
+                        EditorTab::Modifiers => self.render_modifiers_tab(ui),
+                        EditorTab::Collisions => self.render_collisions_tab(ui),
+                        EditorTab::Renderer => self.render_renderer_tab(ui),
+                        EditorTab::VfxGraph => self.render_vfx_graph_tab(ui),
+                        EditorTab::Preview => self.render_preview_tab(ui),
+                    }
+                });
+            });
+
+        // Preset browser window
+        if self.show_presets {
+            self.render_preset_browser(ctx);
+        }
+
+        // Status bar
+        if !self.status_message.is_empty() {
+            // Show briefly then clear
+        }
+    }
+
+    fn render_toolbar(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.label("\u{2728} Particle Editor");
+            ui.separator();
+
+            // Play/Pause/Reset
+            if ui
+                .button(if self.is_playing { "\u{23F8} Pause" } else { "\u{25B6} Play" })
+                .clicked()
+            {
+                self.is_playing = !self.is_playing;
+            }
+
+            if ui.button("\u{23F9} Reset").clicked() {
+                self.reset_simulation();
+            }
+
+            ui.separator();
+
+            // Undo/Redo
+            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("\u{21A9} Undo")).clicked()
+            {
+                self.undo();
+            }
+            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("\u{21AA} Redo")).clicked()
+            {
+                self.redo();
+            }
+
+            ui.separator();
+
+            // Save/Load
+            if ui.button("\u{1F4BE} Save").clicked() {
+                let path_clone = self.file_path.clone();
+                if let Some(path) = path_clone {
+                    if let Err(e) = self.save_to_file(&path) {
+                        self.status_message = format!("Save error: {}", e);
+                    }
+                }
+            }
+
+            if ui.button("\u{1F4C2} Load").clicked() {
+                // Would open file dialog
+            }
+
+            if ui.button("\u{1F4E6} Presets").clicked() {
+                self.show_presets = !self.show_presets;
+            }
+        });
+    }
+
+    fn render_tabs(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            let tabs = [
+                (EditorTab::Emitters, "\u{1F525} Emitters"),
+                (EditorTab::Forces, "\u{1F300} Forces"),
+                (EditorTab::Modifiers, "\u{2699} Modifiers"),
+                (EditorTab::Collisions, "\u{1F4A5} Collisions"),
+                (EditorTab::Renderer, "\u{1F3A8} Renderer"),
+                (EditorTab::VfxGraph, "\u{1F50C} VFX Graph"),
+                (EditorTab::Preview, "\u{1F441} Preview"),
+            ];
+
+            for (tab, label) in &tabs {
+                let selected = self.active_tab == *tab;
+                if ui.selectable_label(selected, *label).clicked() {
+                    self.active_tab = *tab;
+                }
+            }
+        });
+    }
+
+    fn render_emitters_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Emitters");
+
+        // Emitter list
+        ui.horizontal(|ui| {
+            if ui.button("\u{2795} Add").clicked() {
+                self.add_emitter();
+            }
+            if ui.button("\u{1F4CB} Duplicate").clicked() {
+                self.duplicate_selected_emitter();
+            }
+            if ui.button("\u{1F5D1} Remove").clicked() {
+                self.remove_selected_emitter();
+            }
+        });
+
+        ui.separator();
+
+        // Emitter list selector
+        for (i, emitter) in self.system_def.emitters.iter().enumerate() {
+            let selected = self.selected_emitter == Some(i);
+            if ui.selectable_label(selected, &emitter.name).clicked() {
+                self.selected_emitter = Some(i);
+            }
+        }
+
+        ui.separator();
+
+        // Emitter properties
+        if let Some(idx) = self.selected_emitter {
+            let mut emitter = self.system_def.emitters[idx].clone();
+
+            ui.text_edit_singleline(&mut emitter.name);
+            ui.checkbox(&mut emitter.enabled, "Enabled");
+
+            ui.collapsing("Shape", |ui| {
+                self.render_emitter_shape_ui(ui, &mut emitter);
+            });
+
+            ui.collapsing("Emission", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Rate:");
+                    ui.add(egui::DragValue::new(&mut emitter.rate).speed(1.0).range(0.0..=10000.0));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Burst Count:");
+                    ui.add(egui::DragValue::new(&mut emitter.burst_count).speed(1.0).range(0..=1000));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Burst Interval:");
+                    ui.add(egui::DragValue::new(&mut emitter.burst_interval).speed(0.1).range(0.1..=60.0));
+                });
+            });
+
+            ui.collapsing("Lifetime", |ui| {
+                let mut min = *emitter.lifetime.start();
+                let mut max = *emitter.lifetime.end();
+                ui.horizontal(|ui| {
+                    ui.label("Min:");
+                    ui.add(egui::DragValue::new(&mut min).speed(0.1).range(0.01..=60.0));
+                    ui.label("Max:");
+                    ui.add(egui::DragValue::new(&mut max).speed(0.1).range(0.01..=60.0));
+                });
+                emitter.lifetime = min..=max;
+            });
+
+            ui.collapsing("Velocity", |ui| {
+                let mut min = *emitter.velocity.start();
+                let mut max = *emitter.velocity.end();
+                ui.horizontal(|ui| {
+                    ui.label("Min:");
+                    ui.add(egui::DragValue::new(&mut min).speed(0.1).range(0.0..=100.0));
+                    ui.label("Max:");
+                    ui.add(egui::DragValue::new(&mut max).speed(0.1).range(0.0..=100.0));
+                });
+                emitter.velocity = min..=max;
+                ui.horizontal(|ui| {
+                    ui.label("Spread Angle:");
+                    ui.add(egui::DragValue::new(&mut emitter.spread_angle).speed(1.0).range(0.0..=180.0).suffix("°"));
+                });
+            });
+
+            ui.collapsing("Size", |ui| {
+                let mut min = *emitter.size.start();
+                let mut max = *emitter.size.end();
+                ui.horizontal(|ui| {
+                    ui.label("Min:");
+                    ui.add(egui::DragValue::new(&mut min).speed(0.01).range(0.001..=10.0));
+                    ui.label("Max:");
+                    ui.add(egui::DragValue::new(&mut max).speed(0.01).range(0.001..=10.0));
+                });
+                emitter.size = min..=max;
+            });
+
+            ui.collapsing("Color", |ui| {
+                ui.label("Start Color:");
+                self.render_color_picker(ui, &mut emitter.color_start);
+                ui.label("End Color:");
+                self.render_color_picker(ui, &mut emitter.color_end);
+            });
+            ui.collapsing("Position", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("X:");
+                    ui.add(egui::DragValue::new(&mut emitter.position[0]).speed(0.1));
+                    ui.label("Y:");
+                    ui.add(egui::DragValue::new(&mut emitter.position[1]).speed(0.1));
+                    ui.label("Z:");
+                    ui.add(egui::DragValue::new(&mut emitter.position[2]).speed(0.1));
+                });
+            });
+
+            ui.collapsing("Max Particles", |ui| {
+                ui.add(egui::DragValue::new(&mut emitter.max_particles).speed(10.0).range(1..=100000));
+            });
+
+            self.system_def.emitters[idx] = emitter;
+        } else {
+            ui.label("No emitter selected");
+        }
+    }
+
+    fn render_emitter_shape_ui(&mut self, ui: &mut Ui, emitter: &mut EmitterDef) {
+        let current_shape = match &emitter.shape {
+            EmitterShape::Point => "Point",
+            EmitterShape::Box { .. } => "Box",
+            EmitterShape::Sphere { .. } => "Sphere",
+            EmitterShape::Cone { .. } => "Cone",
+            EmitterShape::Circle { .. } => "Circle",
+            EmitterShape::Hemisphere { .. } => "Hemisphere",
+        };
+
+        egui::ComboBox::from_label("Shape")
+            .selected_text(current_shape)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current_shape == "Point", "Point").clicked() {
+                    emitter.shape = EmitterShape::Point;
+                }
+                if ui.selectable_label(current_shape == "Box", "Box").clicked() {
+                    emitter.shape = EmitterShape::Box { size: [1.0, 1.0, 1.0] };
+                }
+                if ui.selectable_label(current_shape == "Sphere", "Sphere").clicked() {
+                    emitter.shape = EmitterShape::Sphere { radius: 1.0 };
+                }
+                if ui.selectable_label(current_shape == "Cone", "Cone").clicked() {
+                    emitter.shape = EmitterShape::Cone { angle: 30.0, length: 2.0 };
+                }
+                if ui.selectable_label(current_shape == "Circle", "Circle").clicked() {
+                    emitter.shape = EmitterShape::Circle { radius: 1.0 };
+                }
+                if ui.selectable_label(current_shape == "Hemisphere", "Hemisphere").clicked() {
+                    emitter.shape = EmitterShape::Hemisphere { radius: 1.0 };
+                }
+            });
+
+        // Shape-specific parameters
+        match &mut emitter.shape {
+            EmitterShape::Box { size } => {
+                ui.horizontal(|ui| {
+                    ui.label("Size:");
+                    ui.add(egui::DragValue::new(&mut size[0]).speed(0.1));
+                    ui.add(egui::DragValue::new(&mut size[1]).speed(0.1));
+                    ui.add(egui::DragValue::new(&mut size[2]).speed(0.1));
+                });
+            }
+            EmitterShape::Sphere { radius } | EmitterShape::Circle { radius } | EmitterShape::Hemisphere { radius } => {
+                ui.horizontal(|ui| {
+                    ui.label("Radius:");
+                    ui.add(egui::DragValue::new(radius).speed(0.1).range(0.01..=100.0));
+                });
+            }
+            EmitterShape::Cone { angle, length } => {
+                ui.horizontal(|ui| {
+                    ui.label("Angle:");
+                    ui.add(egui::DragValue::new(angle).speed(1.0).range(1.0..=179.0));
+                    ui.label("Length:");
+                    ui.add(egui::DragValue::new(length).speed(0.1).range(0.1..=50.0));
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn render_forces_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Force Fields");
+
+        // Add force buttons
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("\u{1F30D} Gravity").clicked() {
+                self.add_force(ForceType::Gravity { strength: 9.81 });
+            }
+            if ui.button("\u{1F4A8} Wind").clicked() {
+                self.add_force(ForceType::Wind { direction: [1.0, 0.0, 0.0], strength: 1.0 });
+            }
+            if ui.button("\u{1F300} Turbulence").clicked() {
+                self.add_force(ForceType::Turbulence { strength: 1.0, frequency: 1.0, speed: 1.0, seed: 0 });
+            }
+            if ui.button("\u{1F300} Vortex").clicked() {
+                self.add_force(ForceType::Vortex { center: [0.0, 0.0, 0.0], axis: [0.0, 1.0, 0.0], strength: 1.0, radius: 5.0 });
+            }
+            if ui.button("\u{1F9F2} Attractor").clicked() {
+                self.add_force(ForceType::Attractor { position: [0.0, 0.0, 0.0], strength: 1.0, range: 10.0 });
+            }
+            if ui.button("\u{1F9F2} Repeller").clicked() {
+                self.add_force(ForceType::Repeller { position: [0.0, 0.0, 0.0], strength: 1.0, range: 10.0 });
+            }
+        });
+
+        ui.separator();
+
+        // Force list
+        for (i, force) in self.system_def.forces.iter().enumerate() {
+            let selected = self.selected_force == Some(i);
+            if ui.selectable_label(selected, &force.name).clicked() {
+                self.selected_force = Some(i);
+            }
+        }
+
+        ui.separator();
+
+        // Force properties
+        if let Some(idx) = self.selected_force {
+            if let Some(force) = self.system_def.forces.get_mut(idx) {
+                ui.text_edit_singleline(&mut force.name);
+                ui.checkbox(&mut force.enabled, "Enabled");
+
+                match &mut force.force_type {
+                    ForceType::Gravity { strength } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1).range(0.0..=50.0));
+                        });
+                    }
+                    ForceType::Wind { direction, strength } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Direction:");
+                            ui.add(egui::DragValue::new(&mut direction[0]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut direction[1]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut direction[2]).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1));
+                        });
+                    }
+                    ForceType::Turbulence { strength, frequency, speed, seed } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Frequency:");
+                            ui.add(egui::DragValue::new(frequency).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Speed:");
+                            ui.add(egui::DragValue::new(speed).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Seed:");
+                            ui.add(egui::DragValue::new(seed).speed(1.0));
+                        });
+                    }
+                    ForceType::Vortex { center, axis, strength, radius } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Center:");
+                            ui.add(egui::DragValue::new(&mut center[0]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut center[1]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut center[2]).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Axis:");
+                            ui.add(egui::DragValue::new(&mut axis[0]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut axis[1]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut axis[2]).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1));
+                            ui.label("Radius:");
+                            ui.add(egui::DragValue::new(radius).speed(0.1));
+                        });
+                    }
+                    ForceType::Attractor { position, strength, range }
+                    | ForceType::Repeller { position, strength, range } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Position:");
+                            ui.add(egui::DragValue::new(&mut position[0]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut position[1]).speed(0.1));
+                            ui.add(egui::DragValue::new(&mut position[2]).speed(0.1));
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1));
+                            ui.label("Range:");
+                            ui.add(egui::DragValue::new(range).speed(0.1));
+                        });
+                    }
+                    ForceType::Drag { coefficient } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Coefficient:");
+                            ui.add(egui::DragValue::new(coefficient).speed(0.01).range(0.0..=1.0));
+                        });
+                    }
+                    ForceType::Noise { strength, scale } => {
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            ui.add(egui::DragValue::new(strength).speed(0.1));
+                            ui.label("Scale:");
+                            ui.add(egui::DragValue::new(scale).speed(0.1));
+                        });
+                    }
+                }
+
+                ui.separator();
+                if ui.button("\u{1F5D1} Remove Force").clicked() {
+                    self.remove_selected_force();
+                }
+            }
+        } else {
+            ui.label("No force field selected");
+        }
+    }
+
+    fn render_modifiers_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Modifiers");
+
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("\u{1F3A8} Color Over Lifetime").clicked() {
+                self.add_modifier(ModifierType::ColorOverLifetime {
+                    gradient: vec![
+                        ColorKeyframe { time: 0.0, color: [1.0, 1.0, 1.0, 1.0] },
+                        ColorKeyframe { time: 1.0, color: [1.0, 1.0, 1.0, 0.0] },
+                    ],
+                });
+            }
+            if ui.button("\u{1F4D0} Size Over Lifetime").clicked() {
+                self.add_modifier(ModifierType::SizeOverLifetime {
+                    curve: vec![
+                        CurveKeyframe { time: 0.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                        CurveKeyframe { time: 1.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                    ],
+                });
+            }
+            if ui.button("\u{26A1} Limit Velocity").clicked() {
+                self.add_modifier(ModifierType::LimitVelocity { max_speed: 10.0 });
+            }
+            if ui.button("\u{1F4CF} Clamp Size").clicked() {
+                self.add_modifier(ModifierType::ClampSize { min: 0.01, max: 10.0 });
+            }
+        });
+
+        ui.separator();
+
+        for (i, modifier) in self.system_def.modifiers.iter().enumerate() {
+            let selected = self.selected_modifier == Some(i);
+            if ui.selectable_label(selected, &modifier.name).clicked() {
+                self.selected_modifier = Some(i);
+            }
+        }
+
+        ui.separator();
+
+        if let Some(idx) = self.selected_modifier {
+            let mut modifier = self.system_def.modifiers[idx].clone();
+
+            ui.text_edit_singleline(&mut modifier.name);
+            ui.checkbox(&mut modifier.enabled, "Enabled");
+
+            match &mut modifier.modifier_type {
+                ModifierType::ColorOverLifetime { gradient } => {
+                    ui.label("Color Gradient:");
+                    self.render_color_gradient_ui(ui, gradient);
+                }
+                ModifierType::SizeOverLifetime { curve } => {
+                    ui.label("Size Curve:");
+                    self.render_curve_ui(ui, curve);
+                }
+                ModifierType::LimitVelocity { max_speed } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Max Speed:");
+                        ui.add(egui::DragValue::new(max_speed).speed(0.1).range(0.1..=100.0));
+                    });
+                }
+                ModifierType::ClampSize { min, max } => {
+                    ui.horizontal(|ui| {
+                        ui.label("Min:");
+                        ui.add(egui::DragValue::new(min).speed(0.01).range(0.001..=10.0));
+                        ui.label("Max:");
+                        ui.add(egui::DragValue::new(max).speed(0.01).range(0.001..=10.0));
+                    });
+                }
+                _ => {}
+            }
+
+            ui.separator();
+            let mut remove = false;
+            if ui.button("\u{1F5D1} Remove Modifier").clicked() {
+                remove = true;
+            }
+
+            self.system_def.modifiers[idx] = modifier;
+            
+            if remove {
+                self.remove_selected_modifier();
+            }
+        } else {
+            ui.label("No modifier selected");
+        }
+    }
+
+    fn render_collisions_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Collisions");
+
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("\u{1F4F0} Plane").clicked() {
+                self.add_collision(CollisionType::Plane {
+                    normal: [0.0, 1.0, 0.0],
+                    distance: 0.0,
+                });
+            }
+            if ui.button("\u{1F4E6} Box").clicked() {
+                self.add_collision(CollisionType::Box {
+                    min: [-5.0, 0.0, -5.0],
+                    max: [5.0, 10.0, 5.0],
+                });
+            }
+            if ui.button("\u{26AA} Sphere").clicked() {
+                self.add_collision(CollisionType::Sphere {
+                    center: [0.0, 0.0, 0.0],
+                    radius: 1.0,
+                });
+            }
+        });
+
+        ui.separator();
+
+        for (i, collision) in self.system_def.collisions.iter().enumerate() {
+            let selected = self.selected_collision == Some(i);
+            if ui.selectable_label(selected, &collision.name).clicked() {
+                self.selected_collision = Some(i);
+            }
+        }
+
+        ui.separator();
+
+        if let Some(idx) = self.selected_collision {
+            if let Some(collision) = self.system_def.collisions.get_mut(idx) {
+                ui.text_edit_singleline(&mut collision.name);
+                ui.checkbox(&mut collision.enabled, "Enabled");
+
+                ui.horizontal(|ui| {
+                    ui.label("Bounce Factor:");
+                    ui.add(egui::DragValue::new(&mut collision.bounce_factor).speed(0.01).range(0.0..=1.0));
+                });
+                ui.checkbox(&mut collision.kill_on_collision, "Kill on Collision");
+
+                ui.separator();
+                if ui.button("\u{1F5D1} Remove Collision").clicked() {
+                    self.remove_selected_collision();
+                }
+            }
+        } else {
+            ui.label("No collision selected");
+        }
+    }
+
+    fn render_renderer_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Renderer Settings");
+
+        let renderer = &mut self.system_def.renderer;
+
+        ui.collapsing("Blend Mode", |ui| {
+            let current = match renderer.blend_mode {
+                BlendModeDef::Opaque => "Opaque",
+                BlendModeDef::Alpha => "Alpha",
+                BlendModeDef::Additive => "Additive",
+                BlendModeDef::Multiply => "Multiply",
+                BlendModeDef::Subtractive => "Subtractive",
+            };
+
+            egui::ComboBox::from_label("Blend Mode")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (mode, name) in [
+                        (BlendModeDef::Opaque, "Opaque"),
+                        (BlendModeDef::Alpha, "Alpha"),
+                        (BlendModeDef::Additive, "Additive"),
+                        (BlendModeDef::Multiply, "Multiply"),
+                        (BlendModeDef::Subtractive, "Subtractive"),
+                    ] {
+                        if ui.selectable_label(current == name, name).clicked() {
+                            renderer.blend_mode = mode;
+                        }
+                    }
+                });
+        });
+
+        ui.collapsing("Alignment", |ui| {
+            let current = match renderer.alignment {
+                AlignmentDef::ViewFacing => "View Facing",
+                AlignmentDef::WorldY => "World Y",
+                AlignmentDef::VelocityAligned => "Velocity Aligned",
+                AlignmentDef::Fixed => "Fixed",
+            };
+
+            egui::ComboBox::from_label("Alignment")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (align, name) in [
+                        (AlignmentDef::ViewFacing, "View Facing"),
+                        (AlignmentDef::WorldY, "World Y"),
+                        (AlignmentDef::VelocityAligned, "Velocity Aligned"),
+                        (AlignmentDef::Fixed, "Fixed"),
+                    ] {
+                        if ui.selectable_label(current == name, name).clicked() {
+                            renderer.alignment = align;
+                        }
+                    }
+                });
+        });
+
+        ui.collapsing("Sorting", |ui| {
+            let current = match renderer.sorting {
+                SortingDef::None => "None",
+                SortingDef::Distance => "Distance",
+                SortingDef::Age => "Age",
+            };
+
+            egui::ComboBox::from_label("Sorting")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (sort, name) in [
+                        (SortingDef::None, "None"),
+                        (SortingDef::Distance, "Distance"),
+                        (SortingDef::Age, "Age"),
+                    ] {
+                        if ui.selectable_label(current == name, name).clicked() {
+                            renderer.sorting = sort;
+                        }
+                    }
+                });
+        });
+
+        ui.checkbox(&mut renderer.cast_shadows, "Cast Shadows");
+
+        if let Some(tex) = &mut renderer.texture {
+            ui.horizontal(|ui| {
+                ui.label("Texture:");
+                ui.text_edit_singleline(tex);
+            });
+        } else {
+            if ui.button("Set Texture").clicked() {
+                renderer.texture = Some(String::new());
+            }
+        }
+    }
+
+    fn render_vfx_graph_tab(&mut self, ui: &mut Ui) {
+        ui.heading("VFX Graph Editor");
+        ui.label("Visual node-based effects editing");
+        ui.separator();
+
+        // Switch to VFX graph mode
+        ui.checkbox(&mut self.use_vfx_graph, "Use VFX Graph Mode");
+
+        if self.use_vfx_graph {
+            self.vfx_graph_editor.ui(ui.ctx());
+            self.vfx_graph_editor.node_palette_ui(ui.ctx());
+
+            ui.separator();
+            if ui.button("\u{1F504} Convert Graph to System").clicked() {
+                self.system_def = crate::vfx_graph::graph_to_particle_system(&self.vfx_graph_editor.graph);
+                self.simulator = CpuParticleSimulator::new(self.system_def.clone());
+                self.status_message = "Converted VFX graph to particle system".to_string();
+            }
+        } else {
+            ui.label("Enable VFX Graph mode to use node-based editing");
+            if ui.button("\u{2795} Create VFX Graph from System").clicked() {
+                // Convert current system to graph (future enhancement)
+                self.use_vfx_graph = true;
+            }
+        }
+    }
+
+    fn render_preview_tab(&mut self, ui: &mut Ui) {
+        ui.heading("Preview Settings");
+
+        ui.horizontal(|ui| {
+            ui.label("Playback Speed:");
+            ui.add(egui::DragValue::new(&mut self.playback_speed).speed(0.1).range(0.1..=5.0));
+        });
+
+        ui.checkbox(&mut self.show_grid, "Show Grid");
+        ui.checkbox(&mut self.show_bounds, "Show Bounds");
+
+        ui.horizontal(|ui| {
+            ui.label("Preview Size:");
+            ui.add(egui::DragValue::new(&mut self.preview_particle_size).speed(0.1).range(0.1..=5.0));
+        });
+
+        ui.label("Background Color:");
+        let mut bg_color = self.background_color;
+        self.render_color_picker(ui, &mut bg_color);
+        self.background_color = bg_color;
+
+        ui.separator();
+        ui.label("Simulation Stats:");
+        ui.label(format!("Alive particles: {}", self.simulator.alive_count()));
+        ui.label(format!("Time: {:.2}s", self.simulator.time));
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper UI rendering functions
+    // -----------------------------------------------------------------------
+
+    fn render_color_picker(&mut self, ui: &mut Ui, color: &mut [f32; 4]) {
+        let mut egui_color = egui::Color32::from_rgba_premultiplied(
+            (color[0] * 255.0) as u8,
+            (color[1] * 255.0) as u8,
+            (color[2] * 255.0) as u8,
+            (color[3] * 255.0) as u8,
+        );
+        ui.color_edit_button_srgba(&mut egui_color);
+        let srgba = egui_color.to_srgba_unmultiplied();
+        color[0] = srgba[0] as f32 / 255.0;
+        color[1] = srgba[1] as f32 / 255.0;
+        color[2] = srgba[2] as f32 / 255.0;
+        color[3] = srgba[3] as f32 / 255.0;
+    }
+
+    fn render_color_gradient_ui(&mut self, ui: &mut Ui, gradient: &mut Vec<ColorKeyframe>) {
+        // Simple gradient visualization
+        let gradient_height = 30.0;
+        let width = ui.available_width() - 40.0;
+
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, gradient_height), egui::Sense::click());
+        let painter = ui.painter_at(rect);
+
+        // Draw gradient
+        let steps = 50;
+        for i in 0..steps {
+            let t = i as f32 / steps as f32;
+            let color = evaluate_color_gradient(gradient, t);
+            let x = rect.min.x + t * width;
+            let bar_rect = egui::Rect::from_min_max(
+                egui::pos2(x, rect.min.y),
+                egui::pos2(x + width / steps as f32 + 1.0, rect.max.y),
+            );
+            let c = egui::Color32::from_rgba_premultiplied(
+                (color[0] * 255.0) as u8,
+                (color[1] * 255.0) as u8,
+                (color[2] * 255.0) as u8,
+                (color[3] * 255.0) as u8,
+            );
+            painter.rect_filled(bar_rect, 0.0, c);
+        }
+
+        // Draw keyframe markers
+        for kf in gradient.iter() {
+            let x = rect.min.x + kf.time * width;
+            painter.line_segment(
+                [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                egui::Stroke::new(2.0, egui::Color32::WHITE),
+            );
+        }
+    }
+
+    fn render_curve_ui(&mut self, ui: &mut Ui, curve: &mut Vec<CurveKeyframe>) {
+        let graph_height = 80.0;
+        let width = ui.available_width() - 40.0;
+
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, graph_height), egui::Sense::click());
+        let painter = ui.painter_at(rect);
+
+        // Draw grid
+        painter.rect_filled(rect, 0.0, egui::Color32::from_gray(25));
+        for i in 0..=4 {
+            let x = rect.min.x + (i as f32 / 4.0) * width;
+            painter.line_segment(
+                [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
+                egui::Stroke::new(0.5, egui::Color32::from_gray(50)),
+            );
+        }
+
+        // Draw curve
+        let steps = 100;
+        for i in 0..steps {
+            let t = i as f32 / steps as f32;
+            let val = evaluate_curve(curve, t);
+            let x = rect.min.x + t * width;
+            let y = rect.max.y - val * graph_height;
+            if i == 0 {
+                painter.line_segment(
+                    [egui::pos2(x, y), egui::pos2(x + 1.0, y)],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                );
+            } else {
+                let prev_t = (i - 1) as f32 / steps as f32;
+                let prev_val = evaluate_curve(curve, prev_t);
+                let prev_x = rect.min.x + prev_t * width;
+                let prev_y = rect.max.y - prev_val * graph_height;
+                painter.line_segment(
+                    [egui::pos2(prev_x, prev_y), egui::pos2(x, y)],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
+                );
+            }
+        }
+
+        // Draw keyframes
+        for kf in curve.iter() {
+            let x = rect.min.x + kf.time * width;
+            let y = rect.max.y - kf.value * graph_height;
+            painter.circle_filled(egui::pos2(x, y), 5.0, egui::Color32::from_rgb(255, 200, 50));
+            painter.circle_stroke(egui::pos2(x, y), 5.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+        }
+    }
+
+    fn render_preset_browser(&mut self, ui: &egui::Context) {
+        egui::Window::new("Particle Effect Presets")
+            .default_size(egui::vec2(300.0, 400.0))
+            .resizable(true)
+            .show(ui, |ui| {
+                ui.text_edit_singleline(&mut self.preset_search);
+                ui.separator();
+
+                let presets = [
+                    ("fire", "\u{1F525} Fire"),
+                    ("smoke", "\u{1F4A8} Smoke"),
+                    ("explosion", "\u{1F4A5} Explosion"),
+                    ("sparks", "\u{26A1} Sparks"),
+                    ("magic", "\u{2728} Magic"),
+                    ("rain", "\u{1F327} Rain"),
+                    ("snow", "\u{2744} Snow"),
+                    ("fountain", "\u{26F2} Fountain"),
+                ];
+
+                for (id, label) in &presets {
+                    if !self.preset_search.is_empty()
+                        && !label.to_lowercase().contains(&self.preset_search.to_lowercase())
+                    {
+                        continue;
+                    }
+
+                    if ui.button(*label).clicked() {
+                        self.load_preset(id);
+                        self.show_presets = false;
+                    }
+                }
+            });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Preset particle effects
+// ---------------------------------------------------------------------------
+
 pub mod presets {
     use super::*;
 
-    /// Fire effect preset.
-    pub fn fire() -> ParticleEffectAsset {
-        let mut effect = ParticleEffectAsset::default();
-        effect.name = "Fire".to_string();
-
-        let emitter = &mut effect.emitters[0];
-        emitter.name = "FireEmitter".to_string();
-        emitter.emission_rate = CurveOrValue::Constant(30.0);
-        emitter.lifetime = RangeOrCurve::Range { min: 0.5, max: 1.5 };
-        emitter.speed = RangeOrCurve::Range { min: 1.0, max: 3.0 };
-        emitter.size = RangeOrCurve::Range { min: 0.3, max: 0.5 };
-        emitter.gravity_multiplier = -0.5;
-        emitter.color = ColorGradient {
-            keys: vec![
-                (0.0, [1.0, 0.8, 0.0, 1.0]),
-                (0.5, [1.0, 0.3, 0.0, 0.8]),
-                (1.0, [0.3, 0.1, 0.0, 0.0]),
-            ],
-        };
-        emitter.render_settings.blend_mode = BlendMode::Additive;
-
-        effect
+    pub fn fire() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Fire".to_string();
+        def.emitters[0].name = "FireEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Cone { angle: 40.0, length: 0.5 };
+        def.emitters[0].rate = 50.0;
+        def.emitters[0].lifetime = 0.5..=1.5;
+        def.emitters[0].velocity = 2.0..=5.0;
+        def.emitters[0].spread_angle = 20.0;
+        def.emitters[0].size = 0.2..=0.5;
+        def.emitters[0].color_start = [1.0, 0.8, 0.2, 1.0];
+        def.emitters[0].color_end = [0.8, 0.2, 0.0, 0.0];
+        def.forces.push(ForceDef {
+            name: "Updraft".to_string(),
+            force_type: ForceType::Wind { direction: [0.0, 1.0, 0.0], strength: 2.0 },
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Additive;
+        def
     }
 
-    /// Smoke effect preset.
-    pub fn smoke() -> ParticleEffectAsset {
-        let mut effect = ParticleEffectAsset::default();
-        effect.name = "Smoke".to_string();
+    pub fn smoke() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Smoke".to_string();
+        def.emitters[0].name = "SmokeEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Point;
+        def.emitters[0].rate = 10.0;
+        def.emitters[0].lifetime = 2.0..=4.0;
+        def.emitters[0].velocity = 0.5..=1.5;
+        def.emitters[0].spread_angle = 45.0;
+        def.emitters[0].size = 0.5..=2.0;
+        def.emitters[0].color_start = [0.4, 0.4, 0.4, 0.6];
+        def.emitters[0].color_end = [0.6, 0.6, 0.6, 0.0];
+        def.forces.push(ForceDef {
+            name: "Rise".to_string(),
+            force_type: ForceType::Wind { direction: [0.0, 0.5, 0.0], strength: 0.5 },
+            enabled: true,
+        });
+        def.forces.push(ForceDef {
+            name: "Turbulence".to_string(),
+            force_type: ForceType::Turbulence { strength: 0.5, frequency: 2.0, speed: 1.0, seed: 0 },
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Alpha;
+        def
+    }
 
-        let emitter = &mut effect.emitters[0];
-        emitter.name = "SmokeEmitter".to_string();
-        emitter.emission_rate = CurveOrValue::Constant(5.0);
-        emitter.lifetime = RangeOrCurve::Range { min: 2.0, max: 4.0 };
-        emitter.speed = RangeOrCurve::Range { min: 0.3, max: 0.8 };
-        emitter.size = RangeOrCurve::Range { min: 0.5, max: 1.0 };
-        emitter.gravity_multiplier = 0.2;
-        emitter.color = ColorGradient {
-            keys: vec![(0.0, [0.3, 0.3, 0.3, 0.6]), (1.0, [0.5, 0.5, 0.5, 0.0])],
-        };
-        emitter.size_over_lifetime = CurveOrValue::Curve(vec![
-            CurveKey {
-                time: 0.0,
-                value: 0.5,
-                in_tangent: 0.0,
-                out_tangent: 1.0,
+    pub fn explosion() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Explosion".to_string();
+        def.emitters[0].name = "ExplosionCore".to_string();
+        def.emitters[0].shape = EmitterShape::Sphere { radius: 0.1 };
+        def.emitters[0].rate = 0.0;
+        def.emitters[0].burst_count = 200;
+        def.emitters[0].burst_interval = 0.1;
+        def.emitters[0].lifetime = 0.3..=1.0;
+        def.emitters[0].velocity = 5.0..=15.0;
+        def.emitters[0].spread_angle = 360.0;
+        def.emitters[0].size = 0.1..=0.5;
+        def.emitters[0].color_start = [1.0, 1.0, 0.5, 1.0];
+        def.emitters[0].color_end = [1.0, 0.3, 0.0, 0.0];
+        def.forces.push(ForceDef {
+            name: "Drag".to_string(),
+            force_type: ForceType::Drag { coefficient: 0.1 },
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Additive;
+        def
+    }
+
+    pub fn sparks() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Sparks".to_string();
+        def.emitters[0].name = "SparksEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Point;
+        def.emitters[0].rate = 100.0;
+        def.emitters[0].lifetime = 0.2..=0.8;
+        def.emitters[0].velocity = 3.0..=8.0;
+        def.emitters[0].spread_angle = 60.0;
+        def.emitters[0].size = 0.02..=0.05;
+        def.emitters[0].color_start = [1.0, 0.9, 0.4, 1.0];
+        def.emitters[0].color_end = [1.0, 0.5, 0.0, 0.0];
+        def.forces.push(ForceDef {
+            name: "Gravity".to_string(),
+            force_type: ForceType::Gravity { strength: 15.0 },
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Additive;
+        def
+    }
+
+    pub fn magic() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Magic".to_string();
+        def.emitters[0].name = "MagicEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Sphere { radius: 0.5 };
+        def.emitters[0].rate = 20.0;
+        def.emitters[0].lifetime = 1.0..=3.0;
+        def.emitters[0].velocity = 0.5..=2.0;
+        def.emitters[0].spread_angle = 180.0;
+        def.emitters[0].size = 0.05..=0.15;
+        def.emitters[0].color_start = [0.5, 0.3, 1.0, 1.0];
+        def.emitters[0].color_end = [0.8, 0.5, 1.0, 0.0];
+        def.forces.push(ForceDef {
+            name: "Vortex".to_string(),
+            force_type: ForceType::Vortex {
+                center: [0.0, 0.0, 0.0],
+                axis: [0.0, 1.0, 0.0],
+                strength: 2.0,
+                radius: 3.0,
             },
-            CurveKey {
-                time: 1.0,
-                value: 2.0,
-                in_tangent: 1.0,
-                out_tangent: 0.0,
-            },
-        ]);
-        emitter.render_settings.blend_mode = BlendMode::Alpha;
-
-        effect
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Additive;
+        def
     }
 
-    /// Explosion effect preset.
-    pub fn explosion() -> ParticleEffectAsset {
-        let mut effect = ParticleEffectAsset::default();
-        effect.name = "Explosion".to_string();
-        effect.duration = 2.0;
-        effect.looping = false;
-
-        let emitter = &mut effect.emitters[0];
-        emitter.name = "ExplosionCore".to_string();
-        emitter.emission_rate = CurveOrValue::Constant(0.0);
-        emitter.bursts = vec![BurstConfig {
-            time: 0.0,
-            count: 100,
-            probability: 1.0,
-        }];
-        emitter.lifetime = RangeOrCurve::Range { min: 0.5, max: 1.0 };
-        emitter.speed = RangeOrCurve::Range {
-            min: 5.0,
-            max: 15.0,
-        };
-        emitter.size = RangeOrCurve::Range { min: 0.2, max: 0.4 };
-        emitter.gravity_multiplier = 0.5;
-        emitter.color = ColorGradient {
-            keys: vec![
-                (0.0, [1.0, 1.0, 0.5, 1.0]),
-                (0.3, [1.0, 0.5, 0.0, 0.8]),
-                (1.0, [0.2, 0.1, 0.0, 0.0]),
-            ],
-        };
-        emitter.render_settings.blend_mode = BlendMode::Additive;
-
-        effect
+    pub fn rain() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Rain".to_string();
+        def.emitters[0].name = "RainEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Box { size: [20.0, 0.1, 20.0] };
+        def.emitters[0].position = [0.0, 20.0, 0.0];
+        def.emitters[0].rate = 500.0;
+        def.emitters[0].lifetime = 1.5..=2.5;
+        def.emitters[0].velocity = 15.0..=20.0;
+        def.emitters[0].spread_angle = 5.0;
+        def.emitters[0].size = 0.02..=0.04;
+        def.emitters[0].color_start = [0.6, 0.7, 0.9, 0.7];
+        def.emitters[0].color_end = [0.6, 0.7, 0.9, 0.3];
+        def.forces.push(ForceDef {
+            name: "Gravity".to_string(),
+            force_type: ForceType::Gravity { strength: 20.0 },
+            enabled: true,
+        });
+        def.collisions.push(CollisionDef {
+            name: "Ground".to_string(),
+            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            bounce_factor: 0.0,
+            kill_on_collision: true,
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Alpha;
+        def
     }
 
-    /// Sparkle effect preset.
-    pub fn sparkle() -> ParticleEffectAsset {
-        let mut effect = ParticleEffectAsset::default();
-        effect.name = "Sparkle".to_string();
+    pub fn snow() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Snow".to_string();
+        def.emitters[0].name = "SnowEmitter".to_string();
+        def.emitters[0].shape = EmitterShape::Box { size: [20.0, 0.1, 20.0] };
+        def.emitters[0].position = [0.0, 15.0, 0.0];
+        def.emitters[0].rate = 100.0;
+        def.emitters[0].lifetime = 5.0..=8.0;
+        def.emitters[0].velocity = 0.5..=1.5;
+        def.emitters[0].spread_angle = 180.0;
+        def.emitters[0].size = 0.05..=0.15;
+        def.emitters[0].color_start = [1.0, 1.0, 1.0, 0.9];
+        def.emitters[0].color_end = [1.0, 1.0, 1.0, 0.0];
+        def.forces.push(ForceDef {
+            name: "Gravity".to_string(),
+            force_type: ForceType::Gravity { strength: 2.0 },
+            enabled: true,
+        });
+        def.forces.push(ForceDef {
+            name: "Wind".to_string(),
+            force_type: ForceType::Wind { direction: [1.0, 0.0, 0.5], strength: 0.5 },
+            enabled: true,
+        });
+        def.forces.push(ForceDef {
+            name: "Turbulence".to_string(),
+            force_type: ForceType::Turbulence { strength: 0.3, frequency: 0.5, speed: 0.5, seed: 42 },
+            enabled: true,
+        });
+        def.collisions.push(CollisionDef {
+            name: "Ground".to_string(),
+            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            bounce_factor: 0.0,
+            kill_on_collision: true,
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Alpha;
+        def
+    }
 
-        let emitter = &mut effect.emitters[0];
-        emitter.name = "SparkleEmitter".to_string();
-        emitter.emission_rate = CurveOrValue::Constant(20.0);
-        emitter.lifetime = RangeOrCurve::Range { min: 0.3, max: 0.8 };
-        emitter.speed = RangeOrCurve::Range { min: 0.5, max: 1.5 };
-        emitter.size = RangeOrCurve::Range {
-            min: 0.05,
-            max: 0.1,
-        };
-        emitter.gravity_multiplier = 0.0;
-        emitter.color = ColorGradient {
-            keys: vec![
-                (0.0, [1.0, 1.0, 1.0, 1.0]),
-                (0.5, [1.0, 1.0, 0.8, 0.8]),
-                (1.0, [1.0, 1.0, 1.0, 0.0]),
-            ],
-        };
-        emitter.render_settings.blend_mode = BlendMode::Additive;
-
-        effect
+    pub fn fountain() -> ParticleSystemDef {
+        let mut def = ParticleSystemDef::default();
+        def.name = "Fountain".to_string();
+        def.emitters[0].name = "FountainJet".to_string();
+        def.emitters[0].shape = EmitterShape::Circle { radius: 0.2 };
+        def.emitters[0].rate = 200.0;
+        def.emitters[0].lifetime = 1.0..=2.0;
+        def.emitters[0].velocity = 8.0..=12.0;
+        def.emitters[0].spread_angle = 15.0;
+        def.emitters[0].size = 0.05..=0.1;
+        def.emitters[0].color_start = [0.3, 0.6, 1.0, 0.8];
+        def.emitters[0].color_end = [0.5, 0.8, 1.0, 0.2];
+        def.forces.push(ForceDef {
+            name: "Gravity".to_string(),
+            force_type: ForceType::Gravity { strength: 9.81 },
+            enabled: true,
+        });
+        def.collisions.push(CollisionDef {
+            name: "WaterSurface".to_string(),
+            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            bounce_factor: 0.2,
+            kill_on_collision: false,
+            enabled: true,
+        });
+        def.renderer.blend_mode = BlendModeDef::Alpha;
+        def
     }
 }

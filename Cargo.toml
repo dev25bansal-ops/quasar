@@ -8,7 +8,6 @@ members = [
     "crates/quasar-physics",
     "crates/quasar-audio",
     "crates/quasar-scripting",
-    "crates/quasar-editor",
     "crates/quasar-engine",
     "crates/quasar-ui",
     "crates/quasar-mobile",

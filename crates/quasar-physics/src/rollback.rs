@@ -36,6 +36,18 @@ pub struct JointState {
     pub handle: ImpulseJointHandle,
     pub body1: RigidBodyHandle,
     pub body2: RigidBodyHandle,
+    pub joint_type: JointType,
+}
+
+/// Serialized joint type for rollback
+#[derive(Clone)]
+pub enum JointType {
+    Fixed,
+    Revolute { axis: nalgebra::Vector3<f32> },
+    Prismatic { axis: nalgebra::Vector3<f32> },
+    Spherical,
+    Ball,
+    Spring { stiffness: f32, damping: f32 },
 }
 
 /// A complete snapshot of the physics world at a given simulation tick.
@@ -74,15 +86,16 @@ impl PhysicsSnapshot {
             })
             .collect();
 
-        let joints: Vec<JointState> = world
-            .impulse_joints
-            .iter()
-            .map(|(handle, joint)| JointState {
-                handle,
-                body1: joint.body1,
-                body2: joint.body2,
-            })
-            .collect();
+    let joints: Vec<JointState> = world
+        .impulse_joints
+        .iter()
+        .map(|(handle, joint)| JointState {
+            handle,
+            body1: joint.body1,
+            body2: joint.body2,
+            joint_type: JointType::Fixed, // Simplified - would need to extract from joint data
+        })
+        .collect();
 
         Self {
             tick,
@@ -110,7 +123,16 @@ impl PhysicsSnapshot {
                 col.set_position(cs.position);
             }
         }
+
+    // Restore joints - simplified for current rapier3d API
+    // Note: Joint rollback is complex and requires API-specific handling
+    // This is a placeholder that skips joint restoration for now
+    for _js in &self.joints {
+        // Joint restoration requires rebuilding the joint from serialized type
+        // This is a simplified implementation - full implementation would need
+        // to reconstruct each joint type separately
     }
+}
 }
 
 /// Rollback manager for handling prediction errors.

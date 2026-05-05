@@ -30,6 +30,32 @@ pub enum LoadError {
     NotFound(PathBuf),
 }
 
+/// Validates that a path is within the allowed directories to prevent path traversal attacks.
+fn validate_path(path: &Path) -> Result<PathBuf> {
+    // Get absolute path
+    let absolute = path.canonicalize()
+        .map_err(|e| LocalizationError::LoadFailed(LoadError::Io(e)))?;
+    
+    // Check if path is within current directory or an "locales" subdirectory
+    let current_dir = std::env::current_dir()
+        .map_err(|e| LocalizationError::LoadFailed(LoadError::Io(e)))?;
+    
+    // Allow paths that are within current directory or a "locales" subdirectory
+    let is_allowed = absolute.starts_with(&current_dir)
+        || absolute.starts_with(&current_dir.join("locales"));
+    
+    if !is_allowed {
+        return Err(LocalizationError::LoadFailed(LoadError::Io(
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("Path traversal not allowed: {}", absolute.display())
+            )
+        )));
+    }
+    
+    Ok(absolute)
+}
+
 pub struct AssetLoader;
 
 impl AssetLoader {
@@ -51,7 +77,10 @@ impl AssetLoader {
     }
 
     fn load_from_file(&self, locale: &Locale, path: &Path) -> Result<FluentBundle<FluentResource>> {
-        let content = std::fs::read_to_string(path)
+        // Validate path to prevent path traversal attacks
+        let validated_path = validate_path(path)?;
+        
+        let content = std::fs::read_to_string(&validated_path)
             .map_err(|e| LocalizationError::LoadFailed(LoadError::Io(e)))?;
 
         let resource = FluentResource::try_new(content).map_err(|(_, errs)| {
@@ -151,7 +180,10 @@ impl AssetLoader {
             TranslationSource::File(path)
                 if path.extension().map(|e| e == "json").unwrap_or(false) =>
             {
-                let content = std::fs::read_to_string(&path)
+                // Validate path to prevent path traversal attacks
+                let validated_path = validate_path(&path)?;
+                
+                let content = std::fs::read_to_string(&validated_path)
                     .map_err(|e| LocalizationError::LoadFailed(LoadError::Io(e)))?;
                 let json: HashMap<String, String> = serde_json::from_str(&content)
                     .map_err(|e| LocalizationError::Parse(e.to_string()))?;
@@ -166,13 +198,16 @@ impl AssetLoader {
     }
 
     pub fn discover_locales(&self, directory: &Path) -> Result<Vec<Locale>> {
+        // Validate directory path to prevent path traversal attacks
+        let validated_dir = validate_path(directory)?;
+        
         let mut locales = Vec::new();
 
-        if !directory.exists() {
+        if !validated_dir.exists() {
             return Ok(locales);
         }
 
-        for entry in WalkDir::new(directory).min_depth(1).max_depth(2) {
+        for entry in WalkDir::new(&validated_dir).min_depth(1).max_depth(2) {
             let entry = entry.map_err(|e| {
                 LocalizationError::LoadFailed(LoadError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,

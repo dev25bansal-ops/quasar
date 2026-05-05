@@ -4,11 +4,68 @@
 //! between keyframes over time. Supports position, rotation, and scale
 //! animation for any entity with a Transform component.
 
-use crate::ecs::{Entity, System, World};
+use crate::ecs::{CachedArchetypeQueryState, Entity, System, World};
 use crate::TimeSnapshot;
 use quasar_math::{Quat, Transform, Vec3};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Interpolation mode for animation keyframes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum KeyframeInterpolation {
+    /// Holds value constant until next keyframe.
+    Step,
+    /// Linear interpolation between keyframes.
+    #[default]
+    Linear,
+    /// Cubic spline interpolation for smooth curves.
+    CubicSpline,
+}
+
+impl KeyframeInterpolation {
+    /// Interpolate between two values using this interpolation mode.
+    pub fn interpolate<T: Interpolatable>(&self, a: &T, b: &T, t: f32) -> T {
+        match self {
+            KeyframeInterpolation::Step => a.clone(),
+            KeyframeInterpolation::Linear => T::lerp(a, b, t),
+            KeyframeInterpolation::CubicSpline => T::cubic_spline(a, b, t),
+        }
+    }
+}
+
+/// Trait for types that can be interpolated.
+pub trait Interpolatable: Clone {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self;
+    fn cubic_spline(a: &Self, b: &Self, t: f32) -> Self {
+        // Default fallback to linear if cubic spline not implemented
+        Self::lerp(a, b, t)
+    }
+}
+
+impl Interpolatable for Vec3 {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self {
+        a.lerp(*b, t)
+    }
+    
+    fn cubic_spline(a: &Self, b: &Self, t: f32) -> Self {
+        // Hermite interpolation for smoother curves
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let h1 = 2.0 * t3 - 3.0 * t2 + 1.0;
+        let h2 = -2.0 * t3 + 3.0 * t2;
+        Vec3::new(
+            h1 * a.x + h2 * b.x,
+            h1 * a.y + h2 * b.y,
+            h1 * a.z + h2 * b.z,
+        )
+    }
+}
+
+impl Interpolatable for Quat {
+    fn lerp(a: &Self, b: &Self, t: f32) -> Self {
+        a.slerp(*b, t)
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct TransformKeyframe {
@@ -16,6 +73,9 @@ pub struct TransformKeyframe {
     pub position: Vec3,
     pub rotation: Quat,
     pub scale: Vec3,
+    /// Interpolation mode for this keyframe.
+    #[serde(default)]
+    pub interpolation: KeyframeInterpolation,
 }
 
 impl TransformKeyframe {
@@ -25,6 +85,7 @@ impl TransformKeyframe {
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
+            interpolation: KeyframeInterpolation::default(),
         }
     }
 
@@ -34,6 +95,7 @@ impl TransformKeyframe {
             position,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
+            interpolation: KeyframeInterpolation::default(),
         }
     }
 
@@ -43,13 +105,36 @@ impl TransformKeyframe {
             position: Vec3::ZERO,
             rotation,
             scale: Vec3::ONE,
+            interpolation: KeyframeInterpolation::default(),
         }
+    }
+
+    pub fn with_interpolation(mut self, interpolation: KeyframeInterpolation) -> Self {
+        self.interpolation = interpolation;
+        self
     }
 
     pub fn lerp(&self, other: &Self, t: f32) -> Transform {
         let position = self.position.lerp(other.position, t);
         let rotation = self.rotation.slerp(other.rotation, t);
         let scale = self.scale.lerp(other.scale, t);
+        Transform {
+            position,
+            rotation,
+            scale,
+        }
+    }
+
+    /// Sample this keyframe with interpolation awareness.
+    pub fn sample_with_interpolation(&self, other: &Self, t: f32) -> Transform {
+        let position = self.interpolation.interpolate(&self.position, &other.position, t);
+        let rotation = match self.interpolation {
+            KeyframeInterpolation::Step => self.rotation,
+            KeyframeInterpolation::Linear | KeyframeInterpolation::CubicSpline => {
+                self.rotation.slerp(other.rotation, t)
+            }
+        };
+        let scale = self.interpolation.interpolate(&self.scale, &other.scale, t);
         Transform {
             position,
             rotation,
@@ -99,6 +184,42 @@ impl AnimationClip {
         self
     }
 
+    /// Save animation clip to JSON file.
+    pub fn save_to_json(&self, path: &std::path::Path) -> Result<(), String> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize animation: {}", e))?;
+        
+        std::fs::write(path, json)
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+        
+        log::info!("Saved animation '{}' to {:?}", self.name, path);
+        Ok(())
+    }
+
+    /// Load animation clip from JSON file.
+    pub fn load_from_json(path: &std::path::Path) -> Result<Self, String> {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read file: {}", e))?;
+        
+        let clip: Self = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse animation: {}", e))?;
+        
+        log::info!("Loaded animation '{}' from {:?}", clip.name, path);
+        Ok(clip)
+    }
+
+    /// Export to JSON string.
+    pub fn to_json_string(&self) -> Result<String, String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|e| format!("Failed to serialize: {}", e))
+    }
+
+    /// Import from JSON string.
+    pub fn from_json_string(json: &str) -> Result<Self, String> {
+        serde_json::from_str(json)
+            .map_err(|e| format!("Failed to deserialize: {}", e))
+    }
+
     pub fn sample(&self, time: f32) -> Option<Transform> {
         if self.keyframes.is_empty() {
             return None;
@@ -139,7 +260,7 @@ impl AnimationClip {
 
         let kf1 = &self.keyframes[idx];
         let kf2 = &self.keyframes[idx + 1];
-        Some(kf1.lerp(kf2, t))
+        Some(kf1.sample_with_interpolation(kf2, t))
     }
 
     fn find_keyframe_interval(&self, time: f32) -> (usize, f32) {
@@ -160,7 +281,7 @@ impl AnimationClip {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AnimationState {
     Playing,
     Paused,
@@ -354,9 +475,11 @@ impl System for AnimationSystem {
             return;
         }
 
-        let players: Vec<(Entity, AnimationPlayer)> = world
-            .query::<AnimationPlayer>()
-            .into_iter()
+        // Use CachedArchetypeQueryState for zero-allocation iteration
+        let mut query: CachedArchetypeQueryState<&AnimationPlayer, ()> =
+            CachedArchetypeQueryState::new();
+        let players: Vec<(Entity, AnimationPlayer)> = query
+            .iter(world)
             .map(|(e, p)| (e, p.clone()))
             .collect();
 
@@ -401,6 +524,82 @@ impl crate::Plugin for AnimationPlugin {
             crate::ecs::SystemStage::Update,
             Box::new(AnimationStateMachineSystem),
         );
+        log::info!("AnimationPlugin loaded — keyframe animation + state machine active");
+    }
+}
+
+/// Animation plugin with hot-reload support.
+///
+/// This plugin extends the base AnimationPlugin with file watching
+/// and hot-reload capabilities for development workflows.
+pub struct AnimationPluginWithHotReload {
+    /// Path to the animations directory
+    pub animations_dir: std::path::PathBuf,
+    /// Hot-reload configuration
+    pub config: crate::hot_reload::HotReloadConfig,
+}
+
+impl AnimationPluginWithHotReload {
+    /// Create a new animation plugin with hot-reload enabled.
+    ///
+    /// # Arguments
+    /// * `animations_dir` - Path to the directory containing animation files
+    pub fn new(animations_dir: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            animations_dir: animations_dir.into(),
+            config: crate::hot_reload::HotReloadConfig::development(),
+        }
+    }
+
+    /// Create with custom configuration.
+    pub fn with_config(
+        animations_dir: impl Into<std::path::PathBuf>,
+        config: crate::hot_reload::HotReloadConfig,
+    ) -> Self {
+        Self {
+            animations_dir: animations_dir.into(),
+            config,
+        }
+    }
+}
+
+impl crate::Plugin for AnimationPluginWithHotReload {
+    fn name(&self) -> &str {
+        "AnimationPluginWithHotReload"
+    }
+
+    fn build(&self, app: &mut crate::App) {
+        // Initialize base animation systems
+        app.world.insert_resource(AnimationResource::new());
+        app.schedule
+            .add_system(crate::ecs::SystemStage::Update, Box::new(AnimationSystem));
+        app.schedule.add_system(
+            crate::ecs::SystemStage::Update,
+            Box::new(AnimationStateMachineSystem),
+        );
+
+        // Initialize hot-reload system if enabled
+        if self.config.enabled && self.config.animation_enabled {
+            match crate::animation_hot_reload::AnimationHotReloadSystem::new(
+                &self.config,
+                &self.animations_dir,
+            ) {
+                Ok(hot_reload_system) => {
+                    log::info!(
+                        "Animation hot-reload enabled, watching: {:?}",
+                        self.animations_dir
+                    );
+                    // Store the hot reload system as a resource
+                    app.world.insert_resource(hot_reload_system);
+                }
+                Err(e) => {
+                    log::error!("Failed to initialize animation hot-reload: {}", e);
+                }
+            }
+        } else {
+            log::info!("Animation hot-reload disabled");
+        }
+
         log::info!("AnimationPlugin loaded — keyframe animation + state machine active");
     }
 }
@@ -619,10 +818,11 @@ impl System for AnimationStateMachineSystem {
             return;
         };
 
-        // Collect state machines.
-        let machines: Vec<(Entity, AnimationStateMachine)> = world
-            .query::<AnimationStateMachine>()
-            .into_iter()
+        // Use CachedArchetypeQueryState for zero-allocation iteration
+        let mut sm_query: CachedArchetypeQueryState<&AnimationStateMachine, ()> =
+            CachedArchetypeQueryState::new();
+        let machines: Vec<(Entity, AnimationStateMachine)> = sm_query
+            .iter(world)
             .map(|(e, sm)| (e, sm.clone()))
             .collect();
 
@@ -723,10 +923,11 @@ impl System for AnimationStateMachineSystem {
             }
         }
 
-        // Handle blend trees.
-        let blend_trees: Vec<(Entity, AnimationBlendTree)> = world
-            .query::<AnimationBlendTree>()
-            .into_iter()
+        // Handle blend trees — use CachedArchetypeQueryState for zero-allocation iteration
+        let mut bt_query: CachedArchetypeQueryState<&AnimationBlendTree, ()> =
+            CachedArchetypeQueryState::new();
+        let blend_trees: Vec<(Entity, AnimationBlendTree)> = bt_query
+            .iter(world)
             .map(|(e, bt)| (e, bt.clone()))
             .collect();
 
@@ -1152,6 +1353,7 @@ pub mod compression {
                     position,
                     rotation,
                     scale,
+                    interpolation: KeyframeInterpolation::Linear,
                 });
             }
 

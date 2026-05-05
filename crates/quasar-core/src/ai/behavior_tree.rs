@@ -673,9 +673,9 @@ impl System for BehaviorTreeSystem {
     fn run(&mut self, world: &mut World) {
         let delta = 1.0 / 60.0;
 
-        let entities: Vec<(Entity, BehaviorTreeRunner)> = world
-            .query::<BehaviorTreeRunner>()
-            .into_iter()
+        let mut query = crate::ecs::CachedArchetypeQueryState::<&BehaviorTreeRunner>::new();
+        let entities: Vec<(Entity, BehaviorTreeRunner)> = query
+            .iter(world)
             .map(|(e, r)| (e, r.clone()))
             .collect();
 

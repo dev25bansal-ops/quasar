@@ -9,6 +9,7 @@
 
 pub mod layout;
 pub mod plugin;
+pub mod quest_journal;
 pub mod renderer;
 pub mod style;
 pub mod widget;
@@ -16,6 +17,10 @@ pub mod widgets;
 
 pub use layout::{LayoutRect, LayoutSolver};
 pub use plugin::{CursorState, UiInteractionSystem, UiLayoutSystem, UiPlugin, UiResource};
+pub use quest_journal::{
+    DialogueChoiceUI, DialoguePanel, JournalTab, ObjectiveTrackerWidget, QuestJournalPanel,
+    RewardNotification, RewardNotificationPopup, RewardType,
+};
 pub use renderer::{UiRenderPass, UiVertex};
 pub use style::{Anchor, Color, FlexDirection, UiStyle};
 pub use widget::{UiNode, UiTree, WidgetId};

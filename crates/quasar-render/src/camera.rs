@@ -122,3 +122,31 @@ impl Default for CameraUniform {
         Self::new()
     }
 }
+
+/// Draw call uniform data sent to the GPU per draw call.
+///
+/// In bindless rendering, this tells the shader which material to use
+/// for the current draw call. Uses binding 1 in group 0.
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable, Debug)]
+#[repr(C)]
+pub struct DrawCallUniform {
+    /// Index into the bindless material storage buffer.
+    pub material_index: u32,
+    /// Padding to align to 16 bytes (required for uniform buffers).
+    pub _pad: [u32; 3],
+}
+
+impl DrawCallUniform {
+    pub fn new(material_index: u32) -> Self {
+        Self {
+            material_index,
+            _pad: [0; 3],
+        }
+    }
+}
+
+impl Default for DrawCallUniform {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}

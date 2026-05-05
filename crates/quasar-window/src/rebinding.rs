@@ -337,15 +337,13 @@ impl InputRebindConfig {
             return None;
         }
 
-        let binding = self.detect_input(input)?;
-
-        if self.rebind_timeout > 0.0 {
-            self.rebind_elapsed += 1.0 / 60.0;
-            if self.rebind_elapsed >= self.rebind_timeout {
-                self.cancel_rebind();
-                return None;
-            }
+        // Check for timeout
+        if self.rebind_timeout > 0.0 && self.rebind_elapsed >= self.rebind_timeout {
+            self.cancel_rebind();
+            return None;
         }
+
+        let binding = self.detect_input(input)?;
 
         if !self.allow_duplicates {
             if let Some(conflict) = self.find_conflict(&binding) {

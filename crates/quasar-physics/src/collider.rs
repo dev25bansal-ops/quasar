@@ -75,6 +75,18 @@ impl ColliderShape {
                 heights,
                 scale,
             } => {
+                // Validate that the heights slice has the correct number of elements
+                let expected_size = *nrows * *ncols;
+                if heights.len() != expected_size {
+                    panic!(
+                        "HeightField heights slice has {} elements, but expected {} (nrows={} * ncols={})",
+                        heights.len(),
+                        expected_size,
+                        nrows,
+                        ncols
+                    );
+                }
+                
                 let matrix = nalgebra::DMatrix::from_row_slice(*nrows, *ncols, heights);
                 SharedShape::heightfield(matrix, nalgebra::vector![scale[0], scale[1], scale[2]])
             }

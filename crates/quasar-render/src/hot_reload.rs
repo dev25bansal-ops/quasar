@@ -60,7 +60,8 @@ impl HotReloadSystem {
             | ReloadKind::Lua
             | ReloadKind::Scene
             | ReloadKind::Prefab
-            | ReloadKind::Audio => false,
+            | ReloadKind::Audio
+            | ReloadKind::Animation => false,
         }
     }
 

@@ -186,15 +186,28 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<A> {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ptr = self.inner.alloc(layout);
         if !ptr.is_null() {
-            if let Some(tracker) = self.tracker.read().as_ref() {
-                tracker.record_allocation(layout);
+            // SAFETY: We use try_read() to avoid deadlocks. If the lock is contended,
+            // we skip tracking for this allocation rather than risking a deadlock.
+            // This is a trade-off: we may miss some allocations under high contention,
+            // but we avoid deadlocks which would crash the application.
+            if let Some(tracker) = self.tracker.try_read() {
+                if let Some(tracker) = tracker.as_ref() {
+                    tracker.record_allocation(layout);
+                }
             }
         }
         ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let _ = self.tracker.read().as_ref();
+        // SAFETY: Same as alloc - use try_read() to avoid deadlocks
+        if let Some(tracker) = self.tracker.try_read() {
+            if let Some(_tracker) = tracker.as_ref() {
+                // Note: We can't reliably track deallocations without knowing the allocation ID.
+                // The original code had this bug too - it never called record_deallocation.
+                // For now, we'll skip deallocation tracking to avoid the deadlock risk.
+            }
+        }
         self.inner.dealloc(ptr, layout);
     }
 }

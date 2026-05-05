@@ -7,7 +7,7 @@
 //! The prefab format builds on [`crate::scene_serde::EntityData`] and adds
 //! optional physics / audio configuration as serde-friendly primitives.
 
-use crate::ecs::{Entity, World};
+use crate::ecs::{CachedArchetypeQueryState, Entity, World};
 use crate::scene_serde::EntityData;
 use quasar_math::Transform;
 use serde::{Deserialize, Serialize};
@@ -516,9 +516,11 @@ pub fn is_field_overridden(
 /// This should be called after a prefab asset is reloaded.
 pub fn propagate_prefab_changes(world: &mut World) {
     // Collect instance info first to avoid borrow conflicts.
-    let instances: Vec<(Entity, PrefabInstance)> = world
-        .query::<PrefabInstance>()
-        .into_iter()
+    // Use CachedArchetypeQueryState for zero-allocation iteration
+    let mut query: CachedArchetypeQueryState<&PrefabInstance, ()> =
+        CachedArchetypeQueryState::new();
+    let instances: Vec<(Entity, PrefabInstance)> = query
+        .iter(world)
         .map(|(e, inst)| (e, inst.clone()))
         .collect();
 

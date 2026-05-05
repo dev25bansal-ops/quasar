@@ -124,89 +124,130 @@ pub enum PropertyValue {
     String(String),
 }
 
-/// Types of VFX nodes.
+/// Types of VFX nodes - comprehensive set for full VFX graph editing.
 #[derive(Debug, Clone)]
 pub enum VfxNodeType {
-    Emitter(EmitterType),
-    Modifier(ModifierType),
-    Renderer(RendererType),
-    Operator(OperatorType),
-    Context(ContextType),
-}
-
-/// Particle emitter types.
-#[derive(Debug, Clone)]
-pub enum EmitterType {
-    Burst,
-    Continuous,
-    Sphere,
-    Box,
-    Mesh,
-    Trail,
-    Rate,
-}
-
-/// Particle modifier types.
-#[derive(Debug, Clone)]
-pub enum ModifierType {
-    Force,
-    Drag,
+    // Emitters
+    PointEmitter,
+    BoxEmitter,
+    SphereEmitter,
+    ConeEmitter,
+    
+    // Forces
+    Gravity,
+    Wind,
     Turbulence,
-    Color,
-    Size,
-    Rotation,
-    Velocity,
-    Lifetime,
-    Collision,
-    Kill,
-    SubEmitters,
+    Vortex,
+    Attractor,
+    Repeller,
+    
+    // Modifiers
+    ColorOverLifetime,
+    SizeOverLifetime,
+    VelocityOverLifetime,
+    RotationOverLifetime,
+    LimitVelocity,
+    ClampSize,
+    
+    // Collisions
+    CollisionWithGeometry,
+    CollisionWithPlane,
+    SubEmitter,
+    
+    // Output
+    RenderParticle,
 }
 
-/// Renderer types.
-#[derive(Debug, Clone)]
-pub enum RendererType {
-    Billboard,
-    Mesh,
-    Trail,
-    Ribbon,
-    Point,
-    Sprite,
+impl VfxNodeType {
+    /// Get a human-readable display name for the node type.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            VfxNodeType::PointEmitter => "Point Emitter",
+            VfxNodeType::BoxEmitter => "Box Emitter",
+            VfxNodeType::SphereEmitter => "Sphere Emitter",
+            VfxNodeType::ConeEmitter => "Cone Emitter",
+            VfxNodeType::Gravity => "Gravity",
+            VfxNodeType::Wind => "Wind",
+            VfxNodeType::Turbulence => "Turbulence",
+            VfxNodeType::Vortex => "Vortex",
+            VfxNodeType::Attractor => "Attractor",
+            VfxNodeType::Repeller => "Repeller",
+            VfxNodeType::ColorOverLifetime => "Color Over Lifetime",
+            VfxNodeType::SizeOverLifetime => "Size Over Lifetime",
+            VfxNodeType::VelocityOverLifetime => "Velocity Over Lifetime",
+            VfxNodeType::RotationOverLifetime => "Rotation Over Lifetime",
+            VfxNodeType::LimitVelocity => "Limit Velocity",
+            VfxNodeType::ClampSize => "Clamp Size",
+            VfxNodeType::CollisionWithGeometry => "Collision (Geometry)",
+            VfxNodeType::CollisionWithPlane => "Collision (Plane)",
+            VfxNodeType::SubEmitter => "Sub Emitter",
+            VfxNodeType::RenderParticle => "Render Particle",
+        }
+    }
+
+    /// Get the category of this node type.
+    pub fn category(&self) -> &'static str {
+        match self {
+            VfxNodeType::PointEmitter
+            | VfxNodeType::BoxEmitter
+            | VfxNodeType::SphereEmitter
+            | VfxNodeType::ConeEmitter => "Emitter",
+            VfxNodeType::Gravity
+            | VfxNodeType::Wind
+            | VfxNodeType::Turbulence
+            | VfxNodeType::Vortex
+            | VfxNodeType::Attractor
+            | VfxNodeType::Repeller => "Force",
+            VfxNodeType::ColorOverLifetime
+            | VfxNodeType::SizeOverLifetime
+            | VfxNodeType::VelocityOverLifetime
+            | VfxNodeType::RotationOverLifetime
+            | VfxNodeType::LimitVelocity
+            | VfxNodeType::ClampSize => "Modifier",
+            VfxNodeType::CollisionWithGeometry
+            | VfxNodeType::CollisionWithPlane
+            | VfxNodeType::SubEmitter => "Collision",
+            VfxNodeType::RenderParticle => "Output",
+        }
+    }
+
+    /// Get a suggested color for the node type (for UI).
+    pub fn ui_color(&self) -> [f32; 3] {
+        match self {
+            VfxNodeType::PointEmitter
+            | VfxNodeType::BoxEmitter
+            | VfxNodeType::SphereEmitter
+            | VfxNodeType::ConeEmitter => [0.2, 0.7, 0.3], // Green
+            VfxNodeType::Gravity
+            | VfxNodeType::Wind
+            | VfxNodeType::Turbulence
+            | VfxNodeType::Vortex
+            | VfxNodeType::Attractor
+            | VfxNodeType::Repeller => [0.3, 0.5, 0.9], // Blue
+            VfxNodeType::ColorOverLifetime
+            | VfxNodeType::SizeOverLifetime
+            | VfxNodeType::VelocityOverLifetime
+            | VfxNodeType::RotationOverLifetime
+            | VfxNodeType::LimitVelocity
+            | VfxNodeType::ClampSize => [0.9, 0.7, 0.2], // Yellow/Orange
+            VfxNodeType::CollisionWithGeometry
+            | VfxNodeType::CollisionWithPlane
+            | VfxNodeType::SubEmitter => [0.9, 0.3, 0.3], // Red
+            VfxNodeType::RenderParticle => [0.7, 0.3, 0.9], // Purple
+        }
+    }
 }
 
-/// Operator types for data manipulation.
-#[derive(Debug, Clone)]
-pub enum OperatorType {
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Lerp,
-    Clamp,
-    Min,
-    Max,
-    Sin,
-    Cos,
-    Noise,
-    Random,
-    SampleTexture,
-}
-
-/// Context nodes for particle data access.
-#[derive(Debug, Clone)]
-pub enum ContextType {
-    ParticleAge,
-    ParticlePosition,
-    ParticleVelocity,
-    ParticleColor,
-    ParticleSize,
-    ParticleLifetime,
-    EmitterPosition,
-    EmitterRotation,
-    DeltaTime,
-    Time,
-    RandomPerParticle,
-    Index,
-}
+/// Legacy alias for backward compatibility.
+pub type EmitterType = VfxNodeType;
+/// Legacy alias for backward compatibility.
+pub type ModifierType = VfxNodeType;
+/// Legacy alias for backward compatibility.
+pub type RendererType = VfxNodeType;
+/// Legacy alias for backward compatibility.
+pub type OperatorType = VfxNodeType;
+/// Legacy alias for backward compatibility.
+pub type ContextType = VfxNodeType;
 
 /// The VFX graph containing all nodes and connections.
 #[derive(Debug, Clone)]
@@ -269,7 +310,7 @@ impl VfxGraph {
 
     pub fn create_emitter(&mut self, emitter_type: EmitterType) -> VfxNodeId {
         let id = VfxNodeId(self.nodes.len() as u64);
-        let mut node = VfxNode::new(id, format!("{:?}", emitter_type), VfxNodeType::Emitter(emitter_type));
+        let mut node = VfxNode::new(id, format!("{:?}", emitter_type), emitter_type);
         node.add_output("particles", VfxDataType::Particle);
         node.add_property("rate", PropertyValue::Float(10.0));
         node.add_property("lifetime", PropertyValue::Float(2.0));
@@ -279,7 +320,7 @@ impl VfxGraph {
 
     pub fn create_modifier(&mut self, modifier_type: ModifierType) -> VfxNodeId {
         let id = VfxNodeId(self.nodes.len() as u64);
-        let mut node = VfxNode::new(id, format!("{:?}", modifier_type), VfxNodeType::Modifier(modifier_type));
+        let mut node = VfxNode::new(id, format!("{:?}", modifier_type), modifier_type);
         node.add_input("particles", VfxDataType::Particle);
         node.add_output("particles", VfxDataType::Particle);
         self.add_node(node);
@@ -288,7 +329,7 @@ impl VfxGraph {
 
     pub fn create_renderer(&mut self, renderer_type: RendererType) -> VfxNodeId {
         let id = VfxNodeId(self.nodes.len() as u64);
-        let mut node = VfxNode::new(id, format!("{:?}", renderer_type), VfxNodeType::Renderer(renderer_type));
+        let mut node = VfxNode::new(id, format!("{:?}", renderer_type), renderer_type);
         node.add_input("particles", VfxDataType::Particle);
         self.add_node(node);
         id
@@ -307,21 +348,21 @@ mod tests {
 
     #[test]
     fn vfx_node_new() {
-        let node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::Emitter(EmitterType::Continuous));
+        let node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::PointEmitter);
         assert_eq!(node.name, "test");
         assert!(node.inputs.is_empty());
     }
 
     #[test]
     fn vfx_node_add_pin() {
-        let mut node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::Emitter(EmitterType::Continuous));
+        let mut node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::PointEmitter);
         node.add_input("input", VfxDataType::Float);
         assert_eq!(node.inputs.len(), 1);
     }
 
     #[test]
     fn vfx_node_with_position() {
-        let node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::Emitter(EmitterType::Continuous))
+        let node = VfxNode::new(VfxNodeId(0), "test", VfxNodeType::PointEmitter)
             .with_position(100.0, 200.0);
         assert!((node.position.x - 100.0).abs() < 0.001);
     }
@@ -336,7 +377,7 @@ mod tests {
     #[test]
     fn vfx_graph_add_node() {
         let mut graph = VfxGraph::new("test");
-        let node = VfxNode::new(VfxNodeId(0), "emitter", VfxNodeType::Emitter(EmitterType::Continuous));
+        let node = VfxNode::new(VfxNodeId(0), "emitter", VfxNodeType::PointEmitter);
         let id = graph.add_node(node);
         assert_eq!(id, VfxNodeId(0));
         assert_eq!(graph.nodes.len(), 1);
@@ -345,61 +386,61 @@ mod tests {
     #[test]
     fn vfx_graph_connect() {
         let mut graph = VfxGraph::new("test");
-        let emitter = graph.create_emitter(EmitterType::Continuous);
-        let modifier = graph.create_modifier(ModifierType::Force);
-        
+        let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
+        let modifier = graph.create_modifier(VfxNodeType::Gravity);
+
         let from = PinId { node: emitter, index: 0 };
         let to = PinId { node: modifier, index: 0 };
         graph.connect(from, to);
-        
+
         assert_eq!(graph.connections.len(), 1);
     }
 
     #[test]
     fn vfx_graph_disconnect() {
         let mut graph = VfxGraph::new("test");
-        let emitter = graph.create_emitter(EmitterType::Continuous);
-        let modifier = graph.create_modifier(ModifierType::Force);
-        
+        let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
+        let modifier = graph.create_modifier(VfxNodeType::Gravity);
+
         let from = PinId { node: emitter, index: 0 };
         let to = PinId { node: modifier, index: 0 };
         graph.connect(from, to);
         graph.disconnect(from, to);
-        
+
         assert!(graph.connections.is_empty());
     }
 
     #[test]
     fn vfx_graph_create_emitter() {
         let mut graph = VfxGraph::new("test");
-        let id = graph.create_emitter(EmitterType::Burst);
+        let id = graph.create_emitter(VfxNodeType::SphereEmitter);
         assert!(graph.get_node(id).is_some());
     }
 
     #[test]
     fn vfx_graph_create_modifier() {
         let mut graph = VfxGraph::new("test");
-        let id = graph.create_modifier(ModifierType::Color);
+        let id = graph.create_modifier(VfxNodeType::ColorOverLifetime);
         assert!(graph.get_node(id).is_some());
     }
 
     #[test]
     fn vfx_graph_create_renderer() {
         let mut graph = VfxGraph::new("test");
-        let id = graph.create_renderer(RendererType::Billboard);
+        let id = graph.create_renderer(VfxNodeType::RenderParticle);
         assert!(graph.get_node(id).is_some());
     }
 
     #[test]
     fn vfx_graph_validate() {
         let mut graph = VfxGraph::new("test");
-        let emitter = graph.create_emitter(EmitterType::Continuous);
-        let modifier = graph.create_modifier(ModifierType::Force);
-        
+        let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
+        let modifier = graph.create_modifier(VfxNodeType::Gravity);
+
         let from = PinId { node: emitter, index: 0 };
         let to = PinId { node: modifier, index: 0 };
         graph.connect(from, to);
-        
+
         assert!(graph.validate().is_ok());
     }
 
@@ -408,5 +449,21 @@ mod tests {
         let p1 = PinId { node: VfxNodeId(1), index: 0 };
         let p2 = PinId { node: VfxNodeId(1), index: 0 };
         assert_eq!(p1, p2);
+    }
+
+    #[test]
+    fn vfx_node_type_display_name() {
+        assert_eq!(VfxNodeType::PointEmitter.display_name(), "Point Emitter");
+        assert_eq!(VfxNodeType::Gravity.display_name(), "Gravity");
+        assert_eq!(VfxNodeType::RenderParticle.display_name(), "Render Particle");
+    }
+
+    #[test]
+    fn vfx_node_type_category() {
+        assert_eq!(VfxNodeType::PointEmitter.category(), "Emitter");
+        assert_eq!(VfxNodeType::Gravity.category(), "Force");
+        assert_eq!(VfxNodeType::ColorOverLifetime.category(), "Modifier");
+        assert_eq!(VfxNodeType::CollisionWithPlane.category(), "Collision");
+        assert_eq!(VfxNodeType::RenderParticle.category(), "Output");
     }
 }

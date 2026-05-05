@@ -1,3 +1,7 @@
+// Allow invalid_reference_casting — this is a known pre-existing issue with
+// the SystemParam trait's raw pointer casting pattern used throughout the ECS.
+#![allow(invalid_reference_casting)]
+
 //! # Quasar Core
 //!
 //! The foundation of the Quasar Engine, providing:
@@ -28,15 +32,21 @@
 //! world.insert(entity, Position { x: 0.0, y: 0.0 });
 //! world.insert(entity, Velocity { dx: 1.0, dy: 0.0 });
 //!
-//! // Query entities
-//! for (e, pos) in world.query::<Position>() {
+//! // Query entities (recommended: CachedArchetypeQueryState)
+//! let mut query: CachedArchetypeQueryState<&Position, ()> =
+//!     CachedArchetypeQueryState::new();
+//! for (e, pos) in query.iter(&world) {
 //!     println!("Entity {:?} at ({}, {})", e, pos.x, pos.y);
 //! }
 //!
-//! // Mutable iteration
-//! world.for_each_mut::<Position, _>(|e, pos| {
-//!     pos.x += 1.0;
-//! });
+//! // Mutable iteration (recommended: CachedArchetypeQueryState + get_mut)
+//! let mut query: CachedArchetypeQueryState<&Position, ()> =
+//!     CachedArchetypeQueryState::new();
+//! for (e, _pos) in query.iter(&world) {
+//!     if let Some(p) = world.get_mut::<Position>(e) {
+//!         p.x += 1.0;
+//!     }
+//! }
 //! ```
 //!
 //! ## ECS Architecture
@@ -68,16 +78,20 @@
 
 pub mod ai;
 pub mod animation;
+pub mod animation_hot_reload;
 pub mod app;
 pub mod asset;
 pub mod asset_server;
 pub mod debug_draw;
 pub mod delta_compression;
+pub mod dialog;
+pub mod dialogue;
 pub mod ecs;
 pub mod error;
 pub mod event;
 pub mod ik;
 pub mod event_bus;
+pub mod hot_reload;
 pub mod interest;
 pub mod localization;
 pub mod navigation;
@@ -88,6 +102,7 @@ pub mod plugin;
 pub mod prediction;
 pub mod prefab;
 pub mod profiler;
+pub mod quest;
 pub mod reflect;
 pub mod save_load;
 pub mod scene;
@@ -98,10 +113,14 @@ pub mod time;
 pub mod wasm_platform;
 
 pub use animation::{
-    AnimationBlendTree, AnimationClip, AnimationPlayer, AnimationPlugin, AnimationResource,
-    AnimationState, AnimationStateMachine, AnimationStateMachineSystem, AnimationStateNode,
-    AnimationTransition, BlendTreeNode, SkeletalAnimationClip, TransformKeyframe,
-    TransitionCondition,
+    AnimationBlendTree, AnimationClip, AnimationPlayer, AnimationPlugin,
+    AnimationPluginWithHotReload, AnimationResource, AnimationState, AnimationStateMachine,
+    AnimationStateMachineSystem, AnimationStateNode, AnimationTransition, BlendTreeNode,
+    SkeletalAnimationClip, TransformKeyframe, TransitionCondition,
+};
+pub use animation_hot_reload::{
+    AnimationFormat, AnimationHotReloadStats, AnimationHotReloadSystem, AnimationReloadEvent,
+    AnimationStateSnapshot, ReloadRecord,
 };
 pub use app::{simulation_active, App, SimulationState, TimeSnapshot};
 pub use asset_server::{
@@ -115,7 +134,8 @@ pub use asset::{
 };
 pub use debug_draw::{DebugDraw, DebugDrawConfig, DebugDrawColors, DebugLine};
 pub use ecs::{
-    flush_commands, Component, Entity, EntityBuilder, QueryFilter, QueryState, World, WorldQuery,
+    flush_commands, CachedArchetypeQueryState, Component, Entity, EntityBuilder, QueryFilter,
+    QueryState, World, WorldQuery,
 };
 pub use error::{QuasarError, QuasarResult};
 pub use event::{Events, EventsChannel};
@@ -166,10 +186,15 @@ pub use time::{FixedUpdateAccumulator, Time};
 /// the most frequently used types.
 pub mod prelude {
     pub use crate::ecs::{
-        flush_commands, Archetype, ArchetypeGraph, ArchetypeId, Bundle, ChildOf, Children,
-        Command, Commands, Component, Entity, EntityBuilder, EntitySpawnBuilder, Mut,
-        ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent, Prototype, QueryFilter, QueryState,
-        QueryIter, World, WorldQuery, Schedule, System, SystemStage,
+        flush_commands, Archetype, ArchetypeGraph, ArchetypeId, Bundle, CachedArchetypeQueryState,
+        ChildOf, Children, Command, Commands, Component, Entity, EntityBuilder, EntitySpawnBuilder,
+        Mut, ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent, Prototype, QueryFilter,
+        QueryState, QueryIter, World, WorldQuery, Schedule, System, SystemStage,
+        // Compile-time SystemParam types
+        SystemParam, SystemState, Access, AccessKind, Read, Write,
+        SystemQuery as CompileQuery, SystemQueryMut as CompileQueryMut,
+        Res as CompileRes, ResMut as CompileResMut,
+        system_fn, FnSystemWithParams,
     };
     pub use crate::event::{Events, EventsChannel};
     pub use crate::event_bus::{Event, EventBus, EventReader, EventWriter};

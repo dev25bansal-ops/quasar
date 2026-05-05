@@ -162,7 +162,7 @@ fn test_collect_renderable_entities() {
     let renderable: Vec<_> = world
         .query3::<Transform, MeshShape, Renderable>()
         .into_iter()
-        .map(|(e, transform, shape)| (e, *transform, *shape))
+        .map(|(e, transform, shape, _renderable)| (e, *transform, *shape))
         .collect();
 
     assert_eq!(renderable.len(), 5); // 0, 2, 4, 6, 8
@@ -190,7 +190,7 @@ fn test_filter_visible_entities() {
     let visible_count = world
         .query2::<Transform, Visible>()
         .into_iter()
-        .filter(|(_, visible)| visible.0)
+        .filter(|(_, _, visible)| visible.0)
         .count();
 
     assert_eq!(visible_count, 3); // 0, 2, 4 are visible
@@ -215,7 +215,7 @@ fn test_collect_entities_within_frustum() {
     let entities_in_view: Vec<_> = world
         .query2::<Transform, Renderable>()
         .into_iter()
-        .filter(|(_, _)| {
+        .filter(|(_, _, _renderable)| {
             // Simplified: all entities are "in view" for this test
             // In a real system, you'd test against frustum planes
             true
@@ -444,7 +444,7 @@ fn test_camera_projection_matrix_properties() {
     let proj = world.resource::<Camera>().unwrap().projection_matrix;
 
     // Verify it's a valid projection matrix (not identity)
-    assert_ne!(proj, Mat4::identity());
+    assert_ne!(proj, Mat4::IDENTITY);
 }
 
 #[test]
@@ -477,12 +477,12 @@ fn test_render_system_can_process_entities_with_camera() {
     let renderable_count = world
         .query3::<Transform, MeshShape, Renderable>()
         .into_iter()
-        .filter(|(_, _, _)| {
+        .filter(|(_, _, _, _)| {
             // Check visibility (simplified)
             world
                 .query2::<Renderable, Visible>()
                 .into_iter()
-                .any(|(_, v)| v.0)
+                .any(|(_, _, v)| v.0)
         })
         .count();
 

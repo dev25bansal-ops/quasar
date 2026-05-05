@@ -1,86 +1,344 @@
 //! WebAssembly platform support.
 //!
-//! Provides WASM-specific utilities and abstractions:
-//! - Memory management for WASM
-//! - File system abstraction (virtual FS)
-//! - Async runtime support
-//! - WebGL rendering integration
+//! This module provides WebAssembly-specific utilities and abstractions for running
+//! the Quasar engine in browser environments.
 //!
-//! # Example
+//! # Features
 //!
-//! ```ignore
+//! - **Memory management** — WASM-specific memory allocation and tracking
+//! - **Virtual file system** — In-memory file system for browser environments
+//! - **Logging** — Browser console logging integration
+//! - **Panic handling** — WASM panic hook setup
+//! - **Memory stats** — WASM heap memory monitoring
+//!
+//! # Basic Usage
+//!
+//! ## Initialization
+//!
+//! ```rust,no_run
 //! #[cfg(target_arch = "wasm32")]
-//! use quasar_core::wasm_platform::*;
+//! use quasar_core::wasm_platform::wasm32::*;
 //!
 //! // Initialize WASM platform
-//! init_wasm_platform();
+//! init_panic_hook();
 //!
-//! // Use virtual file system
-//! let mut vfs = VirtualFileSystem::new();
-//! vfs.mount("/assets", include_bytes!("../assets/"));
+//! // Log to browser console
+//! log("Game started");
+//! log_error("An error occurred");
+//! log_warn("Warning message");
 //! ```
+//!
+//! ## Virtual File System
+//!
+//! ```rust,no_run
+//! #[cfg(target_arch = "wasm32")]
+//! use quasar_core::wasm_platform::wasm32::*;
+//!
+//! // Create virtual file system
+//! let mut vfs = VirtualFileSystem::new();
+//!
+//! // Mount static data
+//! vfs.mount("/assets/player.png", include_bytes!("assets/player.png"));
+//!
+//! // Mount dynamic data
+//! let config_data = b"{\"version\": \"1.0\"}";
+//! vfs.mount_vec("/config.json", config_data.to_vec());
+//!
+//! // Read from virtual file system
+//! if let Some(data) = vfs.read("/assets/player.png") {
+//!     println!("Loaded {} bytes", data.len());
+//! }
+//!
+//! // Check if file exists
+//! if vfs.exists("/config.json") {
+//!     let config = vfs.read_string("/config.json").unwrap();
+//!     println!("Config: {}", config);
+//! }
+//! ```
+//!
+//! ## Memory Monitoring
+//!
+//! ```rust,no_run
+//! #[cfg(target_arch = "wasm32")]
+//! use quasar_core::wasm_platform::wasm32::*;
+//!
+//! // Get memory statistics
+//! let stats = get_memory_stats();
+//! println!("Used: {} / {} bytes", stats.used_memory, stats.total_memory);
+//! ```
+//!
+//! # Platform Considerations
+//!
+//! - File system access is limited to virtual file system
+//! - No native threading (use async/await instead)
+//! - Memory is limited by WASM heap size
+//! - Console logging requires `console_log` feature
+//! - Panic handling requires `console_error_panic_hook` feature
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm32 {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
+    /// Initialize panic hook for better error messages in browser console.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// init_panic_hook();
+    /// ```
     pub fn init_panic_hook() {
         #[cfg(feature = "console_error_panic_hook")]
         console_error_panic_hook::set_once();
     }
 
+    /// Log a message to the browser console.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// log("Game started");
+    /// ```
     pub fn log(message: &str) {
         #[cfg(feature = "console_log")]
         web_sys::console::log_1(&message.into());
     }
 
+    /// Log an error to the browser console.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// log_error("An error occurred");
+    /// ```
     pub fn log_error(message: &str) {
         #[cfg(feature = "console_log")]
         web_sys::console::error_1(&message.into());
     }
 
+    /// Log a warning to the browser console.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// log_warn("Warning message");
+    /// ```
     pub fn log_warn(message: &str) {
         #[cfg(feature = "console_log")]
         web_sys::console::warn_1(&message.into());
     }
 
+    /// Virtual file system for WASM environments.
+    ///
+    /// Provides an in-memory file system for browser environments where
+    /// native file system access is not available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// let mut vfs = VirtualFileSystem::new();
+    /// vfs.mount("/assets/player.png", include_bytes!("assets/player.png"));
+    ///
+    /// if let Some(data) = vfs.read("/assets/player.png") {
+    ///     println!("Loaded {} bytes", data.len());
+    /// }
+    /// ```
     pub struct VirtualFileSystem {
         mounts: HashMap<String, Vec<u8>>,
     }
 
     impl VirtualFileSystem {
+        /// Create a new virtual file system.
+        ///
+        /// # Examples
+        ///
+        /// ```rust
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let vfs = VirtualFileSystem::new();
+        /// ```
         pub fn new() -> Self {
             Self {
                 mounts: HashMap::new(),
             }
         }
 
+        /// Mount static data at the given path.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path for the file
+        /// * `data` — Static byte slice to mount
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let mut vfs = VirtualFileSystem::new();
+        /// vfs.mount("/assets/player.png", include_bytes!("assets/player.png"));
+        /// ```
         pub fn mount(&mut self, path: &str, data: &'static [u8]) {
             self.mounts.insert(path.to_string(), data.to_vec());
         }
 
+        /// Mount dynamic data at the given path.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path for the file
+        /// * `data` — Vector of bytes to mount
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let mut vfs = VirtualFileSystem::new();
+        /// let config_data = b"{\"version\": \"1.0\"}";
+        /// vfs.mount_vec("/config.json", config_data.to_vec());
+        /// ```
         pub fn mount_vec(&mut self, path: &str, data: Vec<u8>) {
             self.mounts.insert(path.to_string(), data);
         }
 
+        /// Read data from the virtual file system.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path to read from
+        ///
+        /// # Returns
+        ///
+        /// `Some(&[u8])` if the file exists, `None` otherwise
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let vfs = VirtualFileSystem::new();
+        /// if let Some(data) = vfs.read("/assets/player.png") {
+        ///     println!("Loaded {} bytes", data.len());
+        /// }
+        /// ```
         pub fn read(&self, path: &str) -> Option<&[u8]> {
             self.mounts.get(path).map(|v| v.as_slice())
         }
 
+        /// Read string data from the virtual file system.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path to read from
+        ///
+        /// # Returns
+        ///
+        /// `Some(String)` if the file exists and is valid UTF-8, `None` otherwise
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let vfs = VirtualFileSystem::new();
+        /// if let Some(config) = vfs.read_string("/config.json") {
+        ///     println!("Config: {}", config);
+        /// }
+        /// ```
         pub fn read_string(&self, path: &str) -> Option<String> {
             self.read(path)
                 .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
         }
 
+        /// Check if a file exists in the virtual file system.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path to check
+        ///
+        /// # Returns
+        ///
+        /// `true` if the file exists, `false` otherwise
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let vfs = VirtualFileSystem::new();
+        /// if vfs.exists("/config.json") {
+        ///     println!("Config file exists");
+        /// }
+        /// ```
         pub fn exists(&self, path: &str) -> bool {
             self.mounts.contains_key(path)
         }
 
+        /// List all mounted paths in the virtual file system.
+        ///
+        /// # Returns
+        ///
+        /// Vector of all mounted paths
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let vfs = VirtualFileSystem::new();
+        /// let paths = vfs.list();
+        /// for path in paths {
+        ///     println!("{}", path);
+        /// }
+        /// ```
         pub fn list(&self) -> Vec<&str> {
             self.mounts.keys().map(|s| s.as_str()).collect()
         }
 
+        /// Unmount a file from the virtual file system.
+        ///
+        /// # Arguments
+        ///
+        /// * `path` — Virtual path to unmount
+        ///
+        /// # Returns
+        ///
+        /// `Some(Vec<u8>)` if the file was mounted, `None` otherwise
+        ///
+        /// # Examples
+        ///
+        /// ```rust,no_run
+        /// #[cfg(target_arch = "wasm32")]
+        /// use quasar_core::wasm_platform::wasm32::*;
+        ///
+        /// let mut vfs = VirtualFileSystem::new();
+        /// if let Some(data) = vfs.unmount("/config.json") {
+        ///     println!("Unmounted {} bytes", data.len());
+        /// }
+        /// ```
         pub fn unmount(&mut self, path: &str) -> Option<Vec<u8>> {
             self.mounts.remove(path)
         }
@@ -92,6 +350,20 @@ pub mod wasm32 {
         }
     }
 
+    /// Memory statistics for WASM heap.
+    ///
+    /// Contains information about total, used, and available memory
+    /// in the WASM heap.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// #[cfg(target_arch = "wasm32")]
+    /// use quasar_core::wasm_platform::wasm32::*;
+    ///
+    /// let stats = get_memory_stats();
+    /// println!("Used: {} / {} bytes", stats.used_memory, stats.total_memory);
+    /// ```
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct MemoryStats {
         pub total_memory: u32,

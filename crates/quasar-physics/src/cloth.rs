@@ -59,6 +59,8 @@ pub struct ClothConfig {
     pub damping: f32,
     pub iterations: usize,
     pub self_collision_radius: f32,
+    pub wind: Vec3,
+    pub ground_y: Option<f32>,
 }
 
 impl Default for ClothConfig {
@@ -68,6 +70,8 @@ impl Default for ClothConfig {
             damping: 0.98,
             iterations: 8,
             self_collision_radius: 0.05,
+            wind: Vec3::ZERO,
+            ground_y: Some(0.0),
         }
     }
 }
@@ -130,12 +134,27 @@ impl ClothMesh {
     pub fn step(&mut self, config: &ClothConfig, dt: f32) {
         let gravity = config.gravity;
         let damping = config.damping;
+        let wind = config.wind;
+        let ground = config.ground_y;
 
         for p in &mut self.particles {
             if !p.pinned {
                 let vel = (p.position - p.prev_position) * damping;
                 p.prev_position = p.position;
-                p.position += vel + gravity * dt * dt;
+                
+                // Add wind force and gravity
+                let force = gravity + wind;
+                p.position += vel + force * dt * dt;
+                
+                // Ground collision
+                if let Some(gy) = ground {
+                    if p.position.y < gy {
+                        p.position.y = gy;
+                        // Simple friction
+                        p.position.x += (p.prev_position.x - p.position.x) * 0.1;
+                        p.position.z += (p.prev_position.z - p.position.z) * 0.1;
+                    }
+                }
             }
         }
 

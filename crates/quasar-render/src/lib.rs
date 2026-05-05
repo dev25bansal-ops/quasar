@@ -54,6 +54,8 @@ pub mod material;
 pub mod mesh;
 #[cfg(feature = "meshlet")]
 pub mod meshlet;
+#[cfg(feature = "meshlet")]
+pub mod mesh_shader;
 pub mod motion_vector_pass;
 #[cfg(feature = "gpu-culling")]
 pub mod occlusion;
@@ -96,9 +98,10 @@ pub mod vfx_graph;
 
 pub use asset_loader::{AssetLoader, GpuMaterial, GpuMesh, GpuTexture, RenderAssetManager};
 pub use bindless::{
-    GpuMaterialData, MaterialDataBuffer, TextureAtlas, MAX_BINDLESS_TEXTURES, MAX_MATERIALS,
+    BindlessCapabilities, GpuMaterialData, MaterialDataBuffer, ResourceLifetimeManager,
+    SamplerPool, TextureAtlas, TextureBatchUploader, MAX_BINDLESS_TEXTURES, MAX_MATERIALS,
 };
-pub use camera::Camera;
+pub use camera::{Camera, CameraUniform, DrawCallUniform};
 pub use camera_controller::{FpsCameraController, OrbitController};
 pub use cascade_shadow::{
     Cascade, CascadeShadowMap, CascadeUniform, CASCADE_COUNT, SHADOW_MAP_SIZE,
@@ -122,6 +125,18 @@ pub use loader::load_obj;
 pub use lod::{
     bayer_threshold, LodCrossFade, LodGroup, LodLevel, LodSystem, BAYER_4X4, LOD_CROSSFADE_BAND,
     LOD_CROSSFADE_WGSL,
+};
+#[cfg(feature = "meshlet")]
+pub use meshlet::{
+    build_lod_meshlets, LodConfig, LodMeshletData, LodMeshletGpuBuffers, LodMeshletMesh,
+    MeshletBounds, MeshletData, MeshletGpuBuffers, MeshletMesh, VisibilityEntry,
+    MAX_LOD_LEVELS, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES, MAX_MESHLETS,
+    MESH_WORKGROUP_SIZE, TASK_WORKGROUP_SIZE,
+};
+#[cfg(feature = "meshlet")]
+pub use mesh_shader::{
+    MeshShaderCapabilities, MeshShaderFallback, MeshShaderPipeline, MeshShaderUniforms,
+    MeshShaderVertexBuffers, TaskShaderUniforms,
 };
 pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
 pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
@@ -157,7 +172,8 @@ pub use vertex::Vertex;
 
 #[cfg(feature = "clustered-lighting")]
 pub use clustered::{
-    Cluster, ClusterAabb, LightClusterGrid, CLUSTERED_LIGHT_WGSL, CLUSTER_X, CLUSTER_Y, CLUSTER_Z,
+    Cluster, ClusterAabb, ClusterParams, GpuClusterOutput, GpuClusterPass, LightClusterGrid,
+    CLUSTERED_LIGHT_WGSL, CLUSTER_ASSIGN_WG_SIZE, CLUSTER_X, CLUSTER_Y, CLUSTER_Z,
     MAX_LIGHTS_PER_CLUSTER, TOTAL_CLUSTERS,
 };
 #[cfg(feature = "decals")]
@@ -177,14 +193,18 @@ pub use lightmap::{
 };
 #[cfg(feature = "gpu-culling")]
 pub use occlusion::{
-    BindlessResources, DrawIndexedIndirectArgs, DrawInstanceData, GpuAabb, GpuCullPass,
-    GpuCullUniforms, HiZBuffer, HiZMip, IndirectDrawManager, MeshDrawCommand,
-    MultiDrawIndirectCount, BINDLESS_MAX_MATERIALS, BINDLESS_MAX_TEXTURES, GPU_CULL_MAX_OBJECTS,
-    GPU_CULL_WGSL, HIZ_MIP_LEVELS,
+    BindlessResources, CullStats, DrawIndexedIndirectArgs, DrawInstanceData, GpuAabb, GpuCullPass,
+    GpuCullUniforms, GpuHiZBuilder, HiZBuffer, HiZCopyPass, HiZMip, HiZTexture,
+    IndirectDrawManager, MeshDrawCommand, MultiDrawIndirectCount, BINDLESS_MAX_MATERIALS,
+    BINDLESS_MAX_TEXTURES, GPU_CULL_MAX_OBJECTS, GPU_CULL_WGSL, HIZ_MIP_LEVELS,
 };
 #[cfg(feature = "particles")]
 pub use particle::{
-    GpuParticleSystem, ParticleData, ParticleEmitter, ParticleEmitterConfig, MAX_PARTICLES,
+    AlignmentDef, BlendModeDef, ColorKeyframe, CollisionDef, CollisionType, CpuParticleSimulator,
+    CurveKeyframe, EmitterDef, EmitterShape, ForceDef, ForceType, GpuParticleSystem, ModifierDef,
+    ModifierType, ParticleData, ParticleEmitter, ParticleEmitterConfig, ParticleRendererDef,
+    ParticleSystemDef, SimParticle, SimulationSpace, SortingDef, evaluate_color_gradient,
+    evaluate_curve, MAX_PARTICLES,
 };
 #[cfg(feature = "post-process")]
 pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, SSAO_NOISE_SIZE};

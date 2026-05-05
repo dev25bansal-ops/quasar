@@ -2,20 +2,33 @@
 
 use quasar_core::error::{QuasarError, QuasarResult};
 
-use super::camera::{Camera, CameraUniform};
-use super::culling::{Aabb, Frustum, RenderStats};
-use super::light::LightsUniform;
-use super::material::{Material, MaterialOverride};
-use super::mesh::Mesh;
+use crate::camera::{Camera, CameraUniform, DrawCallUniform};
+use crate::culling::{Aabb, Frustum, RenderStats};
+use crate::light::LightsUniform;
+use crate::material::{Material, MaterialOverride};
+use crate::mesh::Mesh;
+#[cfg(feature = "clustered-lighting")]
+use crate::clustered::{GpuClusterPass, LightClusterGrid};
 #[cfg(feature = "meshlet")]
-use super::meshlet::{MeshletGpuBuffers, MESHLET_CULL_WGSL};
-use super::occlusion::{
-    DrawIndexedIndirectArgs, GpuCullPass, IndirectDrawManager, MeshDrawCommand,
+use crate::meshlet::{LodMeshletGpuBuffers, MeshletGpuBuffers, MESHLET_CULL_WGSL};
+#[cfg(feature = "meshlet")]
+use crate::mesh_shader::{
+    MeshShaderCapabilities, MeshShaderFallback, MeshShaderPipeline, MeshShaderUniforms,
+    MeshShaderVertexBuffers, TaskShaderUniforms,
 };
-use super::pipeline;
-use super::ssgi::SsgiPass;
-use super::taa::TaaPass;
-use super::texture::Texture;
+use crate::occlusion::{
+    CullStats, DrawIndexedIndirectArgs, GpuCullPass, GpuHiZBuilder, HiZCopyPass, HiZTexture,
+    IndirectDrawManager, MeshDrawCommand,
+};
+use crate::pipeline;
+use crate::ssgi::SsgiPass;
+use crate::taa::TaaPass;
+use crate::texture::Texture;
+use crate::bindless::{
+    BindlessBindGroup, BindlessCapabilities, BindlessPipelineBuilder, FallbackBindGroupBuilder,
+    GpuMaterialData, MaterialDataBuffer, ResourceLifetimeManager, SamplerPool, TextureAtlas,
+    TextureBatchUploader, MAX_BINDLESS_SAMPLERS, GPU_MATERIAL_SIZE, MAX_MATERIALS,
+};
 
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
@@ -138,6 +151,10 @@ pub struct Renderer {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_bind_group_layout: wgpu::BindGroupLayout,
     pub camera_uniform: CameraUniform,
+    /// Buffer for draw call uniforms (material index per draw).
+    pub draw_call_buffer: wgpu::Buffer,
+    /// Bind group layout for draw call uniforms.
+    pub draw_call_bind_group_layout: wgpu::BindGroupLayout,
     pub material_texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub light_buffer: wgpu::Buffer,
@@ -170,6 +187,14 @@ pub struct Renderer {
     pub gpu_cull_pass: Option<GpuCullPass>,
     /// Indirect draw command manager for GPU-driven rendering.
     pub indirect_draw_manager: Option<IndirectDrawManager>,
+    /// Hi-Z depth pyramid texture for occlusion culling.
+    pub hiz_texture: Option<HiZTexture>,
+    /// Compute pass that copies the depth buffer into Hi-Z mip level 0.
+    pub hiz_copy_pass: Option<HiZCopyPass>,
+    /// Compute pass that builds the Hi-Z mip chain from level 0.
+    pub hiz_build: Option<GpuHiZBuilder>,
+    /// Cull statistics from the previous frame.
+    pub cull_stats: CullStats,
     /// TAA pass — temporal anti-aliasing with jittered projection.
     pub taa_pass: Option<TaaPass>,
     /// Zero-filled motion vector texture (Rg16Float) used as placeholder
@@ -186,6 +211,71 @@ pub struct Renderer {
     uniform_staging: Vec<u8>,
     /// Frame rendering statistics (culled vs rendered objects).
     pub stats: RenderStats,
+    /// GPU-driven cluster light assignment pipeline.
+    #[cfg(feature = "clustered-lighting")]
+    pub gpu_cluster_pass: Option<GpuClusterPass>,
+    /// CPU-side cluster grid for fallback and readback.
+    #[cfg(feature = "clustered-lighting")]
+    pub cluster_grid: Option<LightClusterGrid>,
+
+    // ── Bindless Rendering ──────────────────────────────────────
+    /// Bindless capabilities detected from the adapter.
+    pub bindless_capabilities: BindlessCapabilities,
+    /// Global texture atlas for bindless texture access.
+    pub texture_atlas: TextureAtlas,
+    /// Global sampler pool for bindless sampler access.
+    pub sampler_pool: SamplerPool,
+    /// Material data storage buffer for bindless rendering.
+    pub material_data_buffer: MaterialDataBuffer,
+    /// Combined bindless bind group (textures + samplers + materials).
+    pub bindless_bind_group: Option<BindlessBindGroup>,
+    /// Resource lifetime manager to prevent use-after-free.
+    pub resource_lifetimes: ResourceLifetimeManager,
+    /// Fallback bind group builder for devices without bindless support.
+    pub fallback_builder: Option<FallbackBindGroupBuilder>,
+    /// Bindless render pipeline (used when bindless is enabled).
+    pub bindless_render_pipeline: Option<wgpu::RenderPipeline>,
+    /// PBR bindless render pipeline (advanced materials).
+    pub pbr_bindless_pipeline: Option<wgpu::RenderPipeline>,
+    /// Whether bindless rendering is currently active.
+    pub bindless_enabled: bool,
+    /// Texture batch uploader for efficient texture uploads.
+    pub texture_batch_uploader: Option<TextureBatchUploader>,
+
+    // ── Mesh Shader Pipeline ────────────────────────────────────
+    /// Mesh shader capabilities detected from the adapter.
+    pub mesh_shader_capabilities: crate::mesh_shader::MeshShaderCapabilities,
+    /// Mesh shader pipeline (only available if supported).
+    pub mesh_shader_pipeline: Option<crate::mesh_shader::MeshShaderPipeline>,
+    /// LOD meshlet GPU buffers for mesh shader rendering.
+    pub lod_meshlet_buffers: Option<crate::meshlet::LodMeshletGpuBuffers>,
+    /// Vertex buffers for mesh shader pipeline.
+    pub mesh_shader_vertex_buffers: Option<crate::mesh_shader::MeshShaderVertexBuffers>,
+    /// Bind group for task shader uniforms and buffers.
+    pub task_shader_bind_group: Option<wgpu::BindGroup>,
+    /// Bind group for mesh shader uniforms and buffers.
+    pub mesh_shader_bind_group: Option<wgpu::BindGroup>,
+    /// Whether mesh shader rendering is currently active.
+    pub mesh_shader_enabled: bool,
+    /// Mesh shader rendering statistics.
+    pub mesh_shader_stats: MeshShaderStats,
+}
+
+/// Mesh shader rendering statistics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MeshShaderStats {
+    /// Total meshlets processed.
+    pub total_meshlets: u32,
+    /// Meshlets that passed culling.
+    pub visible_meshlets: u32,
+    /// Triangles generated by mesh shader.
+    pub output_triangles: u32,
+    /// LOD transitions performed.
+    pub lod_transitions: u32,
+    /// Time spent in task shader (ms).
+    pub task_shader_time_ms: f32,
+    /// Time spent in mesh shader (ms).
+    pub mesh_shader_time_ms: f32,
 }
 
 impl Renderer {
@@ -222,6 +312,16 @@ impl Renderer {
 
         log::info!("GPU adapter: {:?}", adapter.get_info().name);
 
+        // Detect bindless capabilities
+        let bindless_caps = BindlessCapabilities::from_adapter(&adapter);
+        if bindless_caps.full_bindless {
+            log::info!("Bindless rendering: FULLY SUPPORTED");
+        } else if bindless_caps.texture_binding_array {
+            log::info!("Bindless rendering: PARTIAL (texture array only, no non-uniform indexing)");
+        } else {
+            log::info!("Bindless rendering: NOT SUPPORTED (using fallback path)");
+        }
+
         // Request the device and queue.
         let mut required_features = wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER
             | wgpu::Features::TIMESTAMP_QUERY
@@ -229,6 +329,8 @@ impl Renderer {
         if render_config.gpu_driven_culling {
             required_features |= wgpu::Features::MULTI_DRAW_INDIRECT;
         }
+        // Add bindless features if supported
+        required_features |= bindless_caps.required_features();
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
@@ -304,6 +406,34 @@ impl Renderer {
                 }),
             }],
         });
+
+        // -- Draw call uniform buffer + bind group layout (bindless) --
+        // This buffer holds the material index for each draw call in bindless mode.
+        let draw_call_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Draw Call Uniform Buffer"),
+            size: (std::mem::size_of::<DrawCallUniform>() as u64)
+                .div_ceil(device.limits().min_uniform_buffer_offset_alignment as u64)
+                * MAX_RENDER_OBJECTS as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let draw_call_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Draw Call Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<DrawCallUniform>() as u64,
+                        ),
+                    },
+                    count: None,
+                }],
+            });
 
         // -- Depth texture --
         let (depth_texture, depth_view) =
@@ -728,7 +858,6 @@ impl Renderer {
             UniformRingBuffer::new(&device, UNIFORM_RING_SIZE, Some("Uniform Ring Buffer"));
 
         let mut result = Ok(Self {
-            device,
             queue,
             surface,
             config,
@@ -740,6 +869,8 @@ impl Renderer {
             camera_bind_group,
             camera_bind_group_layout,
             camera_uniform,
+            draw_call_buffer,
+            draw_call_bind_group_layout,
             material_texture_bind_group_layout,
             texture_bind_group_layout,
             light_buffer,
@@ -759,6 +890,10 @@ impl Renderer {
             instance_bind_group_layout,
             gpu_cull_pass: None,
             indirect_draw_manager: None,
+            hiz_texture: None,
+            hiz_copy_pass: None,
+            hiz_build: None,
+            cull_stats: CullStats::default(),
             taa_pass: None,
             motion_vector_texture: None,
             motion_vector_view: None,
@@ -767,11 +902,55 @@ impl Renderer {
             uniform_ring_buffer,
             uniform_staging: vec![0u8; UNIFORM_RING_SIZE as usize],
             stats: RenderStats::default(),
+            #[cfg(feature = "clustered-lighting")]
+            gpu_cluster_pass: None,
+            #[cfg(feature = "clustered-lighting")]
+            cluster_grid: None,
+
+            // Bindless rendering initialization
+            bindless_capabilities: bindless_caps,
+            texture_atlas: TextureAtlas::new(),
+            sampler_pool: SamplerPool::new(),
+            material_data_buffer: MaterialDataBuffer::new(&device, MAX_MATERIALS),
+            device,
+            bindless_bind_group: None,
+            resource_lifetimes: ResourceLifetimeManager::new(),
+            fallback_builder: None,
+            bindless_render_pipeline: None,
+            pbr_bindless_pipeline: None,
+            bindless_enabled: false,
+            texture_batch_uploader: None,
+
+            // Mesh shader pipeline
+            mesh_shader_capabilities: MeshShaderCapabilities::from_adapter(&adapter),
+            mesh_shader_pipeline: None,
+            lod_meshlet_buffers: None,
+            mesh_shader_vertex_buffers: None,
+            task_shader_bind_group: None,
+            mesh_shader_bind_group: None,
+            mesh_shader_enabled: false,
+            mesh_shader_stats: MeshShaderStats::default(),
         });
         if let Ok(ref mut renderer) = result {
+            #[cfg(feature = "clustered-lighting")]
+            {
+                let w = renderer.config.width;
+                let h = renderer.config.height;
+                renderer.cluster_grid =
+                    Some(LightClusterGrid::new(0.1, 100.0, w, h));
+                renderer.gpu_cluster_pass =
+                    Some(GpuClusterPass::new(&renderer.device, 256, 0.1, 100.0, w, h));
+            }
             if renderer.render_config.gpu_driven_culling {
                 renderer.gpu_cull_pass = Some(GpuCullPass::new(&renderer.device));
                 renderer.indirect_draw_manager = Some(IndirectDrawManager::new());
+
+                // Create Hi-Z resources for occlusion culling.
+                let w = renderer.config.width;
+                let h = renderer.config.height;
+                renderer.hiz_texture = Some(HiZTexture::new(&renderer.device, w, h));
+                renderer.hiz_copy_pass = Some(HiZCopyPass::new(&renderer.device));
+                renderer.hiz_build = Some(GpuHiZBuilder::new(&renderer.device));
             }
             if renderer.render_config.taa_enabled {
                 let w = renderer.config.width;
@@ -787,8 +966,254 @@ impl Renderer {
                 let h = renderer.config.height;
                 renderer.ssgi_pass = Some(SsgiPass::new(&renderer.device, w, h));
             }
+
+            // ── Initialize Bindless Rendering ──────────────────────
+            renderer.init_bindless_system();
+
+            // ── Initialize Mesh Shader Pipeline ───────────────────
+            renderer.init_mesh_shader_pipeline();
         }
         result
+    }
+
+    /// Initialize the bindless rendering system.
+    ///
+    /// This method:
+    /// 1. Registers the default texture in the texture atlas
+    /// 2. Registers the default sampler in the sampler pool
+    /// 3. Creates the bindless bind group
+    /// 4. Creates a bindless render pipeline if supported
+    /// 5. Falls back to per-material bind groups if bindless is not supported
+    fn init_bindless_system(&mut self) {
+        let caps = self.bindless_capabilities;
+        log::info!("Bindless capabilities: {}", caps.support_level());
+
+        // Register default texture in atlas
+        let default_tex_id = 0u64; // Reserve ID 0 for default texture
+        if let Some(idx) = self.texture_atlas.register(default_tex_id, self.default_texture.view.clone()) {
+            log::info!("Registered default texture at bindless index {}", idx);
+        }
+
+        // Register default sampler in pool
+        let default_sampler_id = 0u64; // Reserve ID 0 for default sampler
+        if let Some(idx) = self.sampler_pool.register(default_sampler_id, self.default_texture.sampler.clone()) {
+            log::info!("Registered default sampler at bindless index {}", idx);
+        }
+
+        // Upload default material data to the bindless material buffer
+        let default_mat = GpuMaterialData {
+            base_color: self.default_material.uniform.base_color,
+            roughness: self.default_material.uniform.roughness_metallic[0],
+            metallic: self.default_material.uniform.roughness_metallic[1],
+            emissive_strength: self.default_material.uniform.emissive,
+            albedo_tex_index: 0, // Default texture at index 0
+            normal_tex_index: u32::MAX,
+            mr_tex_index: u32::MAX,
+            sampler_index: 0,
+            _pad: [0; 2],
+        };
+
+        if let Some(mat_idx) = self.material_data_buffer.push(default_mat) {
+            log::info!("Registered default material at bindless index {}", mat_idx);
+            self.material_data_buffer.upload_all(&self.queue);
+        }
+
+        // Create texture batch uploader
+        self.texture_batch_uploader = Some(TextureBatchUploader::new(&self.device, 16 * 1024 * 1024)); // 16MB staging
+
+        if caps.full_bindless {
+            // Create the bindless bind group
+            self.bindless_bind_group = Some(BindlessBindGroup::new(
+                &self.device,
+                &self.texture_atlas,
+                &self.sampler_pool,
+                &self.material_data_buffer,
+            ));
+
+            // Create bindless render pipeline
+            let vertex_layout = crate::vertex::Vertex::buffer_layout();
+            let shader_source = include_str!("../../../assets/shaders/basic_bindless.wgsl");
+
+            self.bindless_render_pipeline = Some(BindlessPipelineBuilder::create_bindless_pipeline(
+                &self.device,
+                self.config.format,
+                &self.camera_bind_group_layout,
+                &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
+                &self.lighting_bind_group_layout,
+                shader_source,
+                &vertex_layout,
+            ));
+
+            // Create PBR bindless pipeline if shader exists
+            let pbr_shader_source = include_str!("../../../assets/shaders/pbr_bindless.wgsl");
+            // PBR pipeline requires tangent vertex attribute
+            let pbr_vertex_layout_base = crate::vertex::Vertex::buffer_layout();
+            let mut pbr_vertex_attrs = pbr_vertex_layout_base.attributes.to_vec();
+            pbr_vertex_attrs.push(wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x4,
+                offset: std::mem::size_of::<[f32; 10]>() as u64, // After position, normal, uv, color
+                shader_location: 3,
+            });
+            let pbr_vertex_layout = wgpu::VertexBufferLayout {
+                attributes: Box::leak(pbr_vertex_attrs.into_boxed_slice()),
+                ..pbr_vertex_layout_base
+            };
+
+            self.pbr_bindless_pipeline = Some(BindlessPipelineBuilder::create_bindless_pipeline(
+                &self.device,
+                self.config.format,
+                &self.camera_bind_group_layout,
+                &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
+                &self.lighting_bind_group_layout,
+                pbr_shader_source,
+                &pbr_vertex_layout,
+            ));
+
+            // Enable bindless rendering
+            self.bindless_enabled = true;
+            log::info!("Bindless rendering ENABLED with full support");
+        } else {
+            // Fallback path: create per-material bind group builder
+            self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
+            self.bindless_enabled = false;
+            log::info!("Bindless rendering NOT SUPPORTED — using fallback per-material bind groups");
+        }
+    }
+
+    /// Initialize the mesh shader pipeline.
+    ///
+    /// This method:
+    /// 1. Detects mesh shader capabilities
+    /// 2. Creates the mesh shader pipeline if supported
+    /// 3. Sets up fallback path for unsupported devices
+    /// 4. Logs capability information
+    fn init_mesh_shader_pipeline(&mut self) {
+        let caps = self.mesh_shader_capabilities;
+
+        if caps.can_use_mesh_shaders() {
+            log::info!("Mesh shaders SUPPORTED — initializing Nanite-style pipeline");
+
+            // Create mesh shader pipeline
+            self.mesh_shader_pipeline = MeshShaderPipeline::new(
+                &self.device,
+                caps,
+                self.config.format,
+            );
+
+            if self.mesh_shader_pipeline.is_some() {
+                self.mesh_shader_enabled = true;
+                log::info!("Mesh shader pipeline ACTIVE");
+            } else {
+                self.mesh_shader_enabled = false;
+                log::warn!("Mesh shader pipeline creation failed, falling back to traditional rendering");
+            }
+        } else {
+            self.mesh_shader_enabled = false;
+            log::info!(
+                "Mesh shaders NOT SUPPORTED (backend: {:?}) — using traditional rendering path",
+                caps.mesh_shader_supported
+            );
+        }
+    }
+
+    /// Upload LOD meshlet data for mesh shader rendering.
+    ///
+    /// Call this after loading a mesh to prepare it for mesh shader rendering.
+    /// If mesh shaders are not available, this is a no-op.
+    #[cfg(feature = "meshlet")]
+    pub fn upload_lod_meshlet(
+        &mut self,
+        lod_mesh: &crate::meshlet::LodMeshletMesh,
+        positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        texcoords: &[[f32; 2]],
+    ) {
+        if !self.mesh_shader_enabled {
+            return;
+        }
+
+        // Upload LOD meshlet data
+        self.lod_meshlet_buffers = Some(LodMeshletGpuBuffers::upload(
+            &self.device,
+            &self.queue,
+            lod_mesh,
+        ));
+
+        // Upload vertex data for mesh shader
+        self.mesh_shader_vertex_buffers = Some(MeshShaderVertexBuffers::upload(
+            &self.device,
+            &self.queue,
+            positions,
+            normals,
+            texcoords,
+        ));
+
+        // Create bind groups
+        if let (Some(ref pipeline), Some(ref gpu_buffers), Some(ref vertex_bufs)) = (
+            &self.mesh_shader_pipeline,
+            &self.lod_meshlet_buffers,
+            &self.mesh_shader_vertex_buffers,
+        ) {
+            self.task_shader_bind_group = Some(pipeline.create_task_bind_group(
+                &self.device,
+                gpu_buffers,
+            ));
+            self.mesh_shader_bind_group = Some(pipeline.create_mesh_bind_group(
+                &self.device,
+                gpu_buffers,
+                vertex_bufs,
+            ));
+        }
+    }
+
+    /// Dispatch the mesh shader pipeline for the current frame.
+    ///
+    /// This performs:
+    /// 1. Task shader dispatch for meshlet culling and LOD selection
+    /// 2. Mesh shader dispatch for triangle generation
+    /// 3. Updates mesh shader statistics
+    #[cfg(feature = "meshlet")]
+    pub fn dispatch_mesh_shader_pass(&mut self, encoder: &mut wgpu::CommandEncoder, camera: &Camera) {
+        if !self.mesh_shader_enabled {
+            return;
+        }
+
+        let (Some(ref pipeline), Some(ref gpu_buffers), Some(ref vertex_bufs)) = (
+            &self.mesh_shader_pipeline,
+            &self.lod_meshlet_buffers,
+            &self.mesh_shader_vertex_buffers,
+        ) else {
+            return;
+        };
+
+        let (Some(ref task_bg), Some(ref mesh_bg)) = (
+            &self.task_shader_bind_group,
+            &self.mesh_shader_bind_group,
+        ) else {
+            return;
+        };
+
+        // Update task shader uniforms
+        let view_proj = camera.view_projection();
+        let camera_pos = camera.position;
+        let task_uniforms = TaskShaderUniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: [camera_pos.x, camera_pos.y, camera_pos.z],
+            meshlet_count: gpu_buffers.meshlet_count,
+            lod_count: gpu_buffers.lod_count,
+            screen_width: self.config.width as f32,
+            screen_height: self.config.height as f32,
+            lod_thresholds: [1000.0, 500.0, 250.0, 100.0], // Example thresholds
+            _pad: [0.0; 2],
+        };
+        pipeline.update_task_uniforms(&self.queue, &task_uniforms);
+
+        // Dispatch mesh shader pipeline
+        pipeline.dispatch(encoder, gpu_buffers, vertex_bufs, task_bg, mesh_bg);
+
+        // Update stats (placeholder - real stats would come from GPU queries)
+        self.mesh_shader_stats.total_meshlets = gpu_buffers.meshlet_count;
+        // visible_meshlets and other stats would be read back from GPU
     }
 
     /// Handle window resize — reconfigure surface and depth buffer.
@@ -818,6 +1243,37 @@ impl Renderer {
         if let Some(ssgi) = self.ssgi_pass.as_mut() {
             ssgi.resize(&self.device, width, height);
         }
+        // Resize Hi-Z texture to match new render resolution.
+        if let Some(ref mut hiz) = self.hiz_texture {
+            hiz.resize(&self.device, width, height);
+        }
+        // Rebuild cluster grid for new resolution.
+        #[cfg(feature = "clustered-lighting")]
+        {
+            if let Some(ref mut grid) = self.cluster_grid {
+                grid.screen_width = width;
+                grid.screen_height = height;
+                grid.rebuild_aabbs();
+            }
+            if let Some(ref mut gpu_cluster) = self.gpu_cluster_pass {
+                gpu_cluster.upload_aabbs(
+                    &self.queue,
+                    &self
+                        .cluster_grid
+                        .as_ref()
+                        .map(|g| g.aabbs.as_slice())
+                        .unwrap_or(&[]),
+                );
+                gpu_cluster.update_params(
+                    &self.queue,
+                    256,
+                    0.1,
+                    100.0,
+                    width,
+                    height,
+                );
+            }
+        }
     }
 
     /// Upload instance transform matrices to the GPU instance buffer.
@@ -844,6 +1300,69 @@ impl Renderer {
             use crate::particle::GpuParticleSystem;
             self.gpu_particle_system =
                 Some(GpuParticleSystem::new(&self.device, self.config.format));
+        }
+    }
+
+    /// Dispatch GPU cluster light assignment.
+    ///
+    /// Runs the compute shader that assigns lights to clusters on the GPU.
+    /// Call this once per frame before the main render pass when clustered
+    /// lighting is enabled.
+    ///
+    /// # Arguments
+    /// * `encoder` - Command encoder to record commands into
+    /// * `num_lights` - Number of active lights to assign to clusters
+    /// * `near` - Camera near plane distance
+    /// * `far` - Camera far plane distance
+    /// * `readback` - Whether to read back results to CPU for validation
+    #[cfg(feature = "clustered-lighting")]
+    pub fn dispatch_gpu_cluster_assignment(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        num_lights: u32,
+        near: f32,
+        far: f32,
+        readback: bool,
+    ) {
+        if let (Some(ref mut gpu_cluster), Some(ref grid)) =
+            (self.gpu_cluster_pass.as_mut(), self.cluster_grid.as_ref())
+        {
+            // Upload AABBs if they changed
+            gpu_cluster.upload_aabbs(&self.queue, &grid.aabbs);
+
+            // Update params
+            gpu_cluster.update_params(
+                &self.queue,
+                num_lights,
+                near,
+                far,
+                self.config.width,
+                self.config.height,
+            );
+
+            // Dispatch
+            gpu_cluster.dispatch(
+                &self.device,
+                &self.queue,
+                encoder,
+                &self.light_buffer,
+                num_lights,
+                readback,
+            );
+        }
+    }
+
+    /// Read back GPU cluster assignment results to CPU.
+    ///
+    /// This synchronizes CPU and GPU, blocking until the GPU finishes
+    /// the cluster assignment. Use sparingly (e.g., for debugging or
+    /// validation benchmarks).
+    #[cfg(feature = "clustered-lighting")]
+    pub fn readback_cluster_results(&mut self) {
+        if let (Some(ref mut gpu_cluster), Some(ref mut grid)) =
+            (self.gpu_cluster_pass.as_mut(), self.cluster_grid.as_mut())
+        {
+            gpu_cluster.readback_results(&mut grid.clusters);
         }
     }
 
@@ -1010,6 +1529,473 @@ impl Renderer {
         index
     }
 
+    // ── Bindless Rendering API ────────────────────────────────────
+
+    /// Register a texture in the bindless atlas and return its index.
+    ///
+    /// In bindless mode, all textures are registered in a single global array.
+    /// The returned index is used in shaders to access the texture via
+    /// non-uniform dynamic indexing.
+    ///
+    /// Returns `None` if the atlas is full or bindless is not supported.
+    pub fn register_bindless_texture(&mut self, view: wgpu::TextureView) -> Option<u32> {
+        if !self.bindless_capabilities.texture_binding_array {
+            return None;
+        }
+
+        // Generate a unique texture ID (could be a hash of the texture handle)
+        let texture_id = self.texture_atlas.count() as u64 + 1;
+        let idx = self.texture_atlas.register(texture_id, view)?;
+
+        // Rebuild the bindless bind group
+        self.rebuild_bindless_bind_group();
+        Some(idx)
+    }
+
+    /// Unregister a texture from the bindless atlas.
+    ///
+    /// The texture will be removed from the atlas and its slot reused.
+    /// Returns the index that was freed.
+    pub fn unregister_bindless_texture(&mut self, texture_id: u64) -> Option<u32> {
+        if !self.bindless_capabilities.texture_binding_array {
+            return None;
+        }
+
+        // Check if texture is currently in use
+        if self.resource_lifetimes.is_texture_in_use(texture_id) {
+            log::warn!(
+                "Cannot unregister texture {}: still in use by materials",
+                texture_id
+            );
+            return None;
+        }
+
+        let idx = self.texture_atlas.remove(texture_id);
+        if idx.is_some() {
+            self.rebuild_bindless_bind_group();
+        }
+        idx
+    }
+
+    /// Register a sampler in the bindless pool and return its index.
+    pub fn register_bindless_sampler(&mut self, sampler: wgpu::Sampler) -> Option<u32> {
+        if !self.bindless_capabilities.non_uniform_indexing {
+            return None;
+        }
+
+        let sampler_id = self.sampler_pool.count() as u64 + 1;
+        let idx = self.sampler_pool.register(sampler_id, sampler)?;
+        self.rebuild_bindless_bind_group();
+        Some(idx)
+    }
+
+    /// Add a material to the bindless material buffer and return its index.
+    ///
+    /// The material data is uploaded to the GPU storage buffer immediately.
+    /// The returned index is used in shaders to access material parameters
+    /// via non-uniform dynamic indexing.
+    pub fn add_bindless_material(&mut self, mat: GpuMaterialData) -> Option<u32> {
+        let idx = self.material_data_buffer.push(mat)?;
+
+        // Track resource dependencies
+        self.resource_lifetimes.register_material(idx, &mat);
+
+        // Upload the new material data
+        self.material_data_buffer.upload_dirty(&self.queue);
+
+        Some(idx)
+    }
+
+    /// Update a material in the bindless material buffer.
+    pub fn update_bindless_material(&mut self, index: u32, mat: GpuMaterialData) {
+        // Update resource tracking
+        self.resource_lifetimes.unregister_material(index);
+        self.resource_lifetimes.register_material(index, &mat);
+
+        // Update the material data
+        self.material_data_buffer.update(index, mat);
+        self.material_data_buffer.upload_dirty(&self.queue);
+    }
+
+    /// Remove a material from the bindless material buffer.
+    pub fn remove_bindless_material(&mut self, index: u32) {
+        self.resource_lifetimes.unregister_material(index);
+        self.material_data_buffer.remove(index);
+        self.material_data_buffer.upload_dirty(&self.queue);
+    }
+
+    /// Get the bindless material data by index.
+    pub fn get_bindless_material(&self, index: u32) -> Option<&GpuMaterialData> {
+        self.material_data_buffer.get(index)
+    }
+
+    /// Get the bindless texture index for a texture ID.
+    pub fn get_bindless_texture_index(&self, texture_id: u64) -> Option<u32> {
+        self.texture_atlas.index_of(texture_id)
+    }
+
+    /// Get the bindless sampler index for a sampler handle.
+    pub fn get_bindless_sampler_index(&self, sampler_handle: u64) -> Option<u32> {
+        self.sampler_pool.index_of(sampler_handle)
+    }
+
+    /// Check if bindless rendering is enabled.
+    pub fn is_bindless_enabled(&self) -> bool {
+        self.bindless_enabled
+    }
+
+    /// Get bindless capabilities.
+    pub fn bindless_capabilities(&self) -> &BindlessCapabilities {
+        &self.bindless_capabilities
+    }
+
+    /// Rebuild the bindless bind group after textures/samplers have been added/removed.
+    fn rebuild_bindless_bind_group(&mut self) {
+        if !self.bindless_enabled {
+            return;
+        }
+
+        if let Some(ref mut bg) = self.bindless_bind_group {
+            bg.rebuild(
+                &self.device,
+                &self.texture_atlas,
+                &self.sampler_pool,
+                &self.material_data_buffer,
+            );
+        }
+    }
+
+    /// Upload all pending material data to the GPU.
+    ///
+    /// Call this once per frame after all material updates are complete.
+    pub fn upload_material_data(&mut self) {
+        self.material_data_buffer.upload_dirty(&self.queue);
+    }
+
+    // ── End Bindless Rendering API ────────────────────────────────
+
+    /// Render using bindless pipeline.
+    ///
+    /// This method uses the single bindless bind group for all materials and textures,
+    /// eliminating per-material bind group switches. Each draw command references
+    /// materials and textures by index via non-uniform dynamic indexing.
+    ///
+    /// # Arguments
+    /// * `camera` — the camera to render from
+    /// * `objects` — list of (mesh, model_matrix, material_index) tuples
+    /// * `view` — the render target view
+    /// * `encoder` — command encoder to record commands into
+    pub fn render_bindless_pass(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, u32)],
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        self.upload_material_data();
+        // Use bindless pipeline if enabled
+                let pipeline = match &self.bindless_render_pipeline {
+            Some(p) if self.bindless_enabled => p,
+            _ => {
+                log::warn!("Bindless pipeline not available, falling back to legacy render");
+                return;
+            }
+        };
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+        let draw_call_align = self.device.limits().min_uniform_buffer_offset_alignment;
+        let draw_call_aligned_size = (std::mem::size_of::<DrawCallUniform>() as u32)
+            .div_ceil(draw_call_align)
+            * draw_call_align;
+
+        // ── Frustum culling ──
+        let frustum = Frustum::from_view_proj(&camera.view_projection());
+        let total = objects.len();
+        let mut culled_count = 0u32;
+        let mut visible_indices = Vec::with_capacity(total);
+
+        for (i, (_, model, _)) in objects.iter().enumerate() {
+            let (scale, _, translation) = model.to_scale_rotation_translation();
+            let half_extent = scale.abs();
+            let world_aabb = Aabb {
+                min: translation - half_extent,
+                max: translation + half_extent,
+            };
+
+            if frustum.intersects_aabb(&world_aabb) {
+                visible_indices.push(i);
+            } else {
+                culled_count += 1;
+            }
+        }
+
+        // Write uniform data only for visible objects
+        if !visible_indices.is_empty() {
+            let total_bytes = aligned_size * visible_indices.len();
+            let mut data = vec![0u8; total_bytes];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, objects[i].1);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = visible_idx * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+
+            // Upload draw call uniforms (material indices) for visible objects
+            let draw_call_bytes = draw_call_aligned_size as usize * visible_indices.len();
+            let mut draw_call_data = vec![0u8; draw_call_bytes];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let (_, _, material_index) = objects[i];
+                let draw_call = DrawCallUniform::new(material_index);
+                let bytes = bytemuck::bytes_of(&draw_call);
+                let offset = visible_idx * draw_call_aligned_size as usize;
+                draw_call_data[offset..offset + std::mem::size_of::<DrawCallUniform>()]
+                    .copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
+        }
+
+        // Update stats
+        self.stats.total_objects = total as u32;
+        self.stats.rendered_objects = visible_indices.len() as u32;
+        self.stats.culled_objects = culled_count;
+
+        // Upload any pending material data
+        
+        // Advance resource lifetime tracking
+        self.resource_lifetimes.advance_frame();
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bindless 3D Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(pipeline);
+
+            // Set the single bindless bind group (group 1) — no more per-material switches!
+            if let Some(ref bg) = self.bindless_bind_group {
+                pass.set_bind_group(1, &bg.bind_group, &[]);
+            }
+
+            pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let cam_offset = (visible_idx * aligned_size) as u32;
+                let draw_call_offset = (visible_idx as u32 * draw_call_aligned_size as u32);
+
+                // Set camera uniform with dynamic offset
+                pass.set_bind_group(0, &self.camera_bind_group, &[cam_offset]);
+
+                // Set draw call uniform (material index) with dynamic offset
+                // Create a temporary bind group for the draw call buffer
+                let draw_call_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Draw Call Bind Group"),
+                    layout: &self.draw_call_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.draw_call_buffer,
+                            offset: draw_call_offset as u64,
+                            size: std::num::NonZeroU64::new(std::mem::size_of::<DrawCallUniform>() as u64),
+                        }),
+                    }],
+                });
+                pass.set_bind_group(3, &draw_call_bind_group, &[]);
+
+                let (mesh, _, _) = objects[i];
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Render using the PBR bindless pipeline (advanced materials).
+    ///
+    /// This method uses the full Cook-Torrance BRDF with bindless textures.
+    /// Requires meshes with tangent attributes for normal mapping.
+    ///
+    /// # Arguments
+    /// * `camera` — the camera to render from
+    /// * `objects` — list of (mesh, model_matrix, material_index) tuples
+    /// * `view` — the render target view
+    /// * `encoder` — command encoder to record commands into
+    pub fn render_bindless_pbr_pass(
+        &mut self,
+        camera: &Camera,
+        objects: &[(&Mesh, glam::Mat4, u32)],
+        view: &wgpu::TextureView,
+        encoder: &mut wgpu::CommandEncoder,
+    ) {
+        // Use PBR bindless pipeline if available
+                let pipeline = match &self.pbr_bindless_pipeline {
+            Some(p) if self.bindless_enabled => p,
+            _ => {
+                log::warn!("PBR bindless pipeline not available, falling back to basic bindless");
+                return self.render_bindless_pass(camera, objects, view, encoder);
+            }
+        };
+
+        let align = self.uniform_alignment as usize;
+        let uniform_size = std::mem::size_of::<CameraUniform>();
+        let aligned_size = uniform_size.div_ceil(align) * align;
+        let draw_call_align = self.device.limits().min_uniform_buffer_offset_alignment;
+        let draw_call_aligned_size = (std::mem::size_of::<DrawCallUniform>() as u32)
+            .div_ceil(draw_call_align)
+            * draw_call_align;
+
+        // ── Frustum culling ──
+        let frustum = Frustum::from_view_proj(&camera.view_projection());
+        let total = objects.len();
+        let mut culled_count = 0u32;
+        let mut visible_indices = Vec::with_capacity(total);
+
+        for (i, (_, model, _)) in objects.iter().enumerate() {
+            let (scale, _, translation) = model.to_scale_rotation_translation();
+            let half_extent = scale.abs();
+            let world_aabb = Aabb {
+                min: translation - half_extent,
+                max: translation + half_extent,
+            };
+
+            if frustum.intersects_aabb(&world_aabb) {
+                visible_indices.push(i);
+            } else {
+                culled_count += 1;
+            }
+        }
+
+        // Write uniform data only for visible objects
+        if !visible_indices.is_empty() {
+            let total_bytes = aligned_size * visible_indices.len();
+            let mut data = vec![0u8; total_bytes];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let mut uniform = CameraUniform::new();
+                uniform.update(camera, objects[i].1);
+                let bytes = bytemuck::bytes_of(&uniform);
+                let offset = visible_idx * aligned_size;
+                data[offset..offset + uniform_size].copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+
+            // Upload draw call uniforms (material indices) for visible objects
+            let draw_call_bytes = draw_call_aligned_size as usize * visible_indices.len();
+            let mut draw_call_data = vec![0u8; draw_call_bytes];
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let (_, _, material_index) = objects[i];
+                let draw_call = DrawCallUniform::new(material_index);
+                let bytes = bytemuck::bytes_of(&draw_call);
+                let offset = visible_idx * draw_call_aligned_size as usize;
+                draw_call_data[offset..offset + std::mem::size_of::<DrawCallUniform>()]
+                    .copy_from_slice(bytes);
+            }
+            self.queue.write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
+        }
+
+        // Update stats
+        self.stats.total_objects = total as u32;
+        self.stats.rendered_objects = visible_indices.len() as u32;
+        self.stats.culled_objects = culled_count;
+
+        // Upload any pending material data
+        
+        // Advance resource lifetime tracking
+        self.resource_lifetimes.advance_frame();
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Bindless PBR 3D Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.05,
+                            b: 0.08,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(pipeline);
+
+            // Set the single bindless bind group (group 1)
+            if let Some(ref bg) = self.bindless_bind_group {
+                pass.set_bind_group(1, &bg.bind_group, &[]);
+            }
+
+            pass.set_bind_group(2, &self.lighting_bind_group, &[]);
+
+            for (visible_idx, &i) in visible_indices.iter().enumerate() {
+                let cam_offset = (visible_idx * aligned_size) as u32;
+                let draw_call_offset = (visible_idx as u32 * draw_call_aligned_size as u32);
+
+                pass.set_bind_group(0, &self.camera_bind_group, &[cam_offset]);
+
+                // Create draw call bind group for this draw
+                let draw_call_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Draw Call Bind Group (PBR)"),
+                    layout: &self.draw_call_bind_group_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.draw_call_buffer,
+                            offset: draw_call_offset as u64,
+                            size: std::num::NonZeroU64::new(std::mem::size_of::<DrawCallUniform>() as u64),
+                        }),
+                    }],
+                });
+                pass.set_bind_group(3, &draw_call_bind_group, &[]);
+
+                let (mesh, _, _) = objects[i];
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            }
+        }
+    }
+
+    // ── End Bindless Rendering API ────────────────────────────────
+
     /// Create a combined material + texture bind group for a given material and texture.
     ///
     /// The shader expects material uniform (binding 0), texture (binding 1), and sampler (binding 2)
@@ -1123,6 +2109,33 @@ impl Renderer {
         let align = self.uniform_alignment as usize;
         let uniform_size = std::mem::size_of::<CameraUniform>();
         let aligned_size = uniform_size.div_ceil(align) * align;
+
+        // ── GPU Clustered Light Assignment ──
+        #[cfg(feature = "clustered-lighting")]
+        {
+            if let (Some(ref mut gpu_cluster), Some(ref grid)) =
+                (self.gpu_cluster_pass.as_mut(), self.cluster_grid.as_ref())
+            {
+                let num_lights = self.light_uniform.count;
+                gpu_cluster.upload_aabbs(&self.queue, &grid.aabbs);
+                gpu_cluster.update_params(
+                    &self.queue,
+                    num_lights,
+                    self.camera_uniform.view_proj[3][2],
+                    100.0,
+                    self.config.width,
+                    self.config.height,
+                );
+                gpu_cluster.dispatch(
+                    &self.device,
+                    &self.queue,
+                    encoder,
+                    &self.light_buffer,
+                    num_lights,
+                    false,
+                );
+            }
+        }
 
         // ── Frustum culling ──
         let frustum = Frustum::from_view_proj(&camera.view_projection());
@@ -1261,12 +2274,37 @@ impl Renderer {
             self.queue.write_buffer(&self.camera_buffer, 0, &data);
         }
 
-        // ── GPU-driven indirect rendering path ──
+        // ── GPU-driven indirect rendering path with Hi-Z occlusion culling ──
         if self.render_config.gpu_driven_culling {
-            if let (Some(cull_pass), Some(mgr)) = (
+            if let (
+                Some(cull_pass),
+                Some(mgr),
+                Some(hiz_tex),
+                Some(hiz_copy),
+                Some(hiz_build),
+            ) = (
                 self.gpu_cull_pass.as_ref(),
                 self.indirect_draw_manager.as_mut(),
+                self.hiz_texture.as_ref(),
+                self.hiz_copy_pass.as_ref(),
+                self.hiz_build.as_ref(),
             ) {
+                // ── Build Hi-Z pyramid from the previous frame's depth buffer ──
+                // Copy previous frame's depth into Hi-Z mip level 0.
+                hiz_copy.dispatch(
+                    &self.device,
+                    &self.queue,
+                    encoder,
+                    &self.depth_view,
+                    hiz_tex,
+                    self.config.width,
+                    self.config.height,
+                );
+
+                // Build the Hi-Z mip chain (downsample).
+                hiz_build.build_mips(&self.device, &self.queue, encoder, hiz_tex);
+
+                // ── Prepare cull pass ──
                 mgr.clear();
                 for (mesh, model, _, _) in objects.iter() {
                     let (scale, _, translation) = model.to_scale_rotation_translation();
@@ -1280,6 +2318,10 @@ impl Renderer {
                         material_index: 0,
                     });
                 }
+
+                // Reset cull stats before dispatch.
+                mgr.reset_stats(&self.queue, cull_pass);
+
                 let vp = camera.view_projection();
                 mgr.upload_aabbs(&self.queue, cull_pass);
                 mgr.upload_uniforms(
@@ -1288,14 +2330,17 @@ impl Renderer {
                     &vp,
                     self.config.width as f32,
                     self.config.height as f32,
+                    hiz_tex.mip_levels as f32,
                 );
                 mgr.prepare_indirect_buffer(&self.queue, cull_pass);
-                let bg = cull_pass.create_bind_group(&self.device);
+
+                // Create bind group with Hi-Z texture and sampler.
+                let bg = cull_pass.create_bind_group(&self.device, &hiz_tex.view, &hiz_tex.sampler);
                 cull_pass.dispatch(encoder, &bg, mgr.count());
 
                 {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("3D Render Pass (GPU Culled)"),
+                        label: Some("3D Render Pass (GPU Culled + Hi-Z)"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view,
                             resolve_target: None,

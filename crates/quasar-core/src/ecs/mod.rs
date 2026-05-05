@@ -16,6 +16,29 @@
 //! - Each archetype stores components in Structure-of-Arrays (SoA) columns
 //! - Queries iterate over matching archetypes for cache-efficient access
 //!
+//! # Query API (v0.2.0+)
+//!
+//! **Recommended**: Use [`CachedArchetypeQueryState`] for all queries. It provides
+//! zero-allocation, cache-friendly iteration by directly accessing archetype columns.
+//!
+//! ```rust,ignore
+//! use quasar_core::ecs::*;
+//!
+//! // Create once, reuse across frames
+//! let mut query: CachedArchetypeQueryState<(&Position, &Velocity), ()> =
+//!     CachedArchetypeQueryState::new();
+//!
+//! for (entity, (pos, vel)) in query.iter(&world) {
+//!     pos.x += vel.dx * dt;
+//!     pos.y += vel.dy * dt;
+//! }
+//! ```
+//!
+//! **Deprecated**: `world.query::<T>()`, `world.query2::<A, B>()`, `QueryState::iter()`,
+//! and `World::for_each_mut` are deprecated in favor of `CachedArchetypeQueryState`.
+//! They allocate a `Vec` every call and iterate the entire `entity_components` HashMap
+//! with binary search, resulting in ~95% slower performance.
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -34,17 +57,22 @@
 //! world.insert(e, Position { x: 0.0, y: 0.0 });
 //! world.insert(e, Velocity { dx: 1.0, dy: 0.0 });
 //!
-//! // Query for entities with both components
-//! for (e, pos, vel) in world.query2::<Position, Velocity>() {
+//! // Query for entities with both components (recommended way)
+//! let mut query: CachedArchetypeQueryState<(&Position, &Velocity), ()> =
+//!     CachedArchetypeQueryState::new();
+//! for (e, (pos, vel)) in query.iter(&world) {
 //!     println!("Entity {:?}: pos=({}, {}), vel=({}, {})",
 //!              e, pos.x, pos.y, vel.dx, vel.dy);
 //! }
 //!
-//! // Mutable iteration
-//! world.for_each_mut2::<Position, Velocity, _>(|e, pos, vel| {
-//!     pos.x += vel.dx;
-//!     pos.y += vel.dy;
-//! });
+//! // Mutable iteration (recommended way)
+//! let mut query: CachedArchetypeQueryState<&Position, ()> =
+//!     CachedArchetypeQueryState::new();
+//! for (e, pos) in query.iter(&world) {
+//!     if let Some(p) = world.get_mut::<Position>(e) {
+//!         // mutate p
+//!     }
+//! }
 //! ```
 //!
 //! # Entity Lifecycle
@@ -79,24 +107,33 @@ mod query;
 pub mod relation;
 pub mod sparse_set;
 mod system;
+mod system_param;
 mod world;
 
 pub use archetype::{Archetype, ArchetypeGraph, ArchetypeId, ArchetypeSignature, ComponentTicks};
 pub use commands::{Command, Commands, EntitySpawnBuilder};
 pub use component::{Component, Mut};
 pub use entity::Entity;
+// Always re-export parallel types (they're always compiled, feature flag controls behavior).
 pub use parallel::{
-    read_set, system_node_with_access, write_set, AccessMode, ComponentAccess, DeclareAccess,
-    ParallelSchedule, ReadWriteSet, SystemAccess, SystemGraph, SystemNode,
+    read_set, system_node_with_access, write_set, ComponentAccess, ConflictGraph, DeclareAccess,
+    ParallelBatch, ParallelSchedule, ReadWriteSet, SystemAccess, SystemGraph, SystemNode,
 };
 pub use query::{
     CachedArchetypeQueryIter, CachedArchetypeQueryState, FilterAdded, FilterChanged, FilterRemoved,
     FilterWith, FilterWithout, Query, Query2Iter, QueryFilter, QueryIter, QueryIterSingle,
-    QueryState, QueryStateCache, WorldQuery, WorldQueryArchFetch,
+    QueryMutRef, QueryRef, QueryState, QueryStateCache, QueryStateMut, QueryStateReadonly,
+    Res, ResMut, ResMutRef, ResMutState, ResRef, ResState, SystemQuery, SystemQueryMut, WorldQuery,
+    WorldQueryArchFetch,
 };
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
 pub use sparse_set::{SparseSet, SparseSetStorage};
-pub use system::{Schedule, System, SystemStage};
+pub use system::Schedule;
+pub use system::{run_system_with, System, SystemExecutor, SystemStage, FnSystem};
+pub use system_param::{
+    Access, AccessKind, FnSystemWithParams, ParamSet, Read, SystemParam, SystemState, Write,
+    system_fn,
+};
 pub use world::{
     Bundle, Children, EntityBuilder, ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent,
     Prototype, World,

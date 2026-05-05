@@ -200,14 +200,6 @@ fn http_413_payload_too_large() -> String {
     )
 }
 
-/// Generate an HTTP 400 Bad Request response for JSON errors.
-fn http_400_bad_request(detail: &str) -> String {
-    format!(
-        "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n{}",
-        json_error(detail)
-    )
-}
-
 /// Configuration for the lobby server.
 #[derive(Debug, Clone)]
 pub struct LobbyServerConfig {

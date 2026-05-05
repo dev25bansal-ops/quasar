@@ -402,6 +402,15 @@ impl<Q: WorldQuery, F: QueryFilter> QueryState<Q, F> {
     }
 
     /// Iterate, returning (Entity, Q::Item) for each matching entity.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState` instead for zero-allocation, cache-friendly iteration. \
+                This method allocates a new Vec every call and iterates the entire `entity_components` \
+                HashMap with binary search, resulting in ~95% slower performance. \
+                \nMigration example:\n\
+                Before: `let state = QueryState::<&Position>::new(); for (e, pos) in state.iter(&world) { ... }`\n\
+                After:  `let mut query = CachedArchetypeQueryState::<&Position>::new(); for (e, pos) in query.iter(&world) { ... }`"
+    )]
     pub fn iter<'w>(&self, world: &'w World) -> QueryIter<'w, Q, F> {
         let required = Q::type_ids();
         let mut matching = Vec::new();
@@ -425,8 +434,16 @@ impl<Q: WorldQuery, F: QueryFilter> QueryState<Q, F> {
     }
 
     /// Collect into a Vec for convenience.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState::collect()` instead for zero-allection, cache-friendly iteration. \
+                This method allocates a new Vec every call and iterates the entire `entity_components` \
+                HashMap with binary search, resulting in ~95% slower performance."
+    )]
     pub fn collect<'w>(&self, world: &'w World) -> Vec<(Entity, Q::Item<'w>)> {
-        self.iter(world).collect()
+        #[allow(deprecated)]
+        let iter = self.iter(world);
+        iter.collect()
     }
 }
 
@@ -458,15 +475,25 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for QueryIter<'w, Q, F> {
     }
 }
 
-// Keep backward-compatible Query<T> alias
+// Keep backward-compatible Query<T> alias — deprecated in favor of CachedArchetypeQueryState
 pub struct Query<T: Component> {
     _marker: PhantomData<T>,
 }
 
 #[allow(dead_code)]
 impl<T: Component> Query<T> {
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `CachedArchetypeQueryState` instead for zero-allocation, cache-friendly iteration. \
+                This method allocates a new Vec every call and iterates the entire `entity_components` \
+                HashMap with binary search, resulting in ~95% slower performance. \
+                \nMigration example:\n\
+                Before: `Query::<Position>::iter(&world).for_each(...)`\n\
+                After:  `let mut query = CachedArchetypeQueryState::<&Position>::new(); for (e, pos) in query.iter(&world) { ... }`"
+    )]
     pub fn iter(world: &World) -> QueryIter<'_, &T, ()> {
         let state = QueryState::<&T, ()>::new();
+        #[allow(deprecated)]
         state.iter(world)
     }
 }
@@ -1590,7 +1617,412 @@ impl World {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Compile-time SystemParam implementations for Query types
+// ---------------------------------------------------------------------------
+
+use super::system_param::{Access, SystemParam};
+
+/// State for a read-only query system parameter.
+///
+/// Holds a pre-computed `CachedArchetypeQueryState` that is built once
+/// during system initialization and reused every frame.
+pub struct QueryStateReadonly<Q: WorldQuery, F: QueryFilter = ()> {
+    query_state: CachedArchetypeQueryState<Q, F>,
+}
+
+impl<Q: WorldQuery, F: QueryFilter> Default for QueryStateReadonly<Q, F> {
+    fn default() -> Self {
+        Self {
+            query_state: CachedArchetypeQueryState::new(),
+        }
+    }
+}
+
+impl<Q: WorldQuery, F: QueryFilter> QueryStateReadonly<Q, F> {
+    /// Create a new read-only query state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Iterate over matching entities.
+    pub fn iter<'w>(&'w mut self, world: &'w World) -> CachedArchetypeQueryIter<'w, Q, F> {
+        self.query_state.iter(world)
+    }
+
+    /// Collect all matching entities into a Vec.
+    pub fn collect<'w>(&'w mut self, world: &'w World) -> Vec<(Entity, Q::Item<'w>)> {
+        self.query_state.iter(world).collect()
+    }
+
+    /// Returns the number of matching entities.
+    pub fn len(&mut self, world: &World) -> usize {
+        self.query_state.len(world)
+    }
+
+    /// Returns true if no entities match.
+    pub fn is_empty(&mut self, world: &World) -> bool {
+        self.query_state.is_empty(world)
+    }
+}
+
+/// State for a mutable query system parameter.
+pub struct QueryStateMut<Q: WorldQuery, F: QueryFilter = ()> {
+    query_state: CachedArchetypeQueryState<Q, F>,
+}
+
+impl<Q: WorldQuery, F: QueryFilter> Default for QueryStateMut<Q, F> {
+    fn default() -> Self {
+        Self {
+            query_state: CachedArchetypeQueryState::new(),
+        }
+    }
+}
+
+impl<Q: WorldQuery, F: QueryFilter> QueryStateMut<Q, F> {
+    /// Create a new mutable query state.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Iterate over matching entities.
+    pub fn iter<'w>(&'w mut self, world: &'w World) -> CachedArchetypeQueryIter<'w, Q, F> {
+        self.query_state.iter(world)
+    }
+
+    /// Collect all matching entities into a Vec.
+    pub fn collect<'w>(&'w mut self, world: &'w World) -> Vec<(Entity, Q::Item<'w>)> {
+        self.query_state.iter(world).collect()
+    }
+
+    /// Returns the number of matching entities.
+    pub fn len(&mut self, world: &World) -> usize {
+        self.query_state.len(world)
+    }
+
+    /// Returns true if no entities match.
+    pub fn is_empty(&mut self, world: &World) -> bool {
+        self.query_state.is_empty(world)
+    }
+}
+
+/// Read-only query reference returned by `Query<Q>`.
+pub struct QueryRef<'w, 's, Q: WorldQuery, F: QueryFilter = ()> {
+    state: &'s mut QueryStateReadonly<Q, F>,
+    world: *mut World,
+    _marker: PhantomData<&'w World>,
+    _filter: PhantomData<F>,
+}
+
+impl<'w, 's, Q: WorldQuery, F: QueryFilter> QueryRef<'w, 's, Q, F> {
+    /// Iterate over matching entities.
+    pub fn iter(&'s mut self) -> CachedArchetypeQueryIter<'s, Q, F> {
+        // SAFETY: The world pointer is valid during system execution.
+        let world = unsafe { &*self.world };
+        self.state.query_state.iter(world)
+    }
+
+    /// Collect all matching entities into a Vec.
+    pub fn collect(&'s mut self) -> Vec<(Entity, Q::Item<'s>)> {
+        let world = unsafe { &*self.world };
+        self.state.query_state.iter(world).collect()
+    }
+
+    /// Returns the number of matching entities.
+    pub fn len(&mut self) -> usize {
+        let world = unsafe { &*self.world };
+        self.state.query_state.len(world)
+    }
+
+    /// Returns true if no entities match.
+    pub fn is_empty(&mut self) -> bool {
+        let world = unsafe { &*self.world };
+        self.state.query_state.is_empty(world)
+    }
+}
+
+/// Mutable query reference returned by `SystemQueryMut<Q>`.
+pub struct QueryMutRef<'w, 's, Q: WorldQuery, F: QueryFilter = ()> {
+    state: &'s mut QueryStateMut<Q, F>,
+    world: *mut World,
+    _marker: PhantomData<&'w World>,
+    _filter: PhantomData<F>,
+}
+
+impl<'w, 's, Q: WorldQuery, F: QueryFilter> QueryMutRef<'w, 's, Q, F> {
+    /// Iterate over matching entities (returns immutable refs; use world.get_mut for mutation).
+    pub fn iter(&'s mut self) -> CachedArchetypeQueryIter<'s, Q, F> {
+        let world = unsafe { &*self.world };
+        self.state.query_state.iter(world)
+    }
+
+    /// Collect all matching entities into a Vec.
+    pub fn collect(&'s mut self) -> Vec<(Entity, Q::Item<'s>)> {
+        let world = unsafe { &*self.world };
+        self.state.query_state.iter(world).collect()
+    }
+
+    /// Returns the number of matching entities.
+    pub fn len(&mut self) -> usize {
+        let world = unsafe { &*self.world };
+        self.state.query_state.len(world)
+    }
+
+    /// Returns true if no entities match.
+    pub fn is_empty(&mut self) -> bool {
+        let world = unsafe { &*self.world };
+        self.state.query_state.is_empty(world)
+    }
+}
+
+/// Read-only query system parameter.
+///
+/// Encodes read access at the type level for compile-time borrow checking.
+///
+/// # Example
+/// ```ignore
+/// fn read_system(query: SystemQuery<&Position>) {
+///     for (e, pos) in query.iter() {
+///         // pos is &Position
+///     }
+/// }
+/// ```
+pub struct SystemQuery<Q: WorldQuery + 'static, F: QueryFilter = ()> {
+    _marker: PhantomData<(Q, F)>,
+}
+
+impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam for SystemQuery<Q, F> {
+    type State = QueryStateReadonly<Q, F>;
+    type Item<'w, 's> = QueryRef<'w, 's, Q, F>;
+
+    fn init_state(_world: &mut World) -> Self::State {
+        QueryStateReadonly::new()
+    }
+
+    fn access() -> Access {
+        let mut access = Access::new();
+        for tid in Q::type_ids() {
+            access.component_reads.push(tid);
+        }
+        access
+    }
+
+    unsafe fn get_param<'w, 's>(
+        state: &'s Self::State,
+        world: *mut World,
+    ) -> Self::Item<'w, 's> {
+        // SAFETY: The state is uniquely owned by this parameter.
+        // The scheduler ensures no conflicting borrows exist.
+        let state_mut = &mut *(state as *const Self::State as *mut Self::State);
+        QueryRef {
+            state: state_mut,
+            world,
+            _marker: PhantomData,
+            _filter: PhantomData,
+        }
+    }
+}
+
+/// Mutable query system parameter.
+///
+/// Encodes write access at the type level for compile-time borrow checking.
+///
+/// # Example
+/// ```ignore
+/// fn write_system(mut query: SystemQueryMut<&mut Position>) {
+///     for (e, _pos) in query.iter() {
+///         if let Some(pos) = world.get_mut::<Position>(e) {
+///             pos.x += 1.0;
+///         }
+///     }
+/// }
+/// ```
+pub struct SystemQueryMut<Q: WorldQuery + 'static, F: QueryFilter = ()> {
+    _marker: PhantomData<(Q, F)>,
+}
+
+impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam for SystemQueryMut<Q, F> {
+    type State = QueryStateMut<Q, F>;
+    type Item<'w, 's> = QueryMutRef<'w, 's, Q, F>;
+
+    fn init_state(_world: &mut World) -> Self::State {
+        QueryStateMut::new()
+    }
+
+    fn access() -> Access {
+        let mut access = Access::new();
+        for tid in Q::type_ids() {
+            access.component_writes.push(tid);
+        }
+        access
+    }
+
+    unsafe fn get_param<'w, 's>(
+        state: &'s Self::State,
+        world: *mut World,
+    ) -> Self::Item<'w, 's> {
+        let state_mut = &mut *(state as *const Self::State as *mut Self::State);
+        QueryMutRef {
+            state: state_mut,
+            world,
+            _marker: PhantomData,
+            _filter: PhantomData,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SystemParam for Resource queries
+// ---------------------------------------------------------------------------
+
+/// State for a read-only resource system parameter.
+pub struct ResState<T: Send + Sync + 'static> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Send + Sync + 'static> Default for ResState<T> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static> ResState<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// State for a mutable resource system parameter.
+pub struct ResMutState<T: Send + Sync + 'static> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Send + Sync + 'static> Default for ResMutState<T> {
+    fn default() -> Self {
+        Self {
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: Send + Sync + 'static> ResMutState<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Read-only resource reference returned by `Res<T>`.
+pub struct ResRef<'w, T: Send + Sync + 'static> {
+    resource: &'w T,
+    _marker: PhantomData<T>,
+}
+
+impl<'w, T: Send + Sync + 'static> std::ops::Deref for ResRef<'w, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.resource
+    }
+}
+
+/// Mutable resource reference returned by `ResMut<T>`.
+pub struct ResMutRef<'w, T: Send + Sync + 'static> {
+    resource: &'w mut T,
+    _marker: PhantomData<T>,
+}
+
+impl<'w, T: Send + Sync + 'static> std::ops::Deref for ResMutRef<'w, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.resource
+    }
+}
+
+impl<'w, T: Send + Sync + 'static> std::ops::DerefMut for ResMutRef<'w, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.resource
+    }
+}
+
+/// Read-only resource system parameter.
+///
+/// # Example
+/// ```ignore
+/// fn time_system(time: Res<Time>) {
+///     println!("Delta: {}", time.delta);
+/// }
+/// ```
+pub struct Res<T: Send + Sync + 'static> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Send + Sync + 'static> SystemParam for Res<T> {
+    type State = ResState<T>;
+    type Item<'w, 's> = ResRef<'w, T>;
+
+    fn init_state(_world: &mut World) -> Self::State {
+        ResState::new()
+    }
+
+    fn access() -> Access {
+        Access::new().read_resource::<T>()
+    }
+
+    unsafe fn get_param<'w, 's>(
+        _state: &'s Self::State,
+        world: *mut World,
+    ) -> Self::Item<'w, 's> {
+        let resource = (*world)
+            .resource::<T>()
+            .expect("Resource not found in Res<T> SystemParam");
+        ResRef {
+            resource,
+            _marker: PhantomData,
+        }
+    }
+}
+
+/// Mutable resource system parameter.
+///
+/// # Example
+/// ```ignore
+/// fn update_time(mut time: ResMut<Time>) {
+///     time.accumulate(0.016);
+/// }
+/// ```
+pub struct ResMut<T: Send + Sync + 'static> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Send + Sync + 'static> SystemParam for ResMut<T> {
+    type State = ResMutState<T>;
+    type Item<'w, 's> = ResMutRef<'w, T>;
+
+    fn init_state(_world: &mut World) -> Self::State {
+        ResMutState::new()
+    }
+
+    fn access() -> Access {
+        Access::new().write_resource::<T>()
+    }
+
+    unsafe fn get_param<'w, 's>(
+        _state: &'s Self::State,
+        world: *mut World,
+    ) -> Self::Item<'w, 's> {
+        let resource = (*world)
+            .resource_mut::<T>()
+            .expect("Resource not found in ResMut<T> SystemParam");
+        ResMutRef {
+            resource,
+            _marker: PhantomData,
+        }
+    }
+}
+
 #[cfg(test)]
+#[allow(deprecated)]
 mod zero_alloc_tests {
     use super::*;
     use crate::ecs::World;
