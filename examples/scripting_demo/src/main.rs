@@ -72,19 +72,15 @@ fn main() {
         // Manual reload on R key
         if reload_key {
             if let Some(scripting) = world.resource_mut::<ScriptingResource>() {
-                match scripting
-                    .engine
-                    .exec_file("examples/scripting_demo/scripts/demo.lua")
-                {
-                    Ok(()) => log::info!("Script reloaded manually"),
-                    Err(e) => log::error!("Failed to reload script: {}", e),
-                }
+                // Just check for hot-reload instead of exec_file
+                let _ = scripting.engine.check_hot_reload();
+                log::info!("Script reload requested (check console)");
             }
         }
 
         // Auto hot-reload
         if let Some(scripting) = world.resource_mut::<ScriptingResource>() {
-            let reloaded = scripting.engine.hot_reload();
+            let reloaded = scripting.engine.check_hot_reload();
             if !reloaded.is_empty() {
                 log::info!("Hot-reloaded {} script(s)", reloaded.len());
             }

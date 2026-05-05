@@ -11,7 +11,7 @@ use quasar_core::ecs::{Entity, System, World};
 use quasar_core::Time;
 use quasar_math::Transform;
 use quasar_window::Input;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use crate::bridge;
 use crate::component_registry::{self, ComponentRegistry};
@@ -20,7 +20,7 @@ use crate::{ScriptComponent, ScriptEngine};
 
 /// Resource wrapper so the scripting engine lives in the ECS as a global resource.
 pub struct ScriptingResource {
-    pub engine: ScriptEngine,
+    pub engine: Arc<ScriptEngine>,
     /// Registry of component types accessible from Lua.
     pub component_registry: ComponentRegistry,
     /// Lua hot-reload system for advanced script reloading with state preservation
@@ -49,11 +49,10 @@ impl ScriptingResource {
                 .and_then(|t| lua.create_registry_value(t).ok())
         });
 
-        // Initialize hot-reload system (development mode by default)
         let hot_reload_system = Self::init_hot_reload_system();
 
         Self {
-            engine,
+            engine: Arc::new(engine),
             component_registry: component_registry::default_registry(),
             hot_reload_system,
             entity_scripts_key,
@@ -88,8 +87,9 @@ impl ScriptingResource {
 
     pub fn fallback() -> Self {
         let engine = ScriptEngine::new_fallback();
+
         Self {
-            engine,
+            engine: Arc::new(engine),
             component_registry: component_registry::default_registry(),
             hot_reload_system: None,
             entity_scripts_key: None,
@@ -600,35 +600,40 @@ impl ScriptingSystem {
     /// is called if present.
 /// Run entity scripts — restructured to avoid borrow conflicts.
 fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
-    // Phase 1: Collect script data and registry key reference
+    // Phase 1: Collect script data
     let scripts: Vec<(u32, String, bool)> = world
         .query::<ScriptComponent>()
         .into_iter()
-        .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded.load(Ordering::Relaxed)))
+        .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
         .collect();
 
     if scripts.is_empty() {
         return;
     }
 
-    // Get registry key by reference (no clone needed)
-    let Some(resource) = world.resource::<ScriptingResource>() else {
-        return;
+    // Phase 2: Get registry key (scoped to drop resource borrow)
+    let reg_key_opt = {
+        let Some(resource) = world.resource::<ScriptingResource>() else {
+            return;
+        };
+        resource.entity_scripts_key.as_ref().map(|k| k.clone())
     };
-    let changed_paths = resource.engine.check_hot_reload();
-    let registry_key_ref = resource.entity_scripts_key.as_ref();
     
+    // Resource borrow is dropped here
+
     // Get the entity table if registry key exists
-    let Some(reg_key) = registry_key_ref else {
+    let Some(reg_key) = reg_key_opt else {
         return;
     };
     
-    let Ok(entity_table_result) = lua.registry_value::<LuaTable>(reg_key) else {
+    let Ok(entity_table_result) = lua.registry_value::<LuaTable>(&reg_key) else {
         return;
     };
     let entity_table: LuaTable = entity_table_result;
 
-    // Phase 2: Process reloads and initial loads
+    // Phase 3: Process scripts and collect which ones need marking as loaded
+    let mut loaded_indices: Vec<u32> = Vec::new();
+    
     for (eid, path, loaded) in &scripts {
         if !loaded {
             // Try to load the script
@@ -641,8 +646,7 @@ fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
                         let _ = init_fn.call::<()>(*eid);
                     }
                     let _ = entity_table.set(*eid, behaviour);
-                    // Note: We can't mark as loaded here due to borrow rules
-                    // The loaded flag will be set on next iteration
+                    loaded_indices.push(*eid);
                 }
             }
         }
@@ -658,12 +662,15 @@ fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
     // Lua guard drops here when entity_table goes out of scope
     drop(entity_table);
 
-    // Note: We skip marking entities as loaded due to borrow checker limitations.
-    // Scripts will re-initialize on each run, which is wasteful but functional.
-    // A proper fix would require restructuring the scripting system architecture.
+    // Phase 4: Mark entities as loaded (world is now exclusively borrowed)
+    for entity_index in &loaded_indices {
+        if let Some(sc) = world.get_mut::<ScriptComponent>(Entity::from_raw(*entity_index, 0)) {
+            sc.loaded = true;
+        }
+    }
 }
 
-    /// Call `on_destroy(entity_id)` for entities that are about to be despawned.
+/// Call `on_destroy(entity_id)` for entities that are about to be despawned.
     ///
     /// Should be called before the entity is actually removed from the world.
     fn call_on_destroy(lua: &Lua, world: &World, entity_index: u32) {
@@ -959,10 +966,10 @@ impl System for ScriptingSystem {
                         }
                         _ => {}
                     }
-                }
-            }
+        }
+        }
 
-            let _reloaded = resource.engine.hot_reload();
+        let _reloaded = resource.engine.check_hot_reload();
 
             if resource
                 .engine
@@ -989,12 +996,14 @@ impl System for ScriptingSystem {
             let Some(resource) = world.resource::<ScriptingResource>() else {
                 return;
             };
-            // Get Lua state
-            let Ok(lua) = resource.engine.lua() else {
+            // Get Lua state - clone Arc to avoid holding borrow
+            let engine = resource.engine.clone();
+            drop(resource); // Release resource borrow
+            
+            let Ok(lua) = engine.lua() else {
                 return;
             };
-            // Run scripts - note: lua holds the lock, world is borrowed mutably
-            // This is safe because run_entity_scripts doesn't access ScriptingResource
+            // Run scripts
             Self::run_entity_scripts(&lua, world, dt);
             // lua guard drops here
         }
@@ -1004,7 +1013,11 @@ impl System for ScriptingSystem {
             let Some(resource) = world.resource::<ScriptingResource>() else {
                 return;
             };
-            let Ok(lua) = resource.engine.lua() else {
+            // Clone Arc to avoid holding borrow
+            let engine = resource.engine.clone();
+            drop(resource); // Release resource borrow
+            
+            let Ok(lua) = engine.lua() else {
                 return;
             };
             let commands = Self::read_commands(&lua);

@@ -556,22 +556,21 @@ impl ScriptEngine {
     }
 }
 
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// ECS component that attaches a Lua script to an entity.
 #[derive(Debug)]
 pub struct ScriptComponent {
     /// Path to the Lua script file.
     pub path: String,
-    /// Whether the script has been loaded initially (using AtomicBool for interior mutability).
-    pub loaded: AtomicBool,
+    /// Whether the script has been loaded initially.
+    pub loaded: bool,
 }
 
 impl ScriptComponent {
     pub fn new(path: impl Into<String>) -> Self {
         Self {
             path: path.into(),
-            loaded: AtomicBool::new(false),
+            loaded: false,
         }
     }
 }
@@ -580,7 +579,7 @@ impl Clone for ScriptComponent {
     fn clone(&self) -> Self {
         Self {
             path: self.path.clone(),
-            loaded: AtomicBool::new(self.loaded.load(Ordering::Relaxed)),
+            loaded: self.loaded,
         }
     }
 }
