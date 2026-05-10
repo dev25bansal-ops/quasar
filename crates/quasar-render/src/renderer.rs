@@ -336,7 +336,12 @@ impl Renderer {
                 &wgpu::DeviceDescriptor {
                     label: Some("Quasar Device"),
                     required_features,
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: wgpu::Limits {
+                        max_sampled_textures_per_shader_stage: 1024,
+                        max_samplers_per_shader_stage: 1024,
+                        max_storage_textures_per_shader_stage: 8,
+                        ..wgpu::Limits::default()
+                    },
                     memory_hints: Default::default(),
                 },
                 None,
@@ -1021,57 +1026,60 @@ impl Renderer {
         // Create texture batch uploader
         self.texture_batch_uploader = Some(TextureBatchUploader::new(&self.device, 16 * 1024 * 1024)); // 16MB staging
 
-        if caps.full_bindless {
-            // Create the bindless bind group
-            self.bindless_bind_group = Some(BindlessBindGroup::new(
-                &self.device,
-                &self.texture_atlas,
-                &self.sampler_pool,
-                &self.material_data_buffer,
-            ));
+        let bindless_env = std::env::var("QUASAR_BINDLESS").unwrap_or_default();
+        let use_bindless = caps.full_bindless && bindless_env == "1";
+        if use_bindless {
+            log::info!("Creating bindless bind group...");
+            let bindless_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                BindlessBindGroup::new(
+                    &self.device,
+                    &self.texture_atlas,
+                    &self.sampler_pool,
+                    &self.material_data_buffer,
+                )
+            }));
 
-            // Create bindless render pipeline
-            let vertex_layout = crate::vertex::Vertex::buffer_layout();
-            let shader_source = include_str!("../../../assets/shaders/basic_bindless.wgsl");
+            match bindless_result {
+                Ok(bg) => {
+                    self.bindless_bind_group = Some(bg);
+                    log::info!("Bindless bind group created OK");
 
-            self.bindless_render_pipeline = Some(BindlessPipelineBuilder::create_bindless_pipeline(
-                &self.device,
-                self.config.format,
-                &self.camera_bind_group_layout,
-                &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
-                &self.lighting_bind_group_layout,
-                shader_source,
-                &vertex_layout,
-            ));
+                    let vertex_layout = crate::vertex::Vertex::buffer_layout();
+                    let shader_source = include_str!("../../../assets/shaders/basic_bindless.wgsl");
 
-            // Create PBR bindless pipeline if shader exists
-            let pbr_shader_source = include_str!("../../../assets/shaders/pbr_bindless.wgsl");
-            // PBR pipeline requires tangent vertex attribute
-            let pbr_vertex_layout_base = crate::vertex::Vertex::buffer_layout();
-            let mut pbr_vertex_attrs = pbr_vertex_layout_base.attributes.to_vec();
-            pbr_vertex_attrs.push(wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
-                offset: std::mem::size_of::<[f32; 10]>() as u64, // After position, normal, uv, color
-                shader_location: 3,
-            });
-            let pbr_vertex_layout = wgpu::VertexBufferLayout {
-                attributes: Box::leak(pbr_vertex_attrs.into_boxed_slice()),
-                ..pbr_vertex_layout_base
-            };
+                    log::info!("Creating bindless render pipeline...");
+                    let pipeline_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        BindlessPipelineBuilder::create_bindless_pipeline(
+                            &self.device,
+                            self.config.format,
+                            &self.camera_bind_group_layout,
+                            &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
+                            &self.lighting_bind_group_layout,
+                            shader_source,
+                            &vertex_layout,
+                        )
+                    }));
 
-            self.pbr_bindless_pipeline = Some(BindlessPipelineBuilder::create_bindless_pipeline(
-                &self.device,
-                self.config.format,
-                &self.camera_bind_group_layout,
-                &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
-                &self.lighting_bind_group_layout,
-                pbr_shader_source,
-                &pbr_vertex_layout,
-            ));
-
-            // Enable bindless rendering
-            self.bindless_enabled = true;
-            log::info!("Bindless rendering ENABLED with full support");
+                    match pipeline_result {
+                        Ok(pipeline) => {
+                            self.bindless_render_pipeline = Some(pipeline);
+                            log::info!("Bindless render pipeline created OK");
+                            self.bindless_enabled = true;
+                            log::info!("Bindless rendering ENABLED with full support");
+                        }
+                        Err(_) => {
+                            log::warn!("Bindless render pipeline creation panicked, falling back to per-material bind groups");
+                            self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
+                            self.bindless_enabled = false;
+                        }
+                    }
+                }
+                Err(_) => {
+                    log::warn!("Bindless bind group creation panicked, falling back to per-material bind groups");
+                    self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
+                    self.bindless_enabled = false;
+                }
+            }
         } else {
             // Fallback path: create per-material bind group builder
             self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
@@ -1091,21 +1099,26 @@ impl Renderer {
         let caps = self.mesh_shader_capabilities;
 
         if caps.can_use_mesh_shaders() {
-            log::info!("Mesh shaders SUPPORTED — initializing Nanite-style pipeline");
+            log::info!("Mesh shaders SUPPORTED — attempting Nanite-style pipeline init");
 
-            // Create mesh shader pipeline
-            self.mesh_shader_pipeline = MeshShaderPipeline::new(
-                &self.device,
-                caps,
-                self.config.format,
-            );
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                MeshShaderPipeline::new(&self.device, caps, self.config.format)
+            }));
 
-            if self.mesh_shader_pipeline.is_some() {
-                self.mesh_shader_enabled = true;
-                log::info!("Mesh shader pipeline ACTIVE");
-            } else {
-                self.mesh_shader_enabled = false;
-                log::warn!("Mesh shader pipeline creation failed, falling back to traditional rendering");
+            match result {
+                Ok(Some(pipeline)) => {
+                    self.mesh_shader_pipeline = Some(pipeline);
+                    self.mesh_shader_enabled = true;
+                    log::info!("Mesh shader pipeline ACTIVE");
+                }
+                Ok(None) => {
+                    self.mesh_shader_enabled = false;
+                    log::warn!("Mesh shader pipeline creation returned None, falling back");
+                }
+                Err(_) => {
+                    self.mesh_shader_enabled = false;
+                    log::warn!("Mesh shader pipeline creation panicked, falling back to traditional rendering");
+                }
             }
         } else {
             self.mesh_shader_enabled = false;
@@ -1203,8 +1216,9 @@ impl Renderer {
             lod_count: gpu_buffers.lod_count,
             screen_width: self.config.width as f32,
             screen_height: self.config.height as f32,
-            lod_thresholds: [1000.0, 500.0, 250.0, 100.0], // Example thresholds
-            _pad: [0.0; 2],
+            _pad0: [0.0],
+            lod_thresholds: [1000.0, 500.0, 250.0, 100.0],
+            _pad: [0.0; 10],
         };
         pipeline.update_task_uniforms(&self.queue, &task_uniforms);
 
@@ -2391,32 +2405,33 @@ impl Renderer {
         }
 
         type BatchKey = (usize, usize, usize);
-        #[allow(dead_code)]
+
         struct Batch {
-            mesh: &'static Mesh,
+            mesh_idx: usize,
+            mat_bg_idx: Option<usize>,
+            tex_idx: usize,
             indices: Vec<usize>,
-            material: Option<&'static wgpu::BindGroup>,
-            texture: &'static wgpu::BindGroup,
+            materials: Vec<glam::Mat4>,
         }
 
         let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
 
         for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
-            let mesh_key = *mesh as *const Mesh as usize;
+            let mesh_key = i;
             let mat_key = mat_bg
-                .map(|bg| bg as *const wgpu::BindGroup as usize)
+                .map(|_| i)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
             let entry = batches
                 .entry((mesh_key, mat_key, tex_key))
                 .or_insert_with(|| {
-                    let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
                     Batch {
-                        mesh: unsafe { &*(*mesh as *const Mesh) },
+                        mesh_idx: i,
+                        mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
+                        tex_idx: tex_index.unwrap_or(0) as usize,
                         indices: Vec::new(),
-                        material: mat_bg.map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
-                        texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
+                        materials: Vec::new(),
                     }
                 });
             entry.indices.push(i);
@@ -2455,15 +2470,20 @@ impl Renderer {
             pass.set_bind_group(2, &self.lighting_bind_group, &[]);
 
             for batch in batches.values() {
-                // Use the combined material + texture bind group
-                pass.set_bind_group(1, &self.default_material_texture_bind_group, &[]);
-                pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
-                pass.set_index_buffer(batch.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                let (mesh, _, mat_bg, _) = &objects[batch.mesh_idx];
+                let material_bg = batch
+                    .mat_bg_idx
+                    .and_then(|idx| objects[idx].2)
+                    .unwrap_or(&self.default_material_texture_bind_group);
+                let texture_bg = self.get_texture_bind_group(batch.tex_idx as u32);
+                pass.set_bind_group(1, material_bg, &[]);
+                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
                 for &idx in &batch.indices {
                     let dyn_offset = (idx * aligned_size) as u32;
                     pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
-                    pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                 }
             }
         }
@@ -2698,33 +2718,29 @@ impl Renderer {
 
         type BatchKey = (usize, usize, usize);
         struct Batch {
-            mesh: *const Mesh,
+            mesh_idx: usize,
+            mat_bg_idx: Option<usize>,
+            tex_idx: usize,
             materials: Vec<glam::Mat4>,
-            material: Option<*const wgpu::BindGroup>,
-            texture: *const wgpu::BindGroup,
         }
 
         let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
 
-        for (mesh, model, mat_bg, tex_index) in objects.iter() {
-            let mesh_key = *mesh as *const Mesh as usize;
+        for (i, (mesh, model, mat_bg, tex_index)) in objects.iter().enumerate() {
+            let mesh_key = i;
             let mat_key = mat_bg
-                .map(|bg| bg as *const wgpu::BindGroup as usize)
+                .map(|_| i)
                 .unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
             let entry = batches
                 .entry((mesh_key, mat_key, tex_key))
                 .or_insert_with(|| {
-                    let texture_bg: *const wgpu::BindGroup =
-                        self.get_texture_bind_group(tex_index.unwrap_or(0));
-                    let mat_ptr: Option<*const wgpu::BindGroup> =
-                        mat_bg.map(|bg| bg as *const wgpu::BindGroup);
                     Batch {
-                        mesh: *mesh as *const Mesh,
+                        mesh_idx: i,
+                        mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
+                        tex_idx: tex_index.unwrap_or(0) as usize,
                         materials: Vec::new(),
-                        material: mat_ptr,
-                        texture: texture_bg,
                     }
                 });
             entry.materials.push(*model);
@@ -2763,14 +2779,17 @@ impl Renderer {
             render_pass.set_bind_group(4, &self.instance_bind_group, &[]);
 
             for batch in batches.values() {
+                let (mesh, _, mat_bg, _) = &objects[batch.mesh_idx];
                 let material_bg = batch
-                    .material
-                    .unwrap_or(&self.default_material.bind_group as *const wgpu::BindGroup);
-                render_pass.set_bind_group(1, unsafe { &*material_bg }, &[]);
-                render_pass.set_bind_group(3, unsafe { &*batch.texture }, &[]);
-                render_pass.set_vertex_buffer(0, unsafe { &(*batch.mesh).vertex_buffer }.slice(..));
+                    .mat_bg_idx
+                    .and_then(|idx| objects[idx].2)
+                    .unwrap_or(&self.default_material.bind_group);
+                let texture_bg = self.get_texture_bind_group(batch.tex_idx as u32);
+                render_pass.set_bind_group(1, material_bg, &[]);
+                render_pass.set_bind_group(3, texture_bg, &[]);
+                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(
-                    unsafe { &(*batch.mesh).index_buffer }.slice(..),
+                    mesh.index_buffer.slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
 
@@ -2784,7 +2803,7 @@ impl Renderer {
                         .write_buffer(&self.instance_buffer, 0, &matrix_bytes);
 
                     render_pass.draw_indexed(
-                        0..unsafe { (*batch.mesh).index_count },
+                        0..mesh.index_count,
                         0,
                         0..batch.materials.len() as u32,
                     );
@@ -2894,58 +2913,59 @@ impl Renderer {
 
                 type BatchKey = (usize, usize, usize);
                 struct Batch {
-                    mesh: &'static Mesh,
+                    mesh_idx: usize,
+                    mat_bg_idx: Option<usize>,
+                    tex_idx: usize,
                     indices: Vec<usize>,
-                    material: Option<&'static wgpu::BindGroup>,
-                    texture: &'static wgpu::BindGroup,
                 }
 
                 let mut batches: HashMap<BatchKey, Batch> = HashMap::new();
 
-                // Only batch visible objects
                 for &visible_idx in &visible_indices {
-                    let (mesh, _, mat_bg, tex_index) = objects[visible_idx];
-                    let mesh_key = mesh as *const Mesh as usize;
+                    let (_, _, mat_bg, tex_index) = objects[visible_idx];
+                    let mesh_key = visible_idx;
                     let mat_key = mat_bg
-                        .map(|bg| bg as *const wgpu::BindGroup as usize)
+                        .map(|_| visible_idx)
                         .unwrap_or(usize::MAX);
                     let tex_key = tex_index.unwrap_or(0) as usize;
 
                     let entry = batches
                         .entry((mesh_key, mat_key, tex_key))
                         .or_insert_with(|| {
-                            let texture_bg = self.get_texture_bind_group(tex_index.unwrap_or(0));
                             Batch {
-                                mesh: unsafe { &*(mesh as *const Mesh) },
+                                mesh_idx: visible_idx,
+                                mat_bg_idx: if mat_bg.is_some() { Some(visible_idx) } else { None },
+                                tex_idx: tex_index.unwrap_or(0) as usize,
                                 indices: Vec::new(),
-                                material: mat_bg
-                                    .map(|bg| unsafe { &*(bg as *const wgpu::BindGroup) }),
-                                texture: unsafe { &*(texture_bg as *const wgpu::BindGroup) },
                             }
                         });
                     entry.indices.push(visible_idx);
                 }
 
                 for batch in batches.values() {
-                    let material_bg = batch.material.unwrap_or(&self.default_material.bind_group);
+                    let (mesh, _, mat_bg, _) = &objects[batch.mesh_idx];
+                    let material_bg = batch
+                        .mat_bg_idx
+                        .and_then(|idx| objects[idx].2)
+                        .unwrap_or(&self.default_material.bind_group);
+                    let texture_bg = self.get_texture_bind_group(batch.tex_idx as u32);
                     render_pass.set_bind_group(1, material_bg, &[]);
                     render_pass.set_bind_group(2, &self.lighting_bind_group, &[]);
-                    render_pass.set_bind_group(3, batch.texture, &[]);
-                    render_pass.set_vertex_buffer(0, batch.mesh.vertex_buffer.slice(..));
+                    render_pass.set_bind_group(3, texture_bg, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(
-                        batch.mesh.index_buffer.slice(..),
+                        mesh.index_buffer.slice(..),
                         wgpu::IndexFormat::Uint32,
                     );
 
                     for &orig_idx in &batch.indices {
-                        // Find position within visible_indices for uniform offset
                         let visible_pos = visible_indices
                             .iter()
                             .position(|&v| v == orig_idx)
                             .unwrap_or(0);
                         let dyn_offset = (visible_pos * aligned_size) as u32;
                         render_pass.set_bind_group(0, &self.camera_bind_group, &[dyn_offset]);
-                        render_pass.draw_indexed(0..batch.mesh.index_count, 0, 0..1);
+                        render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
                 }
             } else {

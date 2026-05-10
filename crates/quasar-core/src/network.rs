@@ -443,32 +443,18 @@ impl EntitySnapshot {
     /// - 3: frame (u64)
     pub fn component_hashes(&self) -> [u64; MAX_COMPONENT_SLOTS] {
         let mut hashes = [0u64; MAX_COMPONENT_SLOTS];
+
         // Hash position (slot 0)
-        let pos_bytes = unsafe {
-            std::slice::from_raw_parts(
-                self.position.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 3]>(),
-            )
-        };
-        hashes[0] = hash_bytes(pos_bytes);
+        let pos_bytes: Vec<u8> = self.position.iter().flat_map(|f| f.to_le_bytes()).collect();
+        hashes[0] = hash_bytes(&pos_bytes);
 
         // Hash rotation (slot 1)
-        let rot_bytes = unsafe {
-            std::slice::from_raw_parts(
-                self.rotation.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 4]>(),
-            )
-        };
-        hashes[1] = hash_bytes(rot_bytes);
+        let rot_bytes: Vec<u8> = self.rotation.iter().flat_map(|f| f.to_le_bytes()).collect();
+        hashes[1] = hash_bytes(&rot_bytes);
 
         // Hash scale (slot 2)
-        let scale_bytes = unsafe {
-            std::slice::from_raw_parts(
-                self.scale.as_ptr() as *const u8,
-                std::mem::size_of::<[f32; 3]>(),
-            )
-        };
-        hashes[2] = hash_bytes(scale_bytes);
+        let scale_bytes: Vec<u8> = self.scale.iter().flat_map(|f| f.to_le_bytes()).collect();
+        hashes[2] = hash_bytes(&scale_bytes);
 
         // Hash frame (slot 3)
         hashes[3] = self.frame;
@@ -1297,29 +1283,26 @@ impl DeltaCompressor {
         let base = self.baselines.get(&delta.entity_id);
         let mut offset = 0usize;
 
-        let read_f32 = |d: &[u8], o: &mut usize| -> f32 {
+        let read_f32 = |d: &[u8], o: &mut usize| -> Option<f32> {
+            if *o + 4 > d.len() { return None; }
             let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
             *o += 4;
-            f32::from_le_bytes(bytes)
+            Some(f32::from_le_bytes(bytes))
         };
-        let read_u32 = |d: &[u8], o: &mut usize| -> u32 {
+        let read_u32 = |d: &[u8], o: &mut usize| -> Option<u32> {
+            if *o + 4 > d.len() { return None; }
             let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
             *o += 4;
-            u32::from_le_bytes(bytes)
+            Some(u32::from_le_bytes(bytes))
         };
-        let read_u64 = |d: &[u8], o: &mut usize| -> u64 {
+        let read_u64 = |d: &[u8], o: &mut usize| -> Option<u64> {
+            if *o + 8 > d.len() { return None; }
             let bytes: [u8; 8] = [
-                d[*o],
-                d[*o + 1],
-                d[*o + 2],
-                d[*o + 3],
-                d[*o + 4],
-                d[*o + 5],
-                d[*o + 6],
-                d[*o + 7],
+                d[*o], d[*o + 1], d[*o + 2], d[*o + 3],
+                d[*o + 4], d[*o + 5], d[*o + 6], d[*o + 7],
             ];
             *o += 8;
-            u64::from_le_bytes(bytes)
+            Some(u64::from_le_bytes(bytes))
         };
 
         let default_snap = EntitySnapshot {
@@ -1333,18 +1316,19 @@ impl DeltaCompressor {
 
         let position = if delta.flags & DeltaFlags::POSITION != 0 {
             if base.is_none() {
-                // Full snapshot mode: raw f32s.
-                [
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                ]
+                match (read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset)) {
+                    (Some(x), Some(y), Some(z)) => [x, y, z],
+                    _ => return default_snap,
+                }
             } else {
-                // XOR delta mode.
                 let mut pos = [0.0f32; 3];
                 for (i, p) in pos.iter_mut().enumerate() {
-                    let xor_bits = read_u32(&delta.data, &mut offset);
-                    *p = f32::from_bits(b.position[i].to_bits() ^ xor_bits);
+                    match read_u32(&delta.data, &mut offset) {
+                        Some(xor_bits) => *p = f32::from_bits(b.position[i].to_bits() ^ xor_bits),
+                        None => return default_snap,
+                    }
                 }
                 pos
             }
@@ -1354,17 +1338,20 @@ impl DeltaCompressor {
 
         let rotation = if delta.flags & DeltaFlags::ROTATION != 0 {
             if base.is_none() {
-                [
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                ]
+                match (read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset)) {
+                    (Some(x), Some(y), Some(z), Some(w)) => [x, y, z, w],
+                    _ => return default_snap,
+                }
             } else {
                 let mut rot = [0.0f32; 4];
                 for (i, r) in rot.iter_mut().enumerate() {
-                    let xor_bits = read_u32(&delta.data, &mut offset);
-                    *r = f32::from_bits(b.rotation[i].to_bits() ^ xor_bits);
+                    match read_u32(&delta.data, &mut offset) {
+                        Some(xor_bits) => *r = f32::from_bits(b.rotation[i].to_bits() ^ xor_bits),
+                        None => return default_snap,
+                    }
                 }
                 rot
             }
@@ -1374,16 +1361,19 @@ impl DeltaCompressor {
 
         let scale = if delta.flags & DeltaFlags::SCALE != 0 {
             if base.is_none() {
-                [
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                    read_f32(&delta.data, &mut offset),
-                ]
+                match (read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset),
+                       read_f32(&delta.data, &mut offset)) {
+                    (Some(x), Some(y), Some(z)) => [x, y, z],
+                    _ => return default_snap,
+                }
             } else {
                 let mut s = [0.0f32; 3];
                 for (i, sc) in s.iter_mut().enumerate() {
-                    let xor_bits = read_u32(&delta.data, &mut offset);
-                    *sc = f32::from_bits(b.scale[i].to_bits() ^ xor_bits);
+                    match read_u32(&delta.data, &mut offset) {
+                        Some(xor_bits) => *sc = f32::from_bits(b.scale[i].to_bits() ^ xor_bits),
+                        None => return default_snap,
+                    }
                 }
                 s
             }
@@ -1392,7 +1382,10 @@ impl DeltaCompressor {
         };
 
         let frame = if delta.flags & DeltaFlags::FRAME != 0 {
-            read_u64(&delta.data, &mut offset)
+            match read_u64(&delta.data, &mut offset) {
+                Some(f) => f,
+                None => return default_snap,
+            }
         } else {
             b.frame
         };

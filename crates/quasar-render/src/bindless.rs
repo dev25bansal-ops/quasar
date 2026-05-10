@@ -23,7 +23,7 @@ use wgpu;
 // ── Constants ───────────────────────────────────────────────────
 
 /// Maximum number of textures in the global bindless texture array.
-pub const MAX_BINDLESS_TEXTURES: u32 = 1024;
+pub const MAX_BINDLESS_TEXTURES: u32 = 256;
 
 /// Maximum number of samplers in the global bindless sampler array.
 pub const MAX_BINDLESS_SAMPLERS: u32 = 64;
@@ -731,10 +731,9 @@ impl MaterialDataBuffer {
 /// - Sampler array (binding 1): `binding_array<sampler>`
 /// - Material storage buffer (binding 2): `storage<read>`
 pub struct BindlessBindGroup {
-    /// The combined bindless bind group.
     pub bind_group: wgpu::BindGroup,
-    /// The bind group layout.
     pub bind_group_layout: wgpu::BindGroupLayout,
+    pub draw_call_buffer: wgpu::Buffer,
 }
 
 impl BindlessBindGroup {
@@ -755,41 +754,6 @@ impl BindlessBindGroup {
         pool: &SamplerPool,
         material_buffer: &MaterialDataBuffer,
     ) -> Self {
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("bindless_bind_group_layout"),
-            entries: &[
-                // Texture array (binding 0)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: std::num::NonZeroU32::new(MAX_BINDLESS_TEXTURES),
-                },
-                // Sampler array (binding 1)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: std::num::NonZeroU32::new(MAX_BINDLESS_SAMPLERS),
-                },
-                // Material storage buffer (binding 2)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
         // Collect texture view references
         let view_refs: Vec<&wgpu::TextureView> = atlas.views().iter().collect();
         let sampler_refs: Vec<&wgpu::Sampler> = pool.samplers().iter().collect();
@@ -803,17 +767,82 @@ impl BindlessBindGroup {
             "BindlessBindGroup requires at least one sampler in the pool"
         );
 
+        let tex_count = std::num::NonZeroU32::new(MAX_BINDLESS_TEXTURES);
+        let samp_count = std::num::NonZeroU32::new(MAX_BINDLESS_SAMPLERS);
+
+        let draw_call_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("bindless_draw_call_buffer"),
+            size: 4,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("bindless_bind_group_layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: tex_count,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: samp_count,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(4),
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let padded_views: Vec<&wgpu::TextureView> = view_refs
+            .iter()
+            .cycle()
+            .take(MAX_BINDLESS_TEXTURES as usize)
+            .copied()
+            .collect();
+        let padded_samplers: Vec<&wgpu::Sampler> = sampler_refs
+            .iter()
+            .cycle()
+            .take(MAX_BINDLESS_SAMPLERS as usize)
+            .copied()
+            .collect();
+
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bindless_bind_group"),
             layout: &bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&view_refs),
+                    resource: wgpu::BindingResource::TextureViewArray(&padded_views),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::SamplerArray(&sampler_refs),
+                    resource: wgpu::BindingResource::SamplerArray(&padded_samplers),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -823,12 +852,21 @@ impl BindlessBindGroup {
                         size: None,
                     }),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &draw_call_buffer,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(4),
+                    }),
+                },
             ],
         });
 
         Self {
             bind_group,
             bind_group_layout,
+            draw_call_buffer,
         }
     }
 
@@ -849,17 +887,30 @@ impl BindlessBindGroup {
             return;
         }
 
+        let padded_views: Vec<&wgpu::TextureView> = view_refs
+            .iter()
+            .cycle()
+            .take(MAX_BINDLESS_TEXTURES as usize)
+            .copied()
+            .collect();
+        let padded_samplers: Vec<&wgpu::Sampler> = sampler_refs
+            .iter()
+            .cycle()
+            .take(MAX_BINDLESS_SAMPLERS as usize)
+            .copied()
+            .collect();
+
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("bindless_bind_group"),
             layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureViewArray(&view_refs),
+                    resource: wgpu::BindingResource::TextureViewArray(&padded_views),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::SamplerArray(&sampler_refs),
+                    resource: wgpu::BindingResource::SamplerArray(&padded_samplers),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -867,6 +918,14 @@ impl BindlessBindGroup {
                         buffer: &material_buffer.buffer,
                         offset: 0,
                         size: None,
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.draw_call_buffer,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(4),
                     }),
                 },
             ],
@@ -1209,7 +1268,7 @@ impl TextureBatchUploader {
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("texture_staging_buffer"),
             size: staging_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 

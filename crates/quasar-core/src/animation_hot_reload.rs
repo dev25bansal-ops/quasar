@@ -717,6 +717,10 @@ impl AnimationHotReloadSystem {
         let name_len = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
         pos += 4;
 
+        if name_len > 4096 {
+            return Err(format!("Name too long ({}) in {:?}", name_len, path));
+        }
+
         // Read name
         if pos + name_len > bytes.len() {
             return Err(format!("Truncated name in {:?}", path));
@@ -744,6 +748,10 @@ impl AnimationHotReloadSystem {
         }
         let keyframe_count = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
         pos += 4;
+
+        if keyframe_count > 100_000 {
+            return Err(format!("Too many keyframes ({}) in {:?}", keyframe_count, path));
+        }
 
         // Read keyframes
         let mut keyframes = Vec::with_capacity(keyframe_count);

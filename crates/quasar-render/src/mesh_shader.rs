@@ -40,22 +40,15 @@ pub const MESH_WGSL: &str = include_str!("../../../assets/shaders/mesh.wgsl");
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct TaskShaderUniforms {
-    /// View-projection matrix.
     pub view_proj: [[f32; 4]; 4],
-    /// Camera position in world space.
     pub camera_pos: [f32; 3],
-    /// Total number of meshlets to process.
     pub meshlet_count: u32,
-    /// Number of LOD levels.
     pub lod_count: u32,
-    /// Screen width in pixels.
     pub screen_width: f32,
-    /// Screen height in pixels.
     pub screen_height: f32,
-    /// LOD transition thresholds (one per LOD level, max 4).
+    pub _pad0: [f32; 1],
     pub lod_thresholds: [f32; 4],
-    /// Padding for 256-byte alignment.
-    pub _pad: [f32; 2],
+    pub _pad: [f32; 10],
 }
 
 /// Uniforms for the mesh shader (triangle generation pass).
@@ -306,9 +299,7 @@ impl MeshShaderPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<TaskShaderUniforms>() as u64,
-                        ),
+                        min_binding_size: std::num::NonZeroU64::new(128),
                     },
                     count: None,
                 },
@@ -491,11 +482,7 @@ impl MeshShaderPipeline {
             source: wgpu::ShaderSource::Wgsl(MESH_TASK_WGSL.into()),
         });
 
-        // Preprocess shader to inject workgroup size constant
-        // In production, this would use shader compilation defines
-        let processed_source = MESH_TASK_WGSL
-            .replace("TASK_WORKGROUP_SIZE", &TASK_WORKGROUP_SIZE.to_string())
-            .replace("MESH_WORKGROUP_SIZE", &MESH_WORKGROUP_SIZE.to_string());
+        let processed_source = MESH_TASK_WGSL.to_string();
 
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mesh Task Shader (Processed)"),

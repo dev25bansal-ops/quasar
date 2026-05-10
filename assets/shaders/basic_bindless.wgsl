@@ -71,7 +71,7 @@ var<uniform> camera: CameraUniform;
 // Bindless texture array (1024 textures)
 // Uses TEXTURE_BINDING_ARRAY feature
 @group(1) @binding(0)
-var t_albedo_array: binding_array<texture_2d<f32>, 1024>;
+var t_albedo_array: binding_array<texture_2d<f32>, 256>;
 
 // Bindless sampler array (64 samplers)
 // Uses SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING
@@ -83,9 +83,8 @@ var s_array: binding_array<sampler, 64>;
 @group(1) @binding(2)
 var<storage, read> materials: array<GpuMaterialData, 4096>;
 
-// Draw call material index (set per-draw via push constant or uniform)
-// This tells the shader which material to use for the current draw call
-@group(0) @binding(1)
+// Draw call material index (set per-draw via dynamic offset)
+@group(1) @binding(3)
 var<uniform> draw_call_material_index: u32;
 
 // Lighting

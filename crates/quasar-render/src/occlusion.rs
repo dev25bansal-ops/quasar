@@ -1360,7 +1360,7 @@ struct CopyParams {
 };
 
 @group(0) @binding(0) var t_depth: texture_depth_2d;
-@group(0) @binding(1) var<storage, write> t_hiz: texture_storage_2d<r32float, write>;
+@group(0) @binding(1) var t_hiz: texture_storage_2d<r32float, write>;
 @group(0) @binding(2) var<uniform> params: CopyParams;
 
 @compute @workgroup_size(8, 8)
@@ -1370,7 +1370,7 @@ fn copy_depth_to_hiz(@builtin(global_invocation_id) gid: vec3<u32>) {
     if x >= params.width || y >= params.height {
         return;
     }
-    let d = textureLoad(t_depth, vec2<u32>(x, y));
+    let d = textureLoad(t_depth, vec2<u32>(x, y), 0);
     textureStore(t_hiz, vec2<u32>(x, y), vec4<f32>(d, 0.0, 0.0, 1.0));
 }
 "#;

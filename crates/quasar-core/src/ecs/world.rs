@@ -1101,42 +1101,38 @@ impl World {
                 };
                 let entities: Vec<Entity> = arch.entities.clone();
 
-                // Ensure we have distinct column indices
                 if ca == cb {
                     continue;
                 }
 
-                let (col_a_ptr, col_b_ptr) = {
-                    let (left, right) = if ca < cb {
-                        let (l, r) = arch.columns.split_at_mut(cb);
-                        (&mut l[ca], &mut r[0])
-                    } else {
-                        let (l, r) = arch.columns.split_at_mut(ca);
-                        (&mut r[0], &mut l[cb])
-                    };
-
-                    let Some(col_a) = left.as_any_mut().downcast_mut::<TypedColumn<A>>() else {
+                if ca < cb {
+                    let (left, right) = arch.columns.split_at_mut(cb);
+                    let Some(col_a) = left[ca].as_any_mut().downcast_mut::<TypedColumn<A>>() else {
                         continue;
                     };
-                    let Some(col_b) = right.as_any_mut().downcast_mut::<TypedColumn<B>>() else {
+                    let Some(col_b) = right[0].as_any_mut().downcast_mut::<TypedColumn<B>>() else {
                         continue;
                     };
-
-                    // We need to work with raw data directly after this
-                    (col_a as *mut TypedColumn<A>, col_b as *mut TypedColumn<B>)
-                };
-
-                // SAFETY: We have exclusive access to world, and ca != cb ensures
-                // the two columns are distinct. The pointers are derived from
-                // mutable references that are no longer in scope.
-                let col_a = unsafe { &mut *col_a_ptr };
-                let col_b = unsafe { &mut *col_b_ptr };
-
-                let n = entities.len().min(col_a.data.len()).min(col_b.data.len());
-                for i in 0..n {
-                    col_a.set_changed(i, tick);
-                    col_b.set_changed(i, tick);
-                    f(entities[i], &mut col_a.data[i], &mut col_b.data[i]);
+                    let n = entities.len().min(col_a.data.len()).min(col_b.data.len());
+                    for i in 0..n {
+                        col_a.set_changed(i, tick);
+                        col_b.set_changed(i, tick);
+                        f(entities[i], &mut col_a.data[i], &mut col_b.data[i]);
+                    }
+                } else {
+                    let (left, right) = arch.columns.split_at_mut(ca);
+                    let Some(col_b) = left[cb].as_any_mut().downcast_mut::<TypedColumn<B>>() else {
+                        continue;
+                    };
+                    let Some(col_a) = right[0].as_any_mut().downcast_mut::<TypedColumn<A>>() else {
+                        continue;
+                    };
+                    let n = entities.len().min(col_a.data.len()).min(col_b.data.len());
+                    for i in 0..n {
+                        col_a.set_changed(i, tick);
+                        col_b.set_changed(i, tick);
+                        f(entities[i], &mut col_a.data[i], &mut col_b.data[i]);
+                    }
                 }
             }
         }

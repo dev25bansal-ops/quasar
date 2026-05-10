@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quasar Engine - WebGPU Demo</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: monospace;
+            font-size: 14px;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 4px;
+        }
+        #error {
+            display: none;
+            color: red;
+            padding: 20px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <strong>Quasar Engine - WebGPU Demo</strong><br>
+        Spinning Cube Example<br>
+        <em>WebGPU is required</em>
+    </div>
+    <div id="error"></div>
+    <canvas id="canvas" width="1280" height="720"></canvas>
+    <script type="module">
+        import init from './pkg/web_demo.js';
+        
+        // Check for WebGPU support
+        if (!navigator.gpu) {
+            document.getElementById('error').style.display = 'block';
+            document.getElementById('error').innerHTML = 
+                'WebGPU is not supported in this browser. ' +
+                'Please use Chrome 113+ or Edge 113+ with WebGPU enabled.';
+        } else {
+            // Initialize the WASM module
+            init().catch(error => {
+                console.error('Failed to initialize WASM:', error);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').innerHTML = 
+                    'Failed to initialize: ' + error.message;
+            });
+        }
+    </script>
+</body>
+</html>

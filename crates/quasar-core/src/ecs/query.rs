@@ -10,7 +10,9 @@ use super::component::Component;
 use super::entity::Entity;
 use super::World;
 use std::any::TypeId;
+use std::cell::UnsafeCell;
 use std::marker::PhantomData;
+use std::ptr::NonNull;
 
 // ---------------------------------------------------------------------------
 // WorldQuery trait — items that can be fetched from the World
@@ -1199,8 +1201,6 @@ impl<'a, T: Component> Drop for Mut<'a, T> {
 // CachedQueryState — amortized archetype matching
 // ---------------------------------------------------------------------------
 
-use std::cell::UnsafeCell;
-
 /// Cached query state that avoids re-matching archetypes every frame.
 /// Stores the matching archetype IDs and only re-checks when the
 /// archetype graph generation changes.
@@ -1628,150 +1628,155 @@ use super::system_param::{Access, SystemParam};
 /// Holds a pre-computed `CachedArchetypeQueryState` that is built once
 /// during system initialization and reused every frame.
 pub struct QueryStateReadonly<Q: WorldQuery, F: QueryFilter = ()> {
-    query_state: CachedArchetypeQueryState<Q, F>,
+    query_state: UnsafeCell<CachedArchetypeQueryState<Q, F>>,
 }
+
+unsafe impl<Q: WorldQuery + Send, F: QueryFilter + Send> Send for QueryStateReadonly<Q, F> {}
+unsafe impl<Q: WorldQuery + Sync, F: QueryFilter + Sync> Sync for QueryStateReadonly<Q, F> {}
 
 impl<Q: WorldQuery, F: QueryFilter> Default for QueryStateReadonly<Q, F> {
     fn default() -> Self {
         Self {
-            query_state: CachedArchetypeQueryState::new(),
+            query_state: UnsafeCell::new(CachedArchetypeQueryState::new()),
         }
     }
 }
 
 impl<Q: WorldQuery, F: QueryFilter> QueryStateReadonly<Q, F> {
-    /// Create a new read-only query state.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Iterate over matching entities.
     pub fn iter<'w>(&'w mut self, world: &'w World) -> CachedArchetypeQueryIter<'w, Q, F> {
-        self.query_state.iter(world)
+        self.query_state.get_mut().iter(world)
     }
 
-    /// Collect all matching entities into a Vec.
     pub fn collect<'w>(&'w mut self, world: &'w World) -> Vec<(Entity, Q::Item<'w>)> {
-        self.query_state.iter(world).collect()
+        self.query_state.get_mut().iter(world).collect()
     }
 
-    /// Returns the number of matching entities.
     pub fn len(&mut self, world: &World) -> usize {
-        self.query_state.len(world)
+        self.query_state.get_mut().len(world)
     }
 
-    /// Returns true if no entities match.
     pub fn is_empty(&mut self, world: &World) -> bool {
-        self.query_state.is_empty(world)
+        self.query_state.get_mut().is_empty(world)
     }
 }
 
 /// State for a mutable query system parameter.
 pub struct QueryStateMut<Q: WorldQuery, F: QueryFilter = ()> {
-    query_state: CachedArchetypeQueryState<Q, F>,
+    query_state: UnsafeCell<CachedArchetypeQueryState<Q, F>>,
 }
+
+unsafe impl<Q: WorldQuery + Send, F: QueryFilter + Send> Send for QueryStateMut<Q, F> {}
+unsafe impl<Q: WorldQuery + Sync, F: QueryFilter + Sync> Sync for QueryStateMut<Q, F> {}
 
 impl<Q: WorldQuery, F: QueryFilter> Default for QueryStateMut<Q, F> {
     fn default() -> Self {
         Self {
-            query_state: CachedArchetypeQueryState::new(),
+            query_state: UnsafeCell::new(CachedArchetypeQueryState::new()),
         }
     }
 }
 
 impl<Q: WorldQuery, F: QueryFilter> QueryStateMut<Q, F> {
-    /// Create a new mutable query state.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Iterate over matching entities.
     pub fn iter<'w>(&'w mut self, world: &'w World) -> CachedArchetypeQueryIter<'w, Q, F> {
-        self.query_state.iter(world)
+        self.query_state.get_mut().iter(world)
     }
 
-    /// Collect all matching entities into a Vec.
     pub fn collect<'w>(&'w mut self, world: &'w World) -> Vec<(Entity, Q::Item<'w>)> {
-        self.query_state.iter(world).collect()
+        self.query_state.get_mut().iter(world).collect()
     }
 
-    /// Returns the number of matching entities.
     pub fn len(&mut self, world: &World) -> usize {
-        self.query_state.len(world)
+        self.query_state.get_mut().len(world)
     }
 
-    /// Returns true if no entities match.
     pub fn is_empty(&mut self, world: &World) -> bool {
-        self.query_state.is_empty(world)
+        self.query_state.get_mut().is_empty(world)
     }
 }
 
 /// Read-only query reference returned by `Query<Q>`.
+///
+/// # Safety Invariants
+///
+/// - `world` pointer is valid for the lifetime `'w` (guaranteed by the system scheduler)
+/// - The scheduler ensures no conflicting mutable borrows of World exist while this is alive
+/// - `state` is uniquely owned by this parameter (scheduler guarantees no aliasing)
 pub struct QueryRef<'w, 's, Q: WorldQuery, F: QueryFilter = ()> {
-    state: &'s mut QueryStateReadonly<Q, F>,
-    world: *mut World,
+    state: &'s UnsafeCell<CachedArchetypeQueryState<Q, F>>,
+    world: NonNull<World>,
     _marker: PhantomData<&'w World>,
     _filter: PhantomData<F>,
 }
 
+unsafe impl<Q: WorldQuery + Sync, F: QueryFilter + Sync> Sync for QueryRef<'_, '_, Q, F> {}
+unsafe impl<Q: WorldQuery + Send, F: QueryFilter + Send> Send for QueryRef<'_, '_, Q, F> {}
+
 impl<'w, 's, Q: WorldQuery, F: QueryFilter> QueryRef<'w, 's, Q, F> {
-    /// Iterate over matching entities.
     pub fn iter(&'s mut self) -> CachedArchetypeQueryIter<'s, Q, F> {
-        // SAFETY: The world pointer is valid during system execution.
-        let world = unsafe { &*self.world };
-        self.state.query_state.iter(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.iter(world)
     }
 
-    /// Collect all matching entities into a Vec.
     pub fn collect(&'s mut self) -> Vec<(Entity, Q::Item<'s>)> {
-        let world = unsafe { &*self.world };
-        self.state.query_state.iter(world).collect()
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.iter(world).collect()
     }
 
-    /// Returns the number of matching entities.
     pub fn len(&mut self) -> usize {
-        let world = unsafe { &*self.world };
-        self.state.query_state.len(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.len(world)
     }
 
-    /// Returns true if no entities match.
     pub fn is_empty(&mut self) -> bool {
-        let world = unsafe { &*self.world };
-        self.state.query_state.is_empty(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.is_empty(world)
     }
 }
 
 /// Mutable query reference returned by `SystemQueryMut<Q>`.
+///
+/// # Safety Invariants
+///
+/// - `world` pointer is valid for the lifetime `'w` (guaranteed by the system scheduler)
+/// - The scheduler ensures no conflicting borrows of World exist while this is alive
+/// - `state` is uniquely owned by this parameter (scheduler guarantees no aliasing)
 pub struct QueryMutRef<'w, 's, Q: WorldQuery, F: QueryFilter = ()> {
-    state: &'s mut QueryStateMut<Q, F>,
-    world: *mut World,
+    state: &'s UnsafeCell<CachedArchetypeQueryState<Q, F>>,
+    world: NonNull<World>,
     _marker: PhantomData<&'w World>,
     _filter: PhantomData<F>,
 }
 
+unsafe impl<Q: WorldQuery + Sync, F: QueryFilter + Sync> Sync for QueryMutRef<'_, '_, Q, F> {}
+unsafe impl<Q: WorldQuery + Send, F: QueryFilter + Send> Send for QueryMutRef<'_, '_, Q, F> {}
+
 impl<'w, 's, Q: WorldQuery, F: QueryFilter> QueryMutRef<'w, 's, Q, F> {
-    /// Iterate over matching entities (returns immutable refs; use world.get_mut for mutation).
     pub fn iter(&'s mut self) -> CachedArchetypeQueryIter<'s, Q, F> {
-        let world = unsafe { &*self.world };
-        self.state.query_state.iter(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.iter(world)
     }
 
-    /// Collect all matching entities into a Vec.
     pub fn collect(&'s mut self) -> Vec<(Entity, Q::Item<'s>)> {
-        let world = unsafe { &*self.world };
-        self.state.query_state.iter(world).collect()
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.iter(world).collect()
     }
 
-    /// Returns the number of matching entities.
     pub fn len(&mut self) -> usize {
-        let world = unsafe { &*self.world };
-        self.state.query_state.len(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.len(world)
     }
 
-    /// Returns true if no entities match.
     pub fn is_empty(&mut self) -> bool {
-        let world = unsafe { &*self.world };
-        self.state.query_state.is_empty(world)
+        let world = unsafe { self.world.as_ref() };
+        unsafe { &mut *self.state.get() }.is_empty(world)
     }
 }
 
@@ -1811,12 +1816,9 @@ impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'stat
         state: &'s Self::State,
         world: *mut World,
     ) -> Self::Item<'w, 's> {
-        // SAFETY: The state is uniquely owned by this parameter.
-        // The scheduler ensures no conflicting borrows exist.
-        let state_mut = &mut *(state as *const Self::State as *mut Self::State);
         QueryRef {
-            state: state_mut,
-            world,
+            state: &state.query_state,
+            world: NonNull::new_unchecked(world),
             _marker: PhantomData,
             _filter: PhantomData,
         }
@@ -1861,10 +1863,9 @@ impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'stat
         state: &'s Self::State,
         world: *mut World,
     ) -> Self::Item<'w, 's> {
-        let state_mut = &mut *(state as *const Self::State as *mut Self::State);
         QueryMutRef {
-            state: state_mut,
-            world,
+            state: &state.query_state,
+            world: NonNull::new_unchecked(world),
             _marker: PhantomData,
             _filter: PhantomData,
         }

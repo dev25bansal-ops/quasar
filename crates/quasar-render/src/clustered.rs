@@ -244,8 +244,7 @@ impl GpuClusterPass {
             label: Some("Cluster Counts Buffer"),
             size: (TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::MAP_READ,
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -256,8 +255,7 @@ impl GpuClusterPass {
             label: Some("Cluster Lights Buffer"),
             size: cluster_lights_size,
             usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::MAP_READ,
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -266,7 +264,7 @@ impl GpuClusterPass {
         let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cluster Readback Buffer"),
             size: readback_size,
-            usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::MAP_READ,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
 

@@ -66,10 +66,6 @@ struct VertexOutput {
 
 // ── Mesh shader output ─────────────────────────────────────────
 
-// Maximum vertices and primitives per meshlet (must match CPU constants)
-const MAX_VERTICES: u32 = 64u;
-const MAX_PRIMITIVES: u32 = 126u;
-
 // ── Helper: decode packed triangle index ─────────────────────────
 
 /// Read a single vertex index from the packed triangle index buffer.

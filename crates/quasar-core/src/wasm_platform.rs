@@ -373,14 +373,15 @@ pub mod wasm32 {
 
     pub fn get_memory_stats() -> MemoryStats {
         use wasm_bindgen::JsCast;
-        use web_sys::wasm_bindgen::memory;
 
-        let memory = memory();
+        let memory = wasm_bindgen::memory();
         let buffer = memory.dyn_into::<js_sys::WebAssembly::Memory>().ok();
 
         if let Some(mem) = buffer {
+            let buf = mem.buffer();
+            let total = js_sys::ArrayBuffer::from(buf).byte_length() as u32;
             MemoryStats {
-                total_memory: mem.buffer().byte_length() as u32,
+                total_memory: total,
                 used_memory: 0,
                 available_memory: 0,
             }

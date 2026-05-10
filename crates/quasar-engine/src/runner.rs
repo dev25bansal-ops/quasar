@@ -1015,7 +1015,8 @@ pub mod wasm_runner {
             }
         }) as Box<dyn FnMut(f64)>));
 
-        if let Some(ref closure) = *cb.borrow() {
+        let cb_ref = cb.borrow();
+        if let Some(ref closure) = *cb_ref {
             let _ = window.request_animation_frame(closure.as_ref().unchecked_ref());
         }
     }

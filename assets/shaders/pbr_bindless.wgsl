@@ -84,12 +84,9 @@ struct GpuMaterialData {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniform;
 
-@group(0) @binding(1)
-var<uniform> draw_call: DrawCallData;
-
-// Bindless texture array (1024 textures)
+// Bindless texture array (256 textures)
 @group(1) @binding(0)
-var textures: binding_array<texture_2d<f32>, 1024>;
+var textures: binding_array<texture_2d<f32>, 256>;
 
 // Bindless sampler array (64 samplers)
 @group(1) @binding(1)
@@ -98,6 +95,10 @@ var samplers: binding_array<sampler, 64>;
 // Bindless material storage buffer (4096 materials)
 @group(1) @binding(2)
 var<storage, read> materials: array<GpuMaterialData, 4096>;
+
+// Draw call data
+@group(1) @binding(3)
+var<uniform> draw_call: DrawCallData;
 
 // Lighting
 @group(2) @binding(0)
