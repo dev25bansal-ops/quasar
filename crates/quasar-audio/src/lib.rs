@@ -97,17 +97,23 @@ impl BusManager {
 /// Validates that a path is within the allowed assets directory to prevent path traversal attacks.
 fn validate_path(path: &Path) -> Result<PathBuf, String> {
     // Get absolute path using canonicalize
-    let absolute = path.canonicalize().map_err(|e| format!("Invalid path: {}", e))?;
+    let absolute = path
+        .canonicalize()
+        .map_err(|e| format!("Invalid path: {}", e))?;
 
     // Check if path is within current directory or assets subdirectory
-    let current_dir = std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let current_dir =
+        std::env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
 
     // Allow paths that are within current directory or an "assets" subdirectory
-    let is_allowed = absolute.starts_with(&current_dir)
-        || absolute.starts_with(&current_dir.join("assets"));
+    let is_allowed =
+        absolute.starts_with(&current_dir) || absolute.starts_with(&current_dir.join("assets"));
 
     if !is_allowed {
-        return Err(format!("Path traversal not allowed: {}", absolute.display()));
+        return Err(format!(
+            "Path traversal not allowed: {}",
+            absolute.display()
+        ));
     }
 
     Ok(absolute)
@@ -228,10 +234,10 @@ impl AudioSystem {
     /// Play a sound routed through the specified audio bus.
     pub fn play_on_bus<P: AsRef<Path>>(&mut self, path: P, bus: &AudioBus) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        
+
         // Validate path to prevent path traversal attacks
         let validated_path = validate_path(path.as_ref()).ok()?;
-        
+
         let path_str = validated_path.to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
             cached.clone()
@@ -264,10 +270,10 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        
+
         // Validate path to prevent path traversal attacks
         let validated_path = validate_path(path.as_ref()).ok()?;
-        
+
         let path_str = validated_path.to_string_lossy().to_string();
         let mut data = if let Some(cached) = self.sound_cache.get(&path_str) {
             cached.clone()
@@ -302,7 +308,7 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        
+
         // Validate path to prevent path traversal attacks
         let validated_path = match validate_path(path.as_ref()) {
             Ok(path) => path,
@@ -311,7 +317,7 @@ impl AudioSystem {
                 return None;
             }
         };
-        
+
         let path_str = validated_path.to_string_lossy().to_string();
         let mut data = match StreamingSoundData::from_file(&validated_path) {
             Ok(data) => data,
@@ -320,13 +326,13 @@ impl AudioSystem {
                 return None;
             }
         };
-        
+
         if let Some(ref mut bus_mgr) = self.bus_manager {
             if let Some(track) = bus_mgr.track_for(bus, manager) {
                 data.settings.output_destination = kira::OutputDestination::Track(track.id());
             }
         }
-        
+
         let handle = match manager.play(data) {
             Ok(handle) => handle,
             Err(e) => {
@@ -334,7 +340,7 @@ impl AudioSystem {
                 return None;
             }
         };
-        
+
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, SoundHandle::Streaming(handle));
@@ -353,7 +359,7 @@ impl AudioSystem {
         bus: &AudioBus,
     ) -> Option<SoundId> {
         let manager = self.manager.as_mut()?;
-        
+
         // Validate path to prevent path traversal attacks
         let validated_path = match validate_path(path.as_ref()) {
             Ok(path) => path,
@@ -362,24 +368,28 @@ impl AudioSystem {
                 return None;
             }
         };
-        
+
         let path_str = validated_path.to_string_lossy().to_string();
         let mut data = match StreamingSoundData::from_file(&validated_path) {
             Ok(data) => data,
             Err(e) => {
-                log::error!("Failed to load looped streaming audio from {}: {}", path_str, e);
+                log::error!(
+                    "Failed to load looped streaming audio from {}: {}",
+                    path_str,
+                    e
+                );
                 return None;
             }
         };
-        
+
         data.settings.loop_region = Some(kira::sound::Region::default());
-        
+
         if let Some(ref mut bus_mgr) = self.bus_manager {
             if let Some(track) = bus_mgr.track_for(bus, manager) {
                 data.settings.output_destination = kira::OutputDestination::Track(track.id());
             }
         }
-        
+
         let handle = match manager.play(data) {
             Ok(handle) => handle,
             Err(e) => {
@@ -387,7 +397,7 @@ impl AudioSystem {
                 return None;
             }
         };
-        
+
         let id = self.next_id;
         self.next_id += 1;
         self.handles.insert(id, SoundHandle::Streaming(handle));
@@ -502,10 +512,15 @@ impl AudioSystem {
     /// Returns the processed stereo interleaved buffer.
     pub fn process_all_dsp(&mut self, output_buffer: &mut [f32], sidechain: Option<&[f32]>) {
         // Process each bus graph (EQ, compression, etc. per bus)
-        for bus in [AudioBus::Music, AudioBus::Sfx, AudioBus::Voice, AudioBus::Ambient] {
+        for bus in [
+            AudioBus::Music,
+            AudioBus::Sfx,
+            AudioBus::Voice,
+            AudioBus::Ambient,
+        ] {
             self.process_bus_dsp(&bus, output_buffer, sidechain);
         }
-        
+
         // Process master graph (limiter, final EQ, etc.)
         self.process_master_dsp(output_buffer, sidechain);
     }

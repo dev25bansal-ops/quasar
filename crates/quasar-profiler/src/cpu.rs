@@ -22,6 +22,7 @@ thread_local! {
 
 #[derive(Debug)]
 pub struct CpuProfiler {
+    started_at: Instant,
     scopes: RwLock<HashMap<ScopeId, ScopeInfo>>,
     scope_names: RwLock<HashMap<String, ScopeId>>,
     records: RwLock<Vec<TimingRecord>>,
@@ -34,6 +35,7 @@ pub struct CpuProfiler {
 impl CpuProfiler {
     pub fn new() -> Self {
         Self {
+            started_at: Instant::now(),
             scopes: RwLock::new(HashMap::new()),
             scope_names: RwLock::new(HashMap::new()),
             records: RwLock::new(Vec::new()),
@@ -46,6 +48,7 @@ impl CpuProfiler {
 
     pub fn with_limits(max_records: usize, max_frames: usize) -> Self {
         Self {
+            started_at: Instant::now(),
             scopes: RwLock::new(HashMap::new()),
             scope_names: RwLock::new(HashMap::new()),
             records: RwLock::new(Vec::new()),
@@ -97,8 +100,8 @@ impl CpuProfiler {
         }
 
         let end = Instant::now();
-        let start_ns = start.elapsed().as_nanos() as u64;
-        let end_ns = end.elapsed().as_nanos() as u64;
+        let start_ns = start.saturating_duration_since(self.started_at).as_nanos() as u64;
+        let end_ns = end.saturating_duration_since(self.started_at).as_nanos() as u64;
         let thread_id = get_thread_id();
 
         let frame = CURRENT_FRAME.with(|f| f.get());

@@ -8,8 +8,8 @@
 //! - Click-to-select keyframes
 //! - Channel tracks for different properties
 
-use quasar_core::animation::{KeyframeInterpolation, TransformKeyframe};
 use glam::FloatExt;
+use quasar_core::animation::{KeyframeInterpolation, TransformKeyframe};
 
 /// Represents a track (channel) in the timeline.
 #[derive(Debug, Clone)]
@@ -94,10 +94,7 @@ impl TimelineTrack {
             .map(|((t, v), i)| (*t, *v, *i))
             .collect();
 
-        combined.sort_by(|a, b| {
-            a.0.partial_cmp(&b.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        combined.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         self.keyframe_times = combined.iter().map(|(t, _, _)| *t).collect();
         self.keyframe_values = combined.iter().map(|(_, v, _)| *v).collect();
@@ -118,7 +115,7 @@ impl TimelineTrack {
         for i in 0..self.keyframe_times.len() - 1 {
             let t1 = self.keyframe_times[i];
             let t2 = self.keyframe_times[i + 1];
-            
+
             if time >= t1 && time <= t2 {
                 let duration = t2 - t1;
                 let t = if duration > 0.0 {
@@ -205,26 +202,26 @@ impl TimelineWidget {
         self.tracks.clear();
 
         // Create tracks for each property
-        let mut pos_x_track = TimelineTrack::new("Position X")
-            .with_color(egui::Color32::from_rgb(255, 100, 100));
-        let mut pos_y_track = TimelineTrack::new("Position Y")
-            .with_color(egui::Color32::from_rgb(100, 255, 100));
-        let mut pos_z_track = TimelineTrack::new("Position Z")
-            .with_color(egui::Color32::from_rgb(100, 100, 255));
+        let mut pos_x_track =
+            TimelineTrack::new("Position X").with_color(egui::Color32::from_rgb(255, 100, 100));
+        let mut pos_y_track =
+            TimelineTrack::new("Position Y").with_color(egui::Color32::from_rgb(100, 255, 100));
+        let mut pos_z_track =
+            TimelineTrack::new("Position Z").with_color(egui::Color32::from_rgb(100, 100, 255));
 
-        let mut rot_x_track = TimelineTrack::new("Rotation X")
-            .with_color(egui::Color32::from_rgb(255, 200, 100));
-        let mut rot_y_track = TimelineTrack::new("Rotation Y")
-            .with_color(egui::Color32::from_rgb(200, 100, 255));
-        let mut rot_z_track = TimelineTrack::new("Rotation Z")
-            .with_color(egui::Color32::from_rgb(100, 255, 255));
+        let mut rot_x_track =
+            TimelineTrack::new("Rotation X").with_color(egui::Color32::from_rgb(255, 200, 100));
+        let mut rot_y_track =
+            TimelineTrack::new("Rotation Y").with_color(egui::Color32::from_rgb(200, 100, 255));
+        let mut rot_z_track =
+            TimelineTrack::new("Rotation Z").with_color(egui::Color32::from_rgb(100, 255, 255));
 
-        let mut scale_x_track = TimelineTrack::new("Scale X")
-            .with_color(egui::Color32::from_rgb(255, 150, 150));
-        let mut scale_y_track = TimelineTrack::new("Scale Y")
-            .with_color(egui::Color32::from_rgb(150, 255, 150));
-        let mut scale_z_track = TimelineTrack::new("Scale Z")
-            .with_color(egui::Color32::from_rgb(150, 150, 255));
+        let mut scale_x_track =
+            TimelineTrack::new("Scale X").with_color(egui::Color32::from_rgb(255, 150, 150));
+        let mut scale_y_track =
+            TimelineTrack::new("Scale Y").with_color(egui::Color32::from_rgb(150, 255, 150));
+        let mut scale_z_track =
+            TimelineTrack::new("Scale Z").with_color(egui::Color32::from_rgb(150, 150, 255));
 
         for kf in keyframes {
             pos_x_track.add_keyframe(kf.time, kf.position.x, kf.interpolation);
@@ -251,13 +248,19 @@ impl TimelineWidget {
         self.tracks.push(scale_z_track);
 
         // Update duration based on keyframes
-        if let Some(max_time) = keyframes.iter().map(|kf| kf.time).fold(None::<f32>, |a, b| {
-            Some(match a {
-                Some(current) => current.max(b),
-                None => b,
+        if let Some(max_time) = keyframes
+            .iter()
+            .map(|kf| kf.time)
+            .fold(None::<f32>, |a, b| {
+                Some(match a {
+                    Some(current) => current.max(b),
+                    None => b,
+                })
             })
-        }) {
-            self.duration = max_time.max(self.duration);
+        {
+            self.duration = max_time.max(0.001);
+            self.scrub_time = self.scrub_time.min(self.duration);
+            self.scroll_offset = self.scroll_offset.min(self.duration);
         }
     }
 
@@ -265,7 +268,7 @@ impl TimelineWidget {
     pub fn update(&mut self, delta_seconds: f32) {
         if self.playing {
             self.scrub_time += delta_seconds * self.playback_speed;
-            
+
             if self.looped {
                 self.scrub_time %= self.duration.max(0.001);
             } else {
@@ -278,7 +281,7 @@ impl TimelineWidget {
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         // Playback controls
         self.render_controls(ui);
-        
+
         ui.separator();
 
         // Timeline area
@@ -289,7 +292,11 @@ impl TimelineWidget {
         ui.horizontal(|ui| {
             // Play/Pause button
             if ui
-                .button(if self.playing { "⏸ Pause" } else { "▶ Play" })
+                .button(if self.playing {
+                    "⏸ Pause"
+                } else {
+                    "▶ Play"
+                })
                 .clicked()
             {
                 self.playing = !self.playing;
@@ -377,16 +384,10 @@ impl TimelineWidget {
 
     fn render_time_ruler(&self, painter: &egui::Painter, rect: egui::Rect) {
         let ruler_height = 30.0;
-        let ruler_rect = egui::Rect::from_min_max(
-            rect.min,
-            egui::pos2(rect.max.x, rect.min.y + ruler_height),
-        );
+        let ruler_rect =
+            egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.min.y + ruler_height));
 
-        painter.rect_filled(
-            ruler_rect,
-            0.0,
-            egui::Color32::from_rgb(35, 35, 40),
-        );
+        painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_rgb(35, 35, 40));
 
         // Draw time markers
         let start_time = self.scroll_offset;
@@ -395,7 +396,7 @@ impl TimelineWidget {
         let mut time = start_time;
         while time <= end_time {
             let x = rect.min.x + (time - self.scroll_offset) * self.zoom;
-            
+
             // Major marker every second
             painter.line_segment(
                 [
@@ -425,7 +426,7 @@ impl TimelineWidget {
         let mut time = start_time;
         while time <= end_time {
             let x = rect.min.x + (time - self.scroll_offset) * self.zoom;
-            
+
             painter.line_segment(
                 [
                     egui::pos2(x, rect.min.y + ruler_height),
@@ -475,7 +476,7 @@ impl TimelineWidget {
                 if x >= rect.min.x && x <= rect.max.x {
                     let center = egui::pos2(x, y + self.track_height * 0.6);
                     let size = 6.0;
-                    
+
                     let diamond = vec![
                         egui::pos2(center.x, center.y - size),
                         egui::pos2(center.x + size, center.y),
@@ -523,8 +524,16 @@ impl TimelineWidget {
     ) {
         let y_center = track_rect.center().y;
         let value_range = 10.0; // Adjust based on expected value range
-        let min_val = track.keyframe_values.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max_val = track.keyframe_values.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        let min_val = track
+            .keyframe_values
+            .iter()
+            .cloned()
+            .fold(f32::INFINITY, f32::min);
+        let max_val = track
+            .keyframe_values
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
         let actual_range = (max_val - min_val).max(0.001);
 
         let mut points = Vec::new();
@@ -569,11 +578,7 @@ impl TimelineWidget {
                 egui::pos2(scrub_x, rect.min.y + ruler_height * 0.5),
                 egui::vec2(12.0, ruler_height * 0.8),
             );
-            painter.rect_filled(
-                handle_rect,
-                2.0,
-                egui::Color32::from_rgb(80, 180, 255),
-            );
+            painter.rect_filled(handle_rect, 2.0, egui::Color32::from_rgb(80, 180, 255));
 
             // Time text on handle
             painter.text(
@@ -605,7 +610,9 @@ impl TimelineWidget {
                         continue;
                     }
 
-                    let cy = rect.min.y + ruler_height + track_idx as f32 * self.track_height
+                    let cy = rect.min.y
+                        + ruler_height
+                        + track_idx as f32 * self.track_height
                         + self.track_height * 0.6;
 
                     for (kf_idx, &t) in track.keyframe_times.iter().enumerate() {
@@ -846,7 +853,7 @@ mod tests {
         widget.selected_keyframe = Some((0, 0));
 
         widget.update_selected_keyframe(Some(2.0), Some(10.0), Some(KeyframeInterpolation::Step));
-        
+
         let data = widget.get_selected_keyframe_data().unwrap();
         assert_eq!(data.0, 2.0);
         assert_eq!(data.1, 10.0);

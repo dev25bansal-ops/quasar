@@ -28,7 +28,9 @@ fn test_spawn_entity_with_physics_components() {
 
     // Verify the entity exists and has a Transform
     assert!(world.is_alive(entity));
-    let transform = world.get::<Transform>(entity).expect("Transform should exist");
+    let transform = world
+        .get::<Transform>(entity)
+        .expect("Transform should exist");
     assert_eq!(transform.position, Vec3::new(0.0, 10.0, 0.0));
 
     // Create physics world and add body
@@ -40,8 +42,12 @@ fn test_spawn_entity_with_physics_components() {
     world.insert(entity, rigid_body_comp);
 
     // Create a collider and attach it
-    let collider_handle =
-        physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 0.5 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 0.5 },
+        0.3,
+        0.5,
+    );
     let collider_comp = ColliderComponent::new(collider_handle);
     world.insert(entity, collider_comp);
 
@@ -64,10 +70,17 @@ fn test_spawn_multiple_physics_entities() {
             world.insert(entity, transform);
 
             let body_handle = physics.add_body(BodyType::Dynamic, [i as f32 * 2.0, 5.0, 0.0]);
-            world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+            world.insert(
+                entity,
+                RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+            );
 
-            let collider_handle =
-                physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 0.5 }, 0.3, 0.5);
+            let collider_handle = physics.add_collider(
+                body_handle,
+                &ColliderShape::Sphere { radius: 0.5 },
+                0.3,
+                0.5,
+            );
             world.insert(entity, ColliderComponent::new(collider_handle));
 
             entity
@@ -105,9 +118,17 @@ fn test_physics_step_updates_positions() {
     world.insert(entity, Transform::from_position(Vec3::new(0.0, 10.0, 0.0)));
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 10.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
 
-    let collider_handle = physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 0.5 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 0.5 },
+        0.3,
+        0.5,
+    );
     world.insert(entity, ColliderComponent::new(collider_handle));
 
     // Store initial position
@@ -126,7 +147,10 @@ fn test_physics_step_updates_positions() {
     // Verify position changed (gravity should have pulled it down)
     let new_pos = world.get::<Transform>(entity).unwrap().position;
     assert!(new_pos.y < 10.0, "Entity should have fallen due to gravity");
-    assert!(new_pos.y > 9.0, "Entity shouldn't have fallen too far in one step");
+    assert!(
+        new_pos.y > 9.0,
+        "Entity shouldn't have fallen too far in one step"
+    );
 }
 
 #[test]
@@ -138,13 +162,21 @@ fn test_physics_multiple_steps_accumulate() {
     world.insert(entity, Transform::from_position(Vec3::new(0.0, 20.0, 0.0)));
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 20.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
 
-    let collider_handle = physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 0.5 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 0.5 },
+        0.3,
+        0.5,
+    );
     world.insert(entity, ColliderComponent::new(collider_handle));
 
-    // Step physics 10 times
-    for _ in 0..10 {
+    // Step physics for roughly one second at Rapier's default fixed timestep.
+    for _ in 0..60 {
         physics.step();
 
         // Sync position
@@ -156,8 +188,12 @@ fn test_physics_multiple_steps_accumulate() {
 
     let final_pos = world.get::<Transform>(entity).unwrap().position;
     assert!(
-        final_pos.y < 15.0,
-        "Entity should have fallen significantly after 10 steps"
+        final_pos.y < 16.0,
+        "Entity should have fallen significantly after one second of physics"
+    );
+    assert!(
+        final_pos.y > 13.0,
+        "Entity should stay within a realistic one-second gravity range"
     );
 }
 
@@ -175,7 +211,12 @@ fn test_kinematic_body_moves_with_position() {
         RigidBodyComponent::new(body_handle, BodyType::KinematicPositionBased),
     );
 
-    let collider_handle = physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 1.0 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 1.0 },
+        0.3,
+        0.5,
+    );
     world.insert(entity, ColliderComponent::new(collider_handle));
 
     // Move kinematic body manually
@@ -252,10 +293,7 @@ fn test_physics_world_with_static_collider() {
     let mut physics = PhysicsWorld::new();
 
     // Add a static ground plane
-    let ground_collider = physics.add_static_collider(
-        &ColliderShape::HalfSpace,
-        [0.0, 0.0, 0.0],
-    );
+    let ground_collider = physics.add_static_collider(&ColliderShape::HalfSpace, [0.0, 0.0, 0.0]);
 
     assert!(physics.collider_count() > 0);
     assert!(physics.colliders.get(ground_collider).is_some());
@@ -271,7 +309,10 @@ fn test_pending_collider_conversion() {
 
     // Add body first
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 5.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
 
     // Add pending collider
     let pending = PendingCollider::with_body(
@@ -300,9 +341,17 @@ fn test_despawn_entity_removes_physics_body() {
     world.insert(entity, Transform::from_position(Vec3::new(0.0, 5.0, 0.0)));
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 5.0, 0.0]);
-    let collider_handle = physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 0.5 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 0.5 },
+        0.3,
+        0.5,
+    );
 
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
     world.insert(entity, ColliderComponent::new(collider_handle));
 
     // Verify body and collider exist
@@ -333,13 +382,25 @@ fn test_despawn_multiple_physics_entities() {
 
     for i in 0..5 {
         let entity = world.spawn();
-        world.insert(entity, Transform::from_position(Vec3::new(i as f32, 0.0, 0.0)));
+        world.insert(
+            entity,
+            Transform::from_position(Vec3::new(i as f32, 0.0, 0.0)),
+        );
 
         let body_handle = physics.add_body(BodyType::Dynamic, [i as f32, 0.0, 0.0]);
-        let collider_handle =
-            physics.add_collider(body_handle, &ColliderShape::Box { half_extents: [0.5, 0.5, 0.5] }, 0.3, 0.5);
+        let collider_handle = physics.add_collider(
+            body_handle,
+            &ColliderShape::Box {
+                half_extents: [0.5, 0.5, 0.5],
+            },
+            0.3,
+            0.5,
+        );
 
-        world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+        world.insert(
+            entity,
+            RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+        );
         world.insert(entity, ColliderComponent::new(collider_handle));
 
         handles.push((entity, body_handle, collider_handle));
@@ -354,8 +415,16 @@ fn test_despawn_multiple_physics_entities() {
         physics.remove_body(*body_handle);
     }
 
-    assert_eq!(physics.body_count(), 0, "All physics bodies should be removed");
-    assert_eq!(physics.collider_count(), 0, "All colliders should be removed");
+    assert_eq!(
+        physics.body_count(),
+        0,
+        "All physics bodies should be removed"
+    );
+    assert_eq!(
+        physics.collider_count(),
+        0,
+        "All colliders should be removed"
+    );
 }
 
 #[test]
@@ -367,7 +436,10 @@ fn test_despawn_entity_cleanup_change_ticks() {
     world.insert(entity, Transform::from_position(Vec3::new(0.0, 0.0, 0.0)));
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 0.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
 
     // Verify entity has components
     assert!(world.get::<Transform>(entity).is_some());
@@ -391,9 +463,17 @@ fn test_physics_gravity_affects_entities() {
     world.insert(entity, Transform::from_position(Vec3::new(0.0, 100.0, 0.0)));
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 100.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
 
-    let collider_handle = physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 1.0 }, 0.3, 0.5);
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 1.0 },
+        0.3,
+        0.5,
+    );
     world.insert(entity, ColliderComponent::new(collider_handle));
 
     // Step physics many times
@@ -401,9 +481,13 @@ fn test_physics_gravity_affects_entities() {
         physics.step();
     }
 
-    // Entity should have fallen significantly
+    // Entity should have fallen significantly over the simulated interval.
     if let Some(pos) = physics.body_position(body_handle) {
-        assert!(pos[1] < 50.0, "Entity should have fallen due to gravity");
+        assert!(pos[1] < 90.0, "Entity should have fallen due to gravity");
+        assert!(
+            pos[1] > 80.0,
+            "Entity should stay within a realistic fixed-timestep gravity range"
+        );
     }
 }
 
@@ -416,7 +500,17 @@ fn test_physics_apply_force() {
     world.insert(entity, Transform::IDENTITY);
 
     let body_handle = physics.add_body(BodyType::Dynamic, [0.0, 0.0, 0.0]);
-    world.insert(entity, RigidBodyComponent::new(body_handle, BodyType::Dynamic));
+    world.insert(
+        entity,
+        RigidBodyComponent::new(body_handle, BodyType::Dynamic),
+    );
+    let collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 0.5 },
+        0.3,
+        0.5,
+    );
+    world.insert(entity, ColliderComponent::new(collider_handle));
 
     // Apply upward force
     physics.apply_force(body_handle, [0.0, 100.0, 0.0]);
@@ -436,8 +530,12 @@ fn test_physics_ray_cast() {
 
     // Add a collider
     let body_handle = physics.add_body(BodyType::Fixed, [0.0, 0.0, 0.0]);
-    let _collider_handle =
-        physics.add_collider(body_handle, &ColliderShape::Sphere { radius: 1.0 }, 0.3, 0.5);
+    let _collider_handle = physics.add_collider(
+        body_handle,
+        &ColliderShape::Sphere { radius: 1.0 },
+        0.3,
+        0.5,
+    );
 
     // Cast ray from above toward origin
     let origin = [0.0, 5.0, 0.0];

@@ -2,20 +2,25 @@
 
 use quasar_core::error::{QuasarError, QuasarResult};
 
+use crate::bindless::{
+    BindlessBindGroup, BindlessCapabilities, BindlessPipelineBuilder, FallbackBindGroupBuilder,
+    GpuMaterialData, MaterialDataBuffer, ResourceLifetimeManager, SamplerPool, TextureAtlas,
+    TextureBatchUploader, GPU_MATERIAL_SIZE, MAX_BINDLESS_SAMPLERS, MAX_MATERIALS,
+};
 use crate::camera::{Camera, CameraUniform, DrawCallUniform};
+#[cfg(feature = "clustered-lighting")]
+use crate::clustered::{GpuClusterPass, LightClusterGrid};
 use crate::culling::{Aabb, Frustum, RenderStats};
 use crate::light::LightsUniform;
 use crate::material::{Material, MaterialOverride};
 use crate::mesh::Mesh;
-#[cfg(feature = "clustered-lighting")]
-use crate::clustered::{GpuClusterPass, LightClusterGrid};
-#[cfg(feature = "meshlet")]
-use crate::meshlet::{LodMeshletGpuBuffers, MeshletGpuBuffers, MESHLET_CULL_WGSL};
 #[cfg(feature = "meshlet")]
 use crate::mesh_shader::{
     MeshShaderCapabilities, MeshShaderFallback, MeshShaderPipeline, MeshShaderUniforms,
     MeshShaderVertexBuffers, TaskShaderUniforms,
 };
+#[cfg(feature = "meshlet")]
+use crate::meshlet::{LodMeshletGpuBuffers, MeshletGpuBuffers, MESHLET_CULL_WGSL};
 use crate::occlusion::{
     CullStats, DrawIndexedIndirectArgs, GpuCullPass, GpuHiZBuilder, HiZCopyPass, HiZTexture,
     IndirectDrawManager, MeshDrawCommand,
@@ -24,11 +29,6 @@ use crate::pipeline;
 use crate::ssgi::SsgiPass;
 use crate::taa::TaaPass;
 use crate::texture::Texture;
-use crate::bindless::{
-    BindlessBindGroup, BindlessCapabilities, BindlessPipelineBuilder, FallbackBindGroupBuilder,
-    GpuMaterialData, MaterialDataBuffer, ResourceLifetimeManager, SamplerPool, TextureAtlas,
-    TextureBatchUploader, MAX_BINDLESS_SAMPLERS, GPU_MATERIAL_SIZE, MAX_MATERIALS,
-};
 
 /// Maximum number of objects that can be rendered in a single pass with
 /// unique model matrices.
@@ -432,9 +432,10 @@ impl Renderer {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<DrawCallUniform>() as u64,
-                        ),
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            DrawCallUniform,
+                        >()
+                            as u64),
                     },
                     count: None,
                 }],
@@ -941,8 +942,7 @@ impl Renderer {
             {
                 let w = renderer.config.width;
                 let h = renderer.config.height;
-                renderer.cluster_grid =
-                    Some(LightClusterGrid::new(0.1, 100.0, w, h));
+                renderer.cluster_grid = Some(LightClusterGrid::new(0.1, 100.0, w, h));
                 renderer.gpu_cluster_pass =
                     Some(GpuClusterPass::new(&renderer.device, 256, 0.1, 100.0, w, h));
             }
@@ -995,13 +995,19 @@ impl Renderer {
 
         // Register default texture in atlas
         let default_tex_id = 0u64; // Reserve ID 0 for default texture
-        if let Some(idx) = self.texture_atlas.register(default_tex_id, self.default_texture.view.clone()) {
+        if let Some(idx) = self
+            .texture_atlas
+            .register(default_tex_id, self.default_texture.view.clone())
+        {
             log::info!("Registered default texture at bindless index {}", idx);
         }
 
         // Register default sampler in pool
         let default_sampler_id = 0u64; // Reserve ID 0 for default sampler
-        if let Some(idx) = self.sampler_pool.register(default_sampler_id, self.default_texture.sampler.clone()) {
+        if let Some(idx) = self
+            .sampler_pool
+            .register(default_sampler_id, self.default_texture.sampler.clone())
+        {
             log::info!("Registered default sampler at bindless index {}", idx);
         }
 
@@ -1024,7 +1030,8 @@ impl Renderer {
         }
 
         // Create texture batch uploader
-        self.texture_batch_uploader = Some(TextureBatchUploader::new(&self.device, 16 * 1024 * 1024)); // 16MB staging
+        self.texture_batch_uploader =
+            Some(TextureBatchUploader::new(&self.device, 16 * 1024 * 1024)); // 16MB staging
 
         let bindless_env = std::env::var("QUASAR_BINDLESS").unwrap_or_default();
         let use_bindless = caps.full_bindless && bindless_env == "1";
@@ -1048,17 +1055,18 @@ impl Renderer {
                     let shader_source = include_str!("../../../assets/shaders/basic_bindless.wgsl");
 
                     log::info!("Creating bindless render pipeline...");
-                    let pipeline_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        BindlessPipelineBuilder::create_bindless_pipeline(
-                            &self.device,
-                            self.config.format,
-                            &self.camera_bind_group_layout,
-                            &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
-                            &self.lighting_bind_group_layout,
-                            shader_source,
-                            &vertex_layout,
-                        )
-                    }));
+                    let pipeline_result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            BindlessPipelineBuilder::create_bindless_pipeline(
+                                &self.device,
+                                self.config.format,
+                                &self.camera_bind_group_layout,
+                                &self.bindless_bind_group.as_ref().unwrap().bind_group_layout,
+                                &self.lighting_bind_group_layout,
+                                shader_source,
+                                &vertex_layout,
+                            )
+                        }));
 
                     match pipeline_result {
                         Ok(pipeline) => {
@@ -1069,7 +1077,8 @@ impl Renderer {
                         }
                         Err(_) => {
                             log::warn!("Bindless render pipeline creation panicked, falling back to per-material bind groups");
-                            self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
+                            self.fallback_builder =
+                                Some(FallbackBindGroupBuilder::new(&self.device));
                             self.bindless_enabled = false;
                         }
                     }
@@ -1084,7 +1093,9 @@ impl Renderer {
             // Fallback path: create per-material bind group builder
             self.fallback_builder = Some(FallbackBindGroupBuilder::new(&self.device));
             self.bindless_enabled = false;
-            log::info!("Bindless rendering NOT SUPPORTED — using fallback per-material bind groups");
+            log::info!(
+                "Bindless rendering NOT SUPPORTED — using fallback per-material bind groups"
+            );
         }
     }
 
@@ -1167,15 +1178,10 @@ impl Renderer {
             &self.lod_meshlet_buffers,
             &self.mesh_shader_vertex_buffers,
         ) {
-            self.task_shader_bind_group = Some(pipeline.create_task_bind_group(
-                &self.device,
-                gpu_buffers,
-            ));
-            self.mesh_shader_bind_group = Some(pipeline.create_mesh_bind_group(
-                &self.device,
-                gpu_buffers,
-                vertex_bufs,
-            ));
+            self.task_shader_bind_group =
+                Some(pipeline.create_task_bind_group(&self.device, gpu_buffers));
+            self.mesh_shader_bind_group =
+                Some(pipeline.create_mesh_bind_group(&self.device, gpu_buffers, vertex_bufs));
         }
     }
 
@@ -1186,7 +1192,11 @@ impl Renderer {
     /// 2. Mesh shader dispatch for triangle generation
     /// 3. Updates mesh shader statistics
     #[cfg(feature = "meshlet")]
-    pub fn dispatch_mesh_shader_pass(&mut self, encoder: &mut wgpu::CommandEncoder, camera: &Camera) {
+    pub fn dispatch_mesh_shader_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        camera: &Camera,
+    ) {
         if !self.mesh_shader_enabled {
             return;
         }
@@ -1199,10 +1209,9 @@ impl Renderer {
             return;
         };
 
-        let (Some(ref task_bg), Some(ref mesh_bg)) = (
-            &self.task_shader_bind_group,
-            &self.mesh_shader_bind_group,
-        ) else {
+        let (Some(ref task_bg), Some(ref mesh_bg)) =
+            (&self.task_shader_bind_group, &self.mesh_shader_bind_group)
+        else {
             return;
         };
 
@@ -1218,7 +1227,7 @@ impl Renderer {
             screen_height: self.config.height as f32,
             _pad0: [0.0],
             lod_thresholds: [1000.0, 500.0, 250.0, 100.0],
-            _pad: [0.0; 10],
+            _pad: [0.0; 4],
         };
         pipeline.update_task_uniforms(&self.queue, &task_uniforms);
 
@@ -1278,14 +1287,7 @@ impl Renderer {
                         .map(|g| g.aabbs.as_slice())
                         .unwrap_or(&[]),
                 );
-                gpu_cluster.update_params(
-                    &self.queue,
-                    256,
-                    0.1,
-                    100.0,
-                    width,
-                    height,
-                );
+                gpu_cluster.update_params(&self.queue, 256, 0.1, 100.0, width, height);
             }
         }
     }
@@ -1708,7 +1710,7 @@ impl Renderer {
     ) {
         self.upload_material_data();
         // Use bindless pipeline if enabled
-                let pipeline = match &self.bindless_render_pipeline {
+        let pipeline = match &self.bindless_render_pipeline {
             Some(p) if self.bindless_enabled => p,
             _ => {
                 log::warn!("Bindless pipeline not available, falling back to legacy render");
@@ -1769,7 +1771,8 @@ impl Renderer {
                 draw_call_data[offset..offset + std::mem::size_of::<DrawCallUniform>()]
                     .copy_from_slice(bytes);
             }
-            self.queue.write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
+            self.queue
+                .write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
         }
 
         // Update stats
@@ -1778,7 +1781,7 @@ impl Renderer {
         self.stats.culled_objects = culled_count;
 
         // Upload any pending material data
-        
+
         // Advance resource lifetime tracking
         self.resource_lifetimes.advance_frame();
 
@@ -1828,18 +1831,21 @@ impl Renderer {
 
                 // Set draw call uniform (material index) with dynamic offset
                 // Create a temporary bind group for the draw call buffer
-                let draw_call_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Draw Call Bind Group"),
-                    layout: &self.draw_call_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_call_buffer,
-                            offset: draw_call_offset as u64,
-                            size: std::num::NonZeroU64::new(std::mem::size_of::<DrawCallUniform>() as u64),
-                        }),
-                    }],
-                });
+                let draw_call_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Draw Call Bind Group"),
+                        layout: &self.draw_call_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.draw_call_buffer,
+                                offset: draw_call_offset as u64,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<DrawCallUniform>() as u64,
+                                ),
+                            }),
+                        }],
+                    });
                 pass.set_bind_group(3, &draw_call_bind_group, &[]);
 
                 let (mesh, _, _) = objects[i];
@@ -1868,7 +1874,7 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
     ) {
         // Use PBR bindless pipeline if available
-                let pipeline = match &self.pbr_bindless_pipeline {
+        let pipeline = match &self.pbr_bindless_pipeline {
             Some(p) if self.bindless_enabled => p,
             _ => {
                 log::warn!("PBR bindless pipeline not available, falling back to basic bindless");
@@ -1929,7 +1935,8 @@ impl Renderer {
                 draw_call_data[offset..offset + std::mem::size_of::<DrawCallUniform>()]
                     .copy_from_slice(bytes);
             }
-            self.queue.write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
+            self.queue
+                .write_buffer(&self.draw_call_buffer, 0, &draw_call_data);
         }
 
         // Update stats
@@ -1938,7 +1945,7 @@ impl Renderer {
         self.stats.culled_objects = culled_count;
 
         // Upload any pending material data
-        
+
         // Advance resource lifetime tracking
         self.resource_lifetimes.advance_frame();
 
@@ -1986,18 +1993,21 @@ impl Renderer {
                 pass.set_bind_group(0, &self.camera_bind_group, &[cam_offset]);
 
                 // Create draw call bind group for this draw
-                let draw_call_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Draw Call Bind Group (PBR)"),
-                    layout: &self.draw_call_bind_group_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &self.draw_call_buffer,
-                            offset: draw_call_offset as u64,
-                            size: std::num::NonZeroU64::new(std::mem::size_of::<DrawCallUniform>() as u64),
-                        }),
-                    }],
-                });
+                let draw_call_bind_group =
+                    self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Draw Call Bind Group (PBR)"),
+                        layout: &self.draw_call_bind_group_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &self.draw_call_buffer,
+                                offset: draw_call_offset as u64,
+                                size: std::num::NonZeroU64::new(
+                                    std::mem::size_of::<DrawCallUniform>() as u64,
+                                ),
+                            }),
+                        }],
+                    });
                 pass.set_bind_group(3, &draw_call_bind_group, &[]);
 
                 let (mesh, _, _) = objects[i];
@@ -2290,13 +2300,7 @@ impl Renderer {
 
         // ── GPU-driven indirect rendering path with Hi-Z occlusion culling ──
         if self.render_config.gpu_driven_culling {
-            if let (
-                Some(cull_pass),
-                Some(mgr),
-                Some(hiz_tex),
-                Some(hiz_copy),
-                Some(hiz_build),
-            ) = (
+            if let (Some(cull_pass), Some(mgr), Some(hiz_tex), Some(hiz_copy), Some(hiz_build)) = (
                 self.gpu_cull_pass.as_ref(),
                 self.indirect_draw_manager.as_mut(),
                 self.hiz_texture.as_ref(),
@@ -2418,21 +2422,17 @@ impl Renderer {
 
         for (i, (mesh, _, mat_bg, tex_index)) in objects.iter().enumerate() {
             let mesh_key = i;
-            let mat_key = mat_bg
-                .map(|_| i)
-                .unwrap_or(usize::MAX);
+            let mat_key = mat_bg.map(|_| i).unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
             let entry = batches
                 .entry((mesh_key, mat_key, tex_key))
-                .or_insert_with(|| {
-                    Batch {
-                        mesh_idx: i,
-                        mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
-                        tex_idx: tex_index.unwrap_or(0) as usize,
-                        indices: Vec::new(),
-                        materials: Vec::new(),
-                    }
+                .or_insert_with(|| Batch {
+                    mesh_idx: i,
+                    mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
+                    tex_idx: tex_index.unwrap_or(0) as usize,
+                    indices: Vec::new(),
+                    materials: Vec::new(),
                 });
             entry.indices.push(i);
         }
@@ -2728,20 +2728,16 @@ impl Renderer {
 
         for (i, (mesh, model, mat_bg, tex_index)) in objects.iter().enumerate() {
             let mesh_key = i;
-            let mat_key = mat_bg
-                .map(|_| i)
-                .unwrap_or(usize::MAX);
+            let mat_key = mat_bg.map(|_| i).unwrap_or(usize::MAX);
             let tex_key = tex_index.unwrap_or(0) as usize;
 
             let entry = batches
                 .entry((mesh_key, mat_key, tex_key))
-                .or_insert_with(|| {
-                    Batch {
-                        mesh_idx: i,
-                        mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
-                        tex_idx: tex_index.unwrap_or(0) as usize,
-                        materials: Vec::new(),
-                    }
+                .or_insert_with(|| Batch {
+                    mesh_idx: i,
+                    mat_bg_idx: if mat_bg.is_some() { Some(i) } else { None },
+                    tex_idx: tex_index.unwrap_or(0) as usize,
+                    materials: Vec::new(),
                 });
             entry.materials.push(*model);
         }
@@ -2788,10 +2784,8 @@ impl Renderer {
                 render_pass.set_bind_group(1, material_bg, &[]);
                 render_pass.set_bind_group(3, texture_bg, &[]);
                 render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(
-                    mesh.index_buffer.slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
+                render_pass
+                    .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
                 if !batch.materials.is_empty() {
                     let matrix_bytes: Vec<u8> = batch
@@ -2924,20 +2918,20 @@ impl Renderer {
                 for &visible_idx in &visible_indices {
                     let (_, _, mat_bg, tex_index) = objects[visible_idx];
                     let mesh_key = visible_idx;
-                    let mat_key = mat_bg
-                        .map(|_| visible_idx)
-                        .unwrap_or(usize::MAX);
+                    let mat_key = mat_bg.map(|_| visible_idx).unwrap_or(usize::MAX);
                     let tex_key = tex_index.unwrap_or(0) as usize;
 
                     let entry = batches
                         .entry((mesh_key, mat_key, tex_key))
-                        .or_insert_with(|| {
-                            Batch {
-                                mesh_idx: visible_idx,
-                                mat_bg_idx: if mat_bg.is_some() { Some(visible_idx) } else { None },
-                                tex_idx: tex_index.unwrap_or(0) as usize,
-                                indices: Vec::new(),
-                            }
+                        .or_insert_with(|| Batch {
+                            mesh_idx: visible_idx,
+                            mat_bg_idx: if mat_bg.is_some() {
+                                Some(visible_idx)
+                            } else {
+                                None
+                            },
+                            tex_idx: tex_index.unwrap_or(0) as usize,
+                            indices: Vec::new(),
                         });
                     entry.indices.push(visible_idx);
                 }
@@ -2953,10 +2947,8 @@ impl Renderer {
                     render_pass.set_bind_group(2, &self.lighting_bind_group, &[]);
                     render_pass.set_bind_group(3, texture_bg, &[]);
                     render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(
-                        mesh.index_buffer.slice(..),
-                        wgpu::IndexFormat::Uint32,
-                    );
+                    render_pass
+                        .set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
                     for &orig_idx in &batch.indices {
                         let visible_pos = visible_indices

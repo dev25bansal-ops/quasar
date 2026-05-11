@@ -326,7 +326,7 @@ impl<S: PredictionSnapshot> PredictionManager<S> {
             local_positions
                 .iter()
                 .find(|(lid, _)| *lid == *eid)
-                .is_none_or(|(_, local_pos)| {
+                .map_or(true, |(_, local_pos)| {
                     let dx = server_pos[0] - local_pos[0];
                     let dy = server_pos[1] - local_pos[1];
                     let dz = server_pos[2] - local_pos[2];
@@ -994,7 +994,7 @@ mod tests {
         let local_positions: Vec<(u64, [f32; 3])> = vec![]; // Missing entity
 
         let result = manager.on_server_confirm(&confirmation, &local_positions);
-        assert!(result.is_some()); // is_none_or returns true when entity is missing
+        assert!(result.is_some()); // Missing entities are treated as prediction mismatches.
     }
 
     #[test]
@@ -1007,14 +1007,11 @@ mod tests {
         let confirmation = make_server_confirmation(
             2,
             vec![
-                (1, [0.0, 0.0, 0.0]),  // Matches
+                (1, [0.0, 0.0, 0.0]),   // Matches
                 (2, [100.0, 0.0, 0.0]), // Mismatch
             ],
         );
-        let local_positions = vec![
-            (1, [0.0, 0.0, 0.0]),
-            (2, [0.0, 0.0, 0.0]),
-        ];
+        let local_positions = vec![(1, [0.0, 0.0, 0.0]), (2, [0.0, 0.0, 0.0])];
 
         let result = manager.on_server_confirm(&confirmation, &local_positions);
         assert!(result.is_some()); // Any mismatch triggers rollback

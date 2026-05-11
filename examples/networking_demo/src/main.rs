@@ -55,9 +55,9 @@ async fn run_server(sessions: SessionStore) -> std::net::SocketAddr {
     let addr = "127.0.0.1:0";
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
     let bound_addr = listener.local_addr().expect("Failed to get address");
-    
+
     log::info!("Lobby server listening on {}", bound_addr);
-    
+
     tokio::spawn(async move {
         loop {
             match listener.accept().await {
@@ -74,30 +74,30 @@ async fn run_server(sessions: SessionStore) -> std::net::SocketAddr {
             }
         }
     });
-    
+
     bound_addr
 }
 
 async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
-    
+
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).await.is_err() || request_line.is_empty() {
         return;
     }
     request_line = request_line.trim().to_string();
-    
+
     let parts: Vec<&str> = request_line.split_whitespace().collect();
     if parts.len() < 3 {
         send_error(&mut writer, 400, "Bad Request").await;
         return;
     }
-    
+
     let method = parts[0];
     let path = parts[1];
     let path_without_query = path.split('?').next().unwrap_or(path);
-    
+
     let mut headers = HashMap::new();
     loop {
         let mut line = String::new();
@@ -112,12 +112,12 @@ async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
             headers.insert(key.to_lowercase(), value.trim().to_string());
         }
     }
-    
+
     let content_length: usize = headers
         .get("content-length")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    
+
     let body_str = if content_length > 0 {
         let mut body_buf = vec![0u8; content_length];
         if reader.read_exact(&mut body_buf).await.is_err() {
@@ -128,16 +128,14 @@ async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
     } else {
         String::new()
     };
-    
+
     let response = match (method, path_without_query) {
         ("GET", path) if path.starts_with("/api/sessions/") => {
             let session_id_str = path.trim_start_matches("/api/sessions/");
             handle_get_session(session_id_str, sessions.clone()).await
         }
         ("GET", "/api/sessions") => handle_list_sessions(sessions.clone()).await,
-        ("POST", "/api/sessions") => {
-            handle_create_session(&body_str, sessions.clone()).await
-        }
+        ("POST", "/api/sessions") => handle_create_session(&body_str, sessions.clone()).await,
         ("POST", path) if path.starts_with("/api/sessions/") && path.ends_with("/join") => {
             let path = path.trim_start_matches("/api/sessions/");
             let session_id_str = path.trim_end_matches("/join");
@@ -158,7 +156,7 @@ async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
             message: "Not Found".to_string(),
         }),
     };
-    
+
     match response {
         Ok(json) => send_json(&mut writer, 200, &json).await,
         Err(e) => {
@@ -176,7 +174,10 @@ async fn handle_connection(stream: TcpStream, sessions: SessionStore) {
     }
 }
 
-async fn handle_get_session(session_id_str: &str, sessions: SessionStore) -> Result<String, LobbyError> {
+async fn handle_get_session(
+    session_id_str: &str,
+    sessions: SessionStore,
+) -> Result<String, LobbyError> {
     let session_id: u64 = u64::from_str_radix(session_id_str, 16)
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
     let store = sessions.read().await;
@@ -198,19 +199,22 @@ async fn handle_create_session(body: &str, sessions: SessionStore) -> Result<Str
         config: SessionConfig,
         player_id: PlayerId,
     }
-    
+
     let request: Request =
         serde_json::from_str(body).map_err(|e| LobbyError::Serialization(e.to_string()))?;
-    
+
     let session_id = generate_session_id();
     let player = quasar_lobby::PlayerInfo {
         id: request.player_id.clone(),
-        name: format!("Player-{}", request.player_id.0.chars().take(6).collect::<String>()),
+        name: format!(
+            "Player-{}",
+            request.player_id.0.chars().take(6).collect::<String>()
+        ),
         team: None,
         is_ready: false,
         metadata: HashMap::new(),
     };
-    
+
     let session = quasar_lobby::Session {
         id: session_id,
         config: request.config,
@@ -220,23 +224,23 @@ async fn handle_create_session(body: &str, sessions: SessionStore) -> Result<Str
         server_address: Some("127.0.0.1:7777".to_string()),
         created_at: chrono_timestamp(),
     };
-    
+
     #[derive(serde::Serialize)]
     struct Response {
         session: quasar_lobby::Session,
         connection_token: String,
         server_address: String,
     }
-    
+
     let response = Response {
         server_address: session.server_address.clone().unwrap_or_default(),
         connection_token: format!("token-{}", session_id.0),
         session: session.clone(),
     };
-    
+
     let mut store = sessions.write().await;
     store.insert(session_id, session);
-    
+
     serde_json::to_string(&response).map_err(|e| LobbyError::Serialization(e.to_string()))
 }
 
@@ -250,51 +254,54 @@ async fn handle_join_session(
         player_id: PlayerId,
         password: Option<String>,
     }
-    
+
     let request: Request =
         serde_json::from_str(body).map_err(|e| LobbyError::Serialization(e.to_string()))?;
-    
+
     let session_id: u64 = u64::from_str_radix(session_id_str, 16)
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
-    
+
     let mut store = sessions.write().await;
     let session = store
         .get_mut(&SessionId(session_id))
         .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
-    
+
     if session.player_count >= session.config.max_players {
         return Err(LobbyError::SessionFull(SessionId(session_id)));
     }
-    
+
     if let Some(ref required) = session.config.password {
         if request.password.as_ref() != Some(required) {
             return Err(LobbyError::InvalidPassword);
         }
     }
-    
+
     let player = quasar_lobby::PlayerInfo {
         id: request.player_id.clone(),
-        name: format!("Player-{}", request.player_id.0.chars().take(6).collect::<String>()),
+        name: format!(
+            "Player-{}",
+            request.player_id.0.chars().take(6).collect::<String>()
+        ),
         team: None,
         is_ready: false,
         metadata: HashMap::new(),
     };
-    
+
     session.players.push(player);
     session.player_count += 1;
-    
+
     let join_info = quasar_lobby::JoinInfo {
         session: session.clone(),
         connection_token: format!("token-{}", session_id),
         server_address: session.server_address.clone().unwrap_or_default(),
         player_id: request.player_id,
     };
-    
+
     #[derive(serde::Serialize)]
     struct Response {
         join_info: quasar_lobby::JoinInfo,
     }
-    
+
     serde_json::to_string(&Response { join_info })
         .map_err(|e| LobbyError::Serialization(e.to_string()))
 }
@@ -308,21 +315,21 @@ async fn handle_leave_session(
     struct Request {
         player_id: PlayerId,
     }
-    
+
     let request: Request =
         serde_json::from_str(body).map_err(|e| LobbyError::Serialization(e.to_string()))?;
-    
+
     let session_id: u64 = u64::from_str_radix(session_id_str, 16)
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
-    
+
     let mut store = sessions.write().await;
     let session = store
         .get_mut(&SessionId(session_id))
         .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
-    
+
     session.players.retain(|p| p.id != request.player_id);
     session.player_count = session.players.len() as u32;
-    
+
     Ok("null".to_string())
 }
 
@@ -332,12 +339,12 @@ async fn handle_destroy_session(
 ) -> Result<String, LobbyError> {
     let session_id: u64 = u64::from_str_radix(session_id_str, 16)
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
-    
+
     let mut store = sessions.write().await;
     store
         .remove(&SessionId(session_id))
         .ok_or(LobbyError::SessionNotFound(SessionId(session_id)))?;
-    
+
     Ok("null".to_string())
 }
 
@@ -369,20 +376,20 @@ async fn send_error(stream: &mut tokio::net::tcp::OwnedWriteHalf, status: u16, m
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    
+
     println!("=== Quasar Networking Demo ===\n");
-    
+
     let sessions: SessionStore = Arc::new(RwLock::new(HashMap::new()));
-    
+
     let server_addr = run_server(sessions.clone()).await;
     let server_url = format!("http://{}", server_addr);
-    
+
     println!("Server started at {}", server_url);
-    
+
     let client = LobbyClient::new(&server_url);
-    
+
     println!("\n--- Player 1: Creating a session ---");
-    
+
     let config = SessionConfig {
         name: "Epic Deathmatch".to_string(),
         max_players: 4,
@@ -391,7 +398,7 @@ async fn main() {
         is_public: true,
         ..Default::default()
     };
-    
+
     let create_result = client.create_session(config.clone()).await;
     let (session, _join_info) = match create_result {
         Ok((session, join_info)) => {
@@ -407,37 +414,45 @@ async fn main() {
             return;
         }
     };
-    
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("\n--- Player 2: Finding and joining the session ---");
     let player2_id = PlayerId::new();
     println!("Player 2 ID: {}", player2_id);
-    
+
     let filters = SessionFilters {
         game_mode: Some("deathmatch".to_string()),
         region: Some("us-west".to_string()),
         ..Default::default()
     };
-    
+
     let sessions_found = client.find_sessions(filters.clone()).await;
     match sessions_found {
         Ok(list) => {
             println!("Found {} session(s)", list.len());
             for s in &list {
-                println!("  - {} ({}/{} players)", s.config.name, s.player_count, s.config.max_players);
+                println!(
+                    "  - {} ({}/{} players)",
+                    s.config.name, s.player_count, s.config.max_players
+                );
             }
         }
         Err(e) => {
             println!("Failed to find sessions: {}", e);
         }
     }
-    
-    let join_result = client.join_session(session.id, player2_id.clone(), None).await;
+
+    let join_result = client
+        .join_session(session.id, player2_id.clone(), None)
+        .await;
     match join_result {
         Ok(join_info) => {
             println!("Player 2 joined session: {}", join_info.session.id);
-            println!("Players now: {}/{}", join_info.session.player_count, join_info.session.config.max_players);
+            println!(
+                "Players now: {}/{}",
+                join_info.session.player_count, join_info.session.config.max_players
+            );
             for player in &join_info.session.players {
                 println!("  - {} ({})", player.name, player.id);
             }
@@ -446,9 +461,9 @@ async fn main() {
             println!("Failed to join session: {}", e);
         }
     }
-    
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("\n--- Checking session state ---");
     let session_info = client.get_session(session.id).await;
     match session_info {
@@ -461,7 +476,7 @@ async fn main() {
             println!("Failed to get session: {}", e);
         }
     }
-    
+
     println!("\n--- Player 2: Leaving the session ---");
     let leave_result = client.leave_session(session.id, player2_id.clone()).await;
     match leave_result {
@@ -472,9 +487,9 @@ async fn main() {
             println!("Failed to leave session: {}", e);
         }
     }
-    
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("\n--- Final session state ---");
     let final_session = client.get_session(session.id).await;
     match final_session {
@@ -486,7 +501,7 @@ async fn main() {
             println!("Failed to get session: {}", e);
         }
     }
-    
+
     println!("\n--- Destroying the session ---");
     let destroy_result = client.destroy_session(session.id).await;
     match destroy_result {
@@ -497,9 +512,9 @@ async fn main() {
             println!("Failed to destroy session: {}", e);
         }
     }
-    
+
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     println!("\n--- Verifying session is gone ---");
     let gone = client.get_session(session.id).await;
     match gone {
@@ -510,6 +525,6 @@ async fn main() {
             println!("Session successfully removed");
         }
     }
-    
+
     println!("\n=== Demo Complete ===");
 }

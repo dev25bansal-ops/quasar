@@ -91,10 +91,7 @@ fn test_spawn_entity_with_networked_components() {
             max: 100,
         },
     );
-    world.insert(
-        entity,
-        NetworkedOwner { client_id: 42 },
-    );
+    world.insert(entity, NetworkedOwner { client_id: 42 });
 
     // Verify all components
     assert!(world.get::<NetworkedPosition>(entity).is_some());
@@ -250,7 +247,7 @@ fn test_delta_compression_positions() {
 
     // Update position slightly
     let pos = world.get_mut::<NetworkedPosition>(entity).unwrap();
-    pos.x = 0.005; // 5mm change (below quantization precision)
+    pos.x = 0.004; // 4mm change (below nearest-centimeter quantization threshold)
     pos.y = 0.0;
     pos.z = 0.0;
 
@@ -346,7 +343,6 @@ fn test_spatial_grid_insert_and_query() {
 // ---------------------------------------------------------------------------
 // 3. Verify prediction/rollback with entity updates
 // ---------------------------------------------------------------------------
-
 
 use quasar_core::network::{
     EntitySnapshot as NetEntitySnapshot, InputData, InputType, NetworkEntityId,
@@ -566,11 +562,7 @@ fn test_replication_registry_register_and_serialize() {
         z: 3.0,
     };
     let mut buf = Vec::new();
-    registry.serialize(
-        type_id.unwrap(),
-        &transform as &dyn std::any::Any,
-        &mut buf,
-    );
+    registry.serialize(type_id.unwrap(), &transform as &dyn std::any::Any, &mut buf);
 
     assert_eq!(buf.len(), 12); // 3 * 4 bytes
 

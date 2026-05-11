@@ -131,13 +131,17 @@ pub struct PooledBuffer<'a> {
 impl<'a> std::ops::Deref for PooledBuffer<'a> {
     type Target = Vec<u8>;
     fn deref(&self) -> &Self::Target {
-        self.buffer.as_ref().expect("pooled buffer was already consumed")
+        self.buffer
+            .as_ref()
+            .expect("pooled buffer was already consumed")
     }
 }
 
 impl<'a> std::ops::DerefMut for PooledBuffer<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.buffer.as_mut().expect("pooled buffer was already consumed")
+        self.buffer
+            .as_mut()
+            .expect("pooled buffer was already consumed")
     }
 }
 
@@ -234,14 +238,12 @@ impl Default for NetworkSecurityConfig {
 }
 
 /// Per-client security state.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ClientSecurityState {
     pub rate_limiter: RateLimiter,
     pub last_sequence: u64,
     pub seen_entities: HashMap<NetworkEntityId, Instant>,
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
@@ -465,21 +467,9 @@ impl EntitySnapshot {
     /// Serialize a specific component slot for delta transmission.
     pub fn serialize_slot(&self, slot: usize) -> Option<Vec<u8>> {
         match slot {
-            0 => Some(
-                self.position
-                    .iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect(),
-            ),
-            1 => Some(
-                self.rotation
-                    .iter()
-                    .flat_map(|f| f.to_le_bytes())
-                    .collect(),
-            ),
-            2 => Some(
-                self.scale.iter().flat_map(|f| f.to_le_bytes()).collect(),
-            ),
+            0 => Some(self.position.iter().flat_map(|f| f.to_le_bytes()).collect()),
+            1 => Some(self.rotation.iter().flat_map(|f| f.to_le_bytes()).collect()),
+            2 => Some(self.scale.iter().flat_map(|f| f.to_le_bytes()).collect()),
             3 => Some(self.frame.to_le_bytes().to_vec()),
             _ => None,
         }
@@ -1284,22 +1274,34 @@ impl DeltaCompressor {
         let mut offset = 0usize;
 
         let read_f32 = |d: &[u8], o: &mut usize| -> Option<f32> {
-            if *o + 4 > d.len() { return None; }
+            if *o + 4 > d.len() {
+                return None;
+            }
             let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
             *o += 4;
             Some(f32::from_le_bytes(bytes))
         };
         let read_u32 = |d: &[u8], o: &mut usize| -> Option<u32> {
-            if *o + 4 > d.len() { return None; }
+            if *o + 4 > d.len() {
+                return None;
+            }
             let bytes: [u8; 4] = [d[*o], d[*o + 1], d[*o + 2], d[*o + 3]];
             *o += 4;
             Some(u32::from_le_bytes(bytes))
         };
         let read_u64 = |d: &[u8], o: &mut usize| -> Option<u64> {
-            if *o + 8 > d.len() { return None; }
+            if *o + 8 > d.len() {
+                return None;
+            }
             let bytes: [u8; 8] = [
-                d[*o], d[*o + 1], d[*o + 2], d[*o + 3],
-                d[*o + 4], d[*o + 5], d[*o + 6], d[*o + 7],
+                d[*o],
+                d[*o + 1],
+                d[*o + 2],
+                d[*o + 3],
+                d[*o + 4],
+                d[*o + 5],
+                d[*o + 6],
+                d[*o + 7],
             ];
             *o += 8;
             Some(u64::from_le_bytes(bytes))
@@ -1316,9 +1318,11 @@ impl DeltaCompressor {
 
         let position = if delta.flags & DeltaFlags::POSITION != 0 {
             if base.is_none() {
-                match (read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset)) {
+                match (
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ) {
                     (Some(x), Some(y), Some(z)) => [x, y, z],
                     _ => return default_snap,
                 }
@@ -1338,10 +1342,12 @@ impl DeltaCompressor {
 
         let rotation = if delta.flags & DeltaFlags::ROTATION != 0 {
             if base.is_none() {
-                match (read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset)) {
+                match (
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ) {
                     (Some(x), Some(y), Some(z), Some(w)) => [x, y, z, w],
                     _ => return default_snap,
                 }
@@ -1361,9 +1367,11 @@ impl DeltaCompressor {
 
         let scale = if delta.flags & DeltaFlags::SCALE != 0 {
             if base.is_none() {
-                match (read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset),
-                       read_f32(&delta.data, &mut offset)) {
+                match (
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                    read_f32(&delta.data, &mut offset),
+                ) {
                     (Some(x), Some(y), Some(z)) => [x, y, z],
                     _ => return default_snap,
                 }
@@ -1925,9 +1933,10 @@ impl NetworkPlugin {
         tick: u64,
         hashes: &std::collections::HashMap<NetworkEntityId, [u64; MAX_COMPONENT_SLOTS]>,
     ) {
-        let baseline = self.client_baselines.entry(client_id).or_insert_with(|| {
-            ClientBaseline::new(client_id)
-        });
+        let baseline = self
+            .client_baselines
+            .entry(client_id)
+            .or_insert_with(|| ClientBaseline::new(client_id));
         baseline.acknowledge(tick, hashes);
     }
 
@@ -1997,7 +2006,10 @@ fn network_system(world: &mut crate::World) {
                 NetworkPayload::EntityDelta { tick, deltas } => {
                     delta_updates.push((*tick, deltas.clone()));
                 }
-                NetworkPayload::DeltaAck { acked_tick, entity_hashes } => {
+                NetworkPayload::DeltaAck {
+                    acked_tick,
+                    entity_hashes,
+                } => {
                     // Parse flat vec back into HashMap.
                     let mut hashes = HashMap::new();
                     let mut i = 0;
@@ -2029,10 +2041,7 @@ fn network_system(world: &mut crate::World) {
 
         let entity_map: HashMap<u32, crate::ecs::Entity> = {
             let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-            query
-                .iter(world)
-                .map(|(e, _)| (e.index(), e))
-                .collect()
+            query.iter(world).map(|(e, _)| (e.index(), e)).collect()
         };
 
         for (net_id, position, rotation, scale) in &transform_updates {
@@ -2067,10 +2076,7 @@ fn network_system(world: &mut crate::World) {
         };
         if let Some(idx) = entity_index {
             let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-            let all_entities: Vec<crate::ecs::Entity> = query
-                .iter(world)
-                .map(|(e, _)| e)
-                .collect();
+            let all_entities: Vec<crate::ecs::Entity> = query.iter(world).map(|(e, _)| e).collect();
             for entity in all_entities {
                 if entity.index() == idx {
                     world.despawn(entity);
@@ -2109,10 +2115,7 @@ fn network_system(world: &mut crate::World) {
 
         let entity_map: HashMap<u32, crate::ecs::Entity> = {
             let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-            query
-                .iter(world)
-                .map(|(e, _)| (e.index(), e))
-                .collect()
+            query.iter(world).map(|(e, _)| (e.index(), e)).collect()
         };
 
         for delta in deltas {
@@ -2127,9 +2130,7 @@ fn network_system(world: &mut crate::World) {
                                     t.position = quasar_math::Vec3::new(
                                         f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
                                         f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-                                        f32::from_le_bytes([
-                                            data[8], data[9], data[10], data[11],
-                                        ]),
+                                        f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
                                     );
                                 }
                                 1 if data.len() >= 16 => {
@@ -2137,9 +2138,7 @@ fn network_system(world: &mut crate::World) {
                                     t.rotation = quasar_math::Quat::from_xyzw(
                                         f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
                                         f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-                                        f32::from_le_bytes([
-                                            data[8], data[9], data[10], data[11],
-                                        ]),
+                                        f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
                                         f32::from_le_bytes([
                                             data[12], data[13], data[14], data[15],
                                         ]),
@@ -2150,9 +2149,7 @@ fn network_system(world: &mut crate::World) {
                                     t.scale = quasar_math::Vec3::new(
                                         f32::from_le_bytes([data[0], data[1], data[2], data[3]]),
                                         f32::from_le_bytes([data[4], data[5], data[6], data[7]]),
-                                        f32::from_le_bytes([
-                                            data[8], data[9], data[10], data[11],
-                                        ]),
+                                        f32::from_le_bytes([data[8], data[9], data[10], data[11]]),
                                     );
                                 }
                                 _ => {} // Unknown or insufficient data
@@ -2190,7 +2187,8 @@ fn network_system(world: &mut crate::World) {
             Some(rep_res) => {
                 let ack_tick = rep_res.last_delta_tick;
 
-                let server_addr = if let Some(replication) = world.resource::<NetworkReplication>() {
+                let server_addr = if let Some(replication) = world.resource::<NetworkReplication>()
+                {
                     let state = replication.state.read().unwrap_or_else(|e| e.into_inner());
                     if let NetworkRole::Client { server_addr } = &state.config.role {
                         Some(*server_addr)
@@ -2208,9 +2206,8 @@ fn network_system(world: &mut crate::World) {
 
         if let Some(server_addr) = server_addr {
             // Serialize hashes into a flat Vec<u64>.
-            let mut entity_hashes: Vec<u64> = Vec::with_capacity(
-                hashes.len() * (1 + MAX_COMPONENT_SLOTS),
-            );
+            let mut entity_hashes: Vec<u64> =
+                Vec::with_capacity(hashes.len() * (1 + MAX_COMPONENT_SLOTS));
             for (entity_id, h) in &hashes {
                 entity_hashes.push(entity_id.0);
                 entity_hashes.extend_from_slice(&h[..]);
@@ -2250,13 +2247,8 @@ fn network_system(world: &mut crate::World) {
     for (acked_tick, _hashes) in &delta_ack_updates {
         if let Some(rep_res) = world.resource_mut::<ReplicationResource>() {
             // Promote last_sent to baselines upon acknowledgment.
-            rep_res
-                .delta_compressor
-                .acknowledge_baseline(*acked_tick);
-            log::debug!(
-                "Delta ACK processed for tick {}",
-                acked_tick
-            );
+            rep_res.delta_compressor.acknowledge_baseline(*acked_tick);
+            log::debug!("Delta ACK processed for tick {}", acked_tick);
         }
     }
 
@@ -2336,9 +2328,8 @@ fn network_system(world: &mut crate::World) {
 
     let _spatial_grid: SpatialGrid = {
         let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-        let entities_with_transforms: Vec<(crate::ecs::Entity, &quasar_math::Transform)> = query
-            .iter(world)
-            .collect();
+        let entities_with_transforms: Vec<(crate::ecs::Entity, &quasar_math::Transform)> =
+            query.iter(world).collect();
 
         let mut grid = SpatialGrid::new(20.0);
         for (entity, t) in entities_with_transforms {
@@ -2373,7 +2364,12 @@ fn network_system(world: &mut crate::World) {
                                 payload: NetworkPayload::EntityTransform {
                                     entity_id: *net_id,
                                     position: [t.position.x, t.position.y, t.position.z],
-                                    rotation: [t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w],
+                                    rotation: [
+                                        t.rotation.x,
+                                        t.rotation.y,
+                                        t.rotation.z,
+                                        t.rotation.w,
+                                    ],
                                     scale: [t.scale.x, t.scale.y, t.scale.z],
                                 },
                             },
@@ -2387,7 +2383,10 @@ fn network_system(world: &mut crate::World) {
         // Build client positions from controlled entities (entities with owner matching client).
         // For simplicity, use AudioListener position if available, else origin.
         let client_positions: HashMap<ClientId, Vec3> = {
-            let mut query = crate::ecs::CachedArchetypeQueryState::<(&Replicated, &quasar_math::Transform)>::new();
+            let mut query = crate::ecs::CachedArchetypeQueryState::<(
+                &Replicated,
+                &quasar_math::Transform,
+            )>::new();
             query
                 .iter(world)
                 .filter_map(|(_, (rep, t))| {
@@ -3977,10 +3976,8 @@ fn server_replication_tick(world: &mut crate::World) {
         let despawns = std::mem::take(&mut rep_res.pending_despawns);
 
         // Build a lookup of current snapshots by entity ID for quick access.
-        let snapshot_map: std::collections::HashMap<NetworkEntityId, &EntitySnapshot> = snapshots
-            .iter()
-            .map(|(id, snap)| (*id, snap))
-            .collect();
+        let snapshot_map: std::collections::HashMap<NetworkEntityId, &EntitySnapshot> =
+            snapshots.iter().map(|(id, snap)| (*id, snap)).collect();
 
         // Handle despawns: remove from delta compressor and baselines.
         for net_id in &despawns {
@@ -4020,10 +4017,7 @@ fn server_replication_tick(world: &mut crate::World) {
         }
 
         // Per-client delta compression.
-        for (&addr, _client_id) in client_addrs
-            .iter()
-            .zip(client_ids.iter())
-        {
+        for (&addr, _client_id) in client_addrs.iter().zip(client_ids.iter()) {
             let mut delta_frame = DeltaFrame::new(frame_number);
             let mut has_any_delta = false;
 
@@ -4099,10 +4093,8 @@ fn server_replication_tick(world: &mut crate::World) {
         if rep_res.baseline_refresh_pending {
             rep_res.baseline_refresh_pending = false;
 
-            let snap_entities: Vec<EntitySnapshot> = snapshots
-                .iter()
-                .map(|(_, s)| s.clone())
-                .collect();
+            let snap_entities: Vec<EntitySnapshot> =
+                snapshots.iter().map(|(_, s)| s.clone()).collect();
 
             if !snap_entities.is_empty() {
                 let msg = NetworkMessage {
@@ -4169,10 +4161,8 @@ fn client_interpolation_tick(world: &mut crate::World) {
 
     // Find entities and apply transforms.
     let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-    let all_entities: Vec<(crate::ecs::Entity, u32)> = query
-        .iter(world)
-        .map(|(e, _)| (e, e.index()))
-        .collect();
+    let all_entities: Vec<(crate::ecs::Entity, u32)> =
+        query.iter(world).map(|(e, _)| (e, e.index())).collect();
 
     for (target_idx, pos, rot) in &entity_map {
         for &(entity, idx) in &all_entities {
@@ -4297,10 +4287,7 @@ pub fn rollback_system(world: &mut crate::World) {
 
         let all_entities: Vec<(crate::ecs::Entity, u32)> = {
             let mut query = crate::ecs::CachedArchetypeQueryState::<&quasar_math::Transform>::new();
-            query
-                .iter(world)
-                .map(|(e, _)| (e, e.index()))
-                .collect()
+            query.iter(world).map(|(e, _)| (e, e.index())).collect()
         };
 
         for (net_id, snap) in &corrected {

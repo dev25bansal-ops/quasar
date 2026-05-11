@@ -1,9 +1,9 @@
 //! Lobby client implementation.
 
+use crate::secret;
 use crate::{
     protocol::*, JoinInfo, LobbyError, PlayerId, Session, SessionConfig, SessionFilters, SessionId,
 };
-use crate::secret;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -470,7 +470,7 @@ fn uuid_v4() -> String {
 }
 
 /// Generate a secure session token for authentication.
-/// Uses HMAC-SHA256 with a secret key for token generation.
+/// Uses a keyed BLAKE3 MAC with a secret key for token generation.
 pub fn generate_session_token(
     session_id: SessionId,
     player_id: &PlayerId,
@@ -478,41 +478,187 @@ pub fn generate_session_token(
 ) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(&session_id.0.to_le_bytes());
-    hasher.update(player_id.0.as_bytes());
-    hasher.update(secret);
-    hasher.update(
-        &SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .to_le_bytes(),
-    );
-
-    let hash = hasher.finalize();
-    format!("sess_{}_{}", session_id, hash.to_hex())
+    let issued_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let signature = session_token_signature(session_id, player_id, issued_at, secret);
+    format!(
+        "sess_{}_{}_{}_{}",
+        session_id,
+        hex_encode(player_id.0.as_bytes()),
+        issued_at,
+        signature.to_hex()
+    )
 }
 
 /// Validate a session token.
 /// Returns Ok((session_id, player_id)) if valid, Err otherwise.
 pub fn validate_session_token(
     token: &str,
-    _secret: &[u8],
-    _max_age_secs: u64,
+    secret: &[u8],
+    max_age_secs: u64,
 ) -> Result<(SessionId, PlayerId), LobbyError> {
-    let parts: Vec<&str> = token.splitn(3, '_').collect();
-    if parts.len() != 3 || parts[0] != "sess" {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let parts: Vec<&str> = token.splitn(5, '_').collect();
+    if parts.len() != 5 || parts[0] != "sess" {
         return Err(LobbyError::InvalidPassword);
     }
 
     let session_id: SessionId = parts[1]
         .parse()
         .map_err(|_| LobbyError::SessionNotFound(SessionId(0)))?;
+    let player_bytes = hex_decode(parts[2])?;
+    let player_id =
+        PlayerId(String::from_utf8(player_bytes).map_err(|_| LobbyError::InvalidPassword)?);
+    let issued_at: u64 = parts[3].parse().map_err(|_| LobbyError::InvalidPassword)?;
+    let provided = hex_decode(parts[4])?;
 
-    // In a real implementation, we'd verify the HMAC and check expiration
-    // For now, just parse the token format
-    Ok((session_id, PlayerId(uuid_v4())))
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    if issued_at > now.saturating_add(60) {
+        return Err(LobbyError::InvalidPassword);
+    }
+    if max_age_secs > 0 && now.saturating_sub(issued_at) > max_age_secs {
+        return Err(LobbyError::InvalidPassword);
+    }
+
+    let expected = session_token_signature(session_id, &player_id, issued_at, secret);
+    if !constant_time_eq(&provided, expected.as_bytes()) {
+        return Err(LobbyError::InvalidPassword);
+    }
+
+    Ok((session_id, player_id))
+}
+
+fn session_token_signature(
+    session_id: SessionId,
+    player_id: &PlayerId,
+    issued_at: u64,
+    secret: &[u8],
+) -> blake3::Hash {
+    let key = blake3::hash(secret);
+    let mut hasher = blake3::Hasher::new_keyed(key.as_bytes());
+    hasher.update(b"quasar-lobby-session-v1");
+    hasher.update(&session_id.0.to_le_bytes());
+    hasher.update(&(player_id.0.len() as u64).to_le_bytes());
+    hasher.update(player_id.0.as_bytes());
+    hasher.update(&issued_at.to_le_bytes());
+    hasher.finalize()
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode(input: &str) -> Result<Vec<u8>, LobbyError> {
+    if input.len() % 2 != 0 {
+        return Err(LobbyError::InvalidPassword);
+    }
+
+    let mut out = Vec::with_capacity(input.len() / 2);
+    for pair in input.as_bytes().chunks_exact(2) {
+        let high = hex_value(pair[0])?;
+        let low = hex_value(pair[1])?;
+        out.push((high << 4) | low);
+    }
+    Ok(out)
+}
+
+fn hex_value(byte: u8) -> Result<u8, LobbyError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(LobbyError::InvalidPassword),
+    }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+
+    let mut diff = 0u8;
+    for (&left, &right) in a.iter().zip(b.iter()) {
+        diff |= left ^ right;
+    }
+    diff == 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &[u8] = b"0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn session_token_round_trips_session_and_player() {
+        let session_id = SessionId(42);
+        let player_id = PlayerId("player-1".to_string());
+        let token = generate_session_token(session_id, &player_id, SECRET);
+
+        let validated = validate_session_token(&token, SECRET, 3600).expect("token should verify");
+
+        assert_eq!(validated, (session_id, player_id));
+    }
+
+    #[test]
+    fn session_token_rejects_wrong_secret() {
+        let session_id = SessionId(42);
+        let player_id = PlayerId("player-1".to_string());
+        let token = generate_session_token(session_id, &player_id, SECRET);
+
+        assert!(matches!(
+            validate_session_token(&token, b"different secret with enough bytes", 3600),
+            Err(LobbyError::InvalidPassword)
+        ));
+    }
+
+    #[test]
+    fn session_token_rejects_tampering() {
+        let session_id = SessionId(42);
+        let player_id = PlayerId("player-1".to_string());
+        let token = generate_session_token(session_id, &player_id, SECRET);
+        let tampered = token.replace(
+            &hex_encode(player_id.0.as_bytes()),
+            &hex_encode(b"player-2"),
+        );
+
+        assert!(matches!(
+            validate_session_token(&tampered, SECRET, 3600),
+            Err(LobbyError::InvalidPassword)
+        ));
+    }
+
+    #[test]
+    fn session_token_rejects_expired_tokens() {
+        let session_id = SessionId(42);
+        let player_id = PlayerId("player-1".to_string());
+        let issued_at = 1;
+        let signature = session_token_signature(session_id, &player_id, issued_at, SECRET);
+        let token = format!(
+            "sess_{}_{}_{}_{}",
+            session_id,
+            hex_encode(player_id.0.as_bytes()),
+            issued_at,
+            signature.to_hex()
+        );
+
+        assert!(matches!(
+            validate_session_token(&token, SECRET, 1),
+            Err(LobbyError::InvalidPassword)
+        ));
+    }
 }
 
 /// Auth configuration for lobby client.

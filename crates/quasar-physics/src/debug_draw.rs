@@ -10,8 +10,8 @@ use crate::collider::ColliderShape;
 use crate::world::PhysicsWorld;
 
 // Re-export core types for backward compatibility.
-pub use quasar_core::debug_draw::{DebugDraw, DebugDrawConfig, DebugDrawColors, DebugLine};
 use quasar_core::debug_draw::DebugDrawConfig as Config;
+pub use quasar_core::debug_draw::{DebugDraw, DebugDrawColors, DebugDrawConfig, DebugLine};
 
 // ---------------------------------------------------------------------------
 // DebugDraw trait implementation for PhysicsWorld
@@ -34,9 +34,7 @@ impl DebugDraw for PhysicsWorld {
                     config.colors.collider
                 };
 
-                if (is_sensor && config.draw_triggers)
-                    || (!is_sensor && config.draw_colliders)
-                {
+                if (is_sensor && config.draw_triggers) || (!is_sensor && config.draw_colliders) {
                     let shape = collider.shape();
                     Self::wireframe_shape(
                         &mut lines,
@@ -109,20 +107,8 @@ impl PhysicsWorld {
         if let Some(capsule) = shape.as_capsule() {
             let r = capsule.radius;
             let hh = capsule.half_height();
-            Self::wireframe_sphere(
-                lines,
-                [pos[0], pos[1] + hh, pos[2]],
-                r,
-                color,
-                12,
-            );
-            Self::wireframe_sphere(
-                lines,
-                [pos[0], pos[1] - hh, pos[2]],
-                r,
-                color,
-                12,
-            );
+            Self::wireframe_sphere(lines, [pos[0], pos[1] + hh, pos[2]], r, color, 12);
+            Self::wireframe_sphere(lines, [pos[0], pos[1] - hh, pos[2]], r, color, 12);
             for i in 0..4 {
                 let angle = (i as f32) * std::f32::consts::FRAC_PI_2;
                 let dx = r * angle.cos();
@@ -173,12 +159,7 @@ impl PhysicsWorld {
     }
 
     /// Wireframe axis-aligned bounding box.
-    fn wireframe_aabb(
-        lines: &mut Vec<DebugLine>,
-        mins: [f32; 3],
-        maxs: [f32; 3],
-        color: [f32; 4],
-    ) {
+    fn wireframe_aabb(lines: &mut Vec<DebugLine>, mins: [f32; 3], maxs: [f32; 3], color: [f32; 4]) {
         let corners = [
             [mins[0], mins[1], mins[2]],
             [maxs[0], mins[1], mins[2]],

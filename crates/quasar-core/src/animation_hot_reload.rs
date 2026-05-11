@@ -96,7 +96,12 @@ pub enum AnimationReloadEvent {
 impl AnimationReloadEvent {
     /// Create a new `ClipReloaded` event.
     #[must_use]
-    pub fn clip_reloaded(path: PathBuf, clip_name: String, duration: Duration, affected_players: usize) -> Self {
+    pub fn clip_reloaded(
+        path: PathBuf,
+        clip_name: String,
+        duration: Duration,
+        affected_players: usize,
+    ) -> Self {
         Self::ClipReloaded {
             path,
             clip_name,
@@ -267,10 +272,7 @@ impl AnimationHotReloadSystem {
     /// # Returns
     /// A new `AnimationHotReloadSystem` instance, or an error if the
     /// file watcher cannot be created.
-    pub fn new(
-        config: &HotReloadConfig,
-        animations_dir: &Path,
-    ) -> Result<Self, String> {
+    pub fn new(config: &HotReloadConfig, animations_dir: &Path) -> Result<Self, String> {
         let enabled = config.enabled;
         let debounce_interval = config.debounce_interval;
         let max_concurrent_reloads = config.max_concurrent_reloads;
@@ -292,15 +294,9 @@ impl AnimationHotReloadSystem {
                     if animations_dir.exists() {
                         w.watch(animations_dir, RecursiveMode::Recursive)
                             .map_err(|e| format!("Failed to watch {:?}: {}", animations_dir, e))?;
-                        log::info!(
-                            "Animation hot-reload watching: {:?}",
-                            animations_dir
-                        );
+                        log::info!("Animation hot-reload watching: {:?}", animations_dir);
                     } else {
-                        log::warn!(
-                            "Animation directory does not exist: {:?}",
-                            animations_dir
-                        );
+                        log::warn!("Animation directory does not exist: {:?}", animations_dir);
                     }
                     Some(w)
                 }
@@ -520,9 +516,7 @@ impl AnimationHotReloadSystem {
         for path in ready_paths {
             if self.debounce_queue.remove(&path).is_some() {
                 // Avoid duplicate pending reloads
-                if !self.pending_reloads.contains(&path)
-                    && !self.reloading_paths.contains(&path)
-                {
+                if !self.pending_reloads.contains(&path) && !self.reloading_paths.contains(&path) {
                     self.pending_reloads.push_back(path);
                 }
             }
@@ -533,9 +527,7 @@ impl AnimationHotReloadSystem {
     fn process_pending_reloads(&mut self, world: &mut World) {
         let mut processed_count = 0;
 
-        while processed_count < self.max_concurrent_reloads
-            && !self.pending_reloads.is_empty()
-        {
+        while processed_count < self.max_concurrent_reloads && !self.pending_reloads.is_empty() {
             if let Some(path) = self.pending_reloads.pop_front() {
                 // Skip if already reloading this path
                 if self.reloading_paths.contains(&path) {
@@ -560,10 +552,12 @@ impl AnimationHotReloadSystem {
                             .get(&path)
                             .and_then(|names| names.first())
                             .cloned()
-                            .unwrap_or_else(|| path.file_stem()
-                                .and_then(|s| s.to_str())
-                                .unwrap_or("unknown")
-                                .to_string());
+                            .unwrap_or_else(|| {
+                                path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string()
+                            });
 
                         let _ = self.event_sender.send(AnimationReloadEvent::ClipReloaded {
                             path: path.clone(),
@@ -635,8 +629,7 @@ impl AnimationHotReloadSystem {
         }
 
         // Read file contents
-        let bytes = std::fs::read(path)
-            .map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
+        let bytes = std::fs::read(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
 
         // Detect format
         let format = AnimationFormat::from_path(path);
@@ -648,9 +641,7 @@ impl AnimationHotReloadSystem {
         let new_clip = match format {
             AnimationFormat::Json => self.parse_json_animation(&bytes, path)?,
             AnimationFormat::Anim => self.parse_anim_animation(&bytes, path)?,
-            AnimationFormat::Unknown => {
-                return Err(format!("Cannot parse unknown format"))
-            }
+            AnimationFormat::Unknown => return Err(format!("Cannot parse unknown format")),
         };
 
         // Validate the new clip
@@ -658,7 +649,8 @@ impl AnimationHotReloadSystem {
 
         // Save previous version for rollback
         if let Some(old_clip) = self.clip_cache.get(path) {
-            self.previous_clips.insert(path.to_path_buf(), old_clip.clone());
+            self.previous_clips
+                .insert(path.to_path_buf(), old_clip.clone());
         }
 
         // Get the clip name for matching
@@ -714,7 +706,9 @@ impl AnimationHotReloadSystem {
         if pos + 4 > bytes.len() {
             return Err(format!("Truncated name length in {:?}", path));
         }
-        let name_len = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let name_len =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+                as usize;
         pos += 4;
 
         if name_len > 4096 {
@@ -732,7 +726,8 @@ impl AnimationHotReloadSystem {
         if pos + 4 > bytes.len() {
             return Err(format!("Truncated duration in {:?}", path));
         }
-        let duration = f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+        let duration =
+            f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
         pos += 4;
 
         // Read looped flag
@@ -746,11 +741,16 @@ impl AnimationHotReloadSystem {
         if pos + 4 > bytes.len() {
             return Err(format!("Truncated keyframe count in {:?}", path));
         }
-        let keyframe_count = u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]) as usize;
+        let keyframe_count =
+            u32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]])
+                as usize;
         pos += 4;
 
         if keyframe_count > 100_000 {
-            return Err(format!("Too many keyframes ({}) in {:?}", keyframe_count, path));
+            return Err(format!(
+                "Too many keyframes ({}) in {:?}",
+                keyframe_count, path
+            ));
         }
 
         // Read keyframes
@@ -767,28 +767,64 @@ impl AnimationHotReloadSystem {
                 ));
             }
 
-            let time = f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+            let time =
+                f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
             pos += 4;
 
             let position = quasar_math::Vec3::new(
                 f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]),
-                f32::from_le_bytes([bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]]),
-                f32::from_le_bytes([bytes[pos + 8], bytes[pos + 9], bytes[pos + 10], bytes[pos + 11]]),
+                f32::from_le_bytes([
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
+                ]),
+                f32::from_le_bytes([
+                    bytes[pos + 8],
+                    bytes[pos + 9],
+                    bytes[pos + 10],
+                    bytes[pos + 11],
+                ]),
             );
             pos += 12;
 
             let rotation = quasar_math::Quat::from_xyzw(
                 f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]),
-                f32::from_le_bytes([bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]]),
-                f32::from_le_bytes([bytes[pos + 8], bytes[pos + 9], bytes[pos + 10], bytes[pos + 11]]),
-                f32::from_le_bytes([bytes[pos + 12], bytes[pos + 13], bytes[pos + 14], bytes[pos + 15]]),
+                f32::from_le_bytes([
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
+                ]),
+                f32::from_le_bytes([
+                    bytes[pos + 8],
+                    bytes[pos + 9],
+                    bytes[pos + 10],
+                    bytes[pos + 11],
+                ]),
+                f32::from_le_bytes([
+                    bytes[pos + 12],
+                    bytes[pos + 13],
+                    bytes[pos + 14],
+                    bytes[pos + 15],
+                ]),
             );
             pos += 16;
 
             let scale = quasar_math::Vec3::new(
                 f32::from_le_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]),
-                f32::from_le_bytes([bytes[pos + 4], bytes[pos + 5], bytes[pos + 6], bytes[pos + 7]]),
-                f32::from_le_bytes([bytes[pos + 8], bytes[pos + 9], bytes[pos + 10], bytes[pos + 11]]),
+                f32::from_le_bytes([
+                    bytes[pos + 4],
+                    bytes[pos + 5],
+                    bytes[pos + 6],
+                    bytes[pos + 7],
+                ]),
+                f32::from_le_bytes([
+                    bytes[pos + 8],
+                    bytes[pos + 9],
+                    bytes[pos + 10],
+                    bytes[pos + 11],
+                ]),
             );
             pos += 12;
 
@@ -850,7 +886,10 @@ impl AnimationHotReloadSystem {
             if (last_kf.time - clip.duration).abs() > 0.001 {
                 log::warn!(
                     "Animation clip '{}' duration ({}) doesn't match last keyframe time ({}): {:?}",
-                    clip.name, clip.duration, last_kf.time, path
+                    clip.name,
+                    clip.duration,
+                    last_kf.time,
+                    path
                 );
             }
         }
@@ -889,7 +928,11 @@ impl AnimationHotReloadSystem {
             if let Some(player) = world.get_mut::<AnimationPlayer>(entity) {
                 // Preserve time but normalize to new clip duration if needed
                 // The clip duration may have changed, so we clamp time to new duration
-                if let Some(clip) = self.clip_cache.values().find(|c| c.name == snapshot.clip_name) {
+                if let Some(clip) = self
+                    .clip_cache
+                    .values()
+                    .find(|c| c.name == snapshot.clip_name)
+                {
                     // Wrap time to new clip duration to prevent out-of-bounds
                     if clip.duration > 0.0 && player.time > clip.duration {
                         player.time = player.time % clip.duration;
@@ -949,9 +992,8 @@ impl AnimationHotReloadSystem {
 
     /// Clear the animation cache.
     pub fn clear_cache(&mut self) -> usize {
-        let clips_removed = self.clip_cache.len()
-            + self.skeletal_clip_cache.len()
-            + self.state_machine_cache.len();
+        let clips_removed =
+            self.clip_cache.len() + self.skeletal_clip_cache.len() + self.state_machine_cache.len();
 
         self.clip_cache.clear();
         self.skeletal_clip_cache.clear();
@@ -960,9 +1002,9 @@ impl AnimationHotReloadSystem {
         self.previous_skeletal_clips.clear();
         self.path_to_clip_names.clear();
 
-        let _ = self.event_sender.send(AnimationReloadEvent::CacheCleared {
-            clips_removed,
-        });
+        let _ = self
+            .event_sender
+            .send(AnimationReloadEvent::CacheCleared { clips_removed });
 
         clips_removed
     }
@@ -975,7 +1017,9 @@ impl AnimationHotReloadSystem {
         let failed_reloads = total_reloads - successful_reloads;
 
         let avg_duration = if total_reloads > 0 {
-            let total_ms: f64 = self.reload_history.iter()
+            let total_ms: f64 = self
+                .reload_history
+                .iter()
                 .map(|r| r.duration.as_secs_f64())
                 .sum();
             Duration::from_secs_f64(total_ms / total_reloads as f64)
@@ -983,7 +1027,9 @@ impl AnimationHotReloadSystem {
             Duration::ZERO
         };
 
-        let recent_failures: Vec<ReloadRecord> = self.reload_history.iter()
+        let recent_failures: Vec<ReloadRecord> = self
+            .reload_history
+            .iter()
             .filter(|r| !r.success)
             .rev()
             .take(10)
@@ -1059,14 +1105,21 @@ impl AnimationHotReloadSystem {
                         fallback_used
                     );
                 }
-                AnimationReloadEvent::ClipReloadStarted { path, clip_name, .. } => {
+                AnimationReloadEvent::ClipReloadStarted {
+                    path, clip_name, ..
+                } => {
                     log::debug!(
                         "AnimationReloadEvent::ClipReloadStarted {:?} clip={}",
                         path,
                         clip_name
                     );
                 }
-                AnimationReloadEvent::SkeletalClipReloaded { path, clip_name, bone_count, .. } => {
+                AnimationReloadEvent::SkeletalClipReloaded {
+                    path,
+                    clip_name,
+                    bone_count,
+                    ..
+                } => {
                     log::debug!(
                         "AnimationReloadEvent::SkeletalClipReloaded {:?} clip={} ({} bones)",
                         path,
@@ -1074,7 +1127,12 @@ impl AnimationHotReloadSystem {
                         bone_count
                     );
                 }
-                AnimationReloadEvent::StateMachineReloaded { path, machine_name, state_count, .. } => {
+                AnimationReloadEvent::StateMachineReloaded {
+                    path,
+                    machine_name,
+                    state_count,
+                    ..
+                } => {
                     log::debug!(
                         "AnimationReloadEvent::StateMachineReloaded {:?} machine={} ({} states)",
                         path,
@@ -1187,10 +1245,7 @@ mod tests {
 
         // Create a test JSON animation clip
         let clip = AnimationClip::new("test_idle")
-            .add_keyframe(TransformKeyframe::at_position(
-                0.0,
-                quasar_math::Vec3::ZERO,
-            ))
+            .add_keyframe(TransformKeyframe::at_position(0.0, quasar_math::Vec3::ZERO))
             .add_keyframe(TransformKeyframe::at_position(
                 1.0,
                 quasar_math::Vec3::new(10.0, 0.0, 0.0),
@@ -1204,10 +1259,7 @@ mod tests {
         // Create a test binary animation file
         let anim_path = dir.path().join("test_walk.anim");
         let binary_clip = AnimationClip::new("test_walk")
-            .add_keyframe(TransformKeyframe::at_position(
-                0.0,
-                quasar_math::Vec3::ZERO,
-            ))
+            .add_keyframe(TransformKeyframe::at_position(0.0, quasar_math::Vec3::ZERO))
             .add_keyframe(TransformKeyframe::at_position(
                 0.5,
                 quasar_math::Vec3::new(5.0, 0.0, 0.0),
@@ -1333,8 +1385,8 @@ mod tests {
     fn test_cache_clip() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("cached_clip")
             .with_duration(2.0)
@@ -1345,18 +1397,15 @@ mod tests {
 
         assert_eq!(system.cached_clip_count(), 1);
         assert!(system.get_cached_clip(&path).is_some());
-        assert_eq!(
-            system.get_cached_clip(&path).unwrap().name,
-            "cached_clip"
-        );
+        assert_eq!(system.get_cached_clip(&path).unwrap().name, "cached_clip");
     }
 
     #[test]
     fn test_remove_cached_clip() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("temp_clip");
         let path = temp_dir.path().join("temp_clip.json");
@@ -1374,8 +1423,8 @@ mod tests {
     fn test_clear_cache() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Add some clips
         system.cache_clip(
@@ -1399,8 +1448,8 @@ mod tests {
     fn test_validate_clip_valid() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("valid")
             .add_keyframe(TransformKeyframe::at_position(0.0, quasar_math::Vec3::ZERO))
@@ -1417,8 +1466,8 @@ mod tests {
     fn test_validate_clip_empty_keyframes() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("empty").with_duration(1.0);
 
@@ -1431,8 +1480,8 @@ mod tests {
     fn test_validate_clip_negative_duration() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let mut clip = AnimationClip::new("neg_duration")
             .add_keyframe(TransformKeyframe::at_position(0.0, quasar_math::Vec3::ZERO));
@@ -1447,8 +1496,8 @@ mod tests {
     fn test_validate_clip_unsorted_keyframes() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("unsorted")
             .add_keyframe(TransformKeyframe::at_position(1.0, quasar_math::Vec3::ZERO))
@@ -1478,8 +1527,8 @@ mod tests {
     fn test_parse_json_animation() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let clip = AnimationClip::new("json_test")
             .add_keyframe(TransformKeyframe::at_position(0.0, quasar_math::Vec3::ZERO))
@@ -1502,8 +1551,8 @@ mod tests {
     fn test_parse_json_invalid() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let invalid_json = "not valid json";
 
@@ -1516,8 +1565,8 @@ mod tests {
     fn test_parse_anim_binary() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let anim_path = temp_dir.path().join("test_walk.anim");
         let bytes = std::fs::read(&anim_path).expect("Failed to read anim file");
@@ -1535,8 +1584,8 @@ mod tests {
     fn test_parse_anim_too_small() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let small_bytes = [0u8; 5];
         let result = system.parse_anim_animation(&small_bytes, Path::new("tiny.anim"));
@@ -1548,8 +1597,8 @@ mod tests {
     fn test_force_reload() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Pre-cache a clip
         let path = temp_dir.path().join("test_idle.json");
@@ -1572,8 +1621,8 @@ mod tests {
     fn test_poll_events_empty() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let events = system.poll_events();
         assert!(events.is_empty());
@@ -1583,8 +1632,8 @@ mod tests {
     fn test_pending_count() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         assert_eq!(system.pending_count(), 0);
     }
@@ -1593,8 +1642,8 @@ mod tests {
     fn test_clear_pending() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Manually add to pending
         system.pending_reloads.push_back(PathBuf::from("test.json"));
@@ -1608,8 +1657,8 @@ mod tests {
     fn test_get_stats() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         let stats = system.get_stats();
 
@@ -1624,8 +1673,8 @@ mod tests {
     fn test_is_animation_file() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         assert!(system.is_animation_file(Path::new("test.json")));
         assert!(system.is_animation_file(Path::new("test.anim")));
@@ -1637,8 +1686,8 @@ mod tests {
     fn test_debounce_queue_processing() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Manually add to debounce queue with old timestamp
         let path = PathBuf::from("test.json");
@@ -1657,8 +1706,8 @@ mod tests {
     fn test_debounce_queue_not_ready() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Add with recent timestamp
         let path = PathBuf::from("test.json");
@@ -1677,8 +1726,8 @@ mod tests {
     fn test_reload_animation_file_deleted() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         // Cache a clip
         let path = temp_dir.path().join("deleted_clip.json");
@@ -1748,8 +1797,8 @@ mod tests {
     fn test_reload_record_recording() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         system.record_reload_record(
             PathBuf::from("test.json"),
@@ -1769,8 +1818,8 @@ mod tests {
     fn test_state_machine_caching() {
         let temp_dir = create_temp_animation_dir();
         let config = create_test_config();
-        let mut system =
-            AnimationHotReloadSystem::new(&config, temp_dir.path()).expect("Failed to create system");
+        let mut system = AnimationHotReloadSystem::new(&config, temp_dir.path())
+            .expect("Failed to create system");
 
         use crate::animation::AnimationStateNode;
 
@@ -1783,7 +1832,10 @@ mod tests {
 
         assert!(system.get_cached_state_machine(&path).is_some());
         assert_eq!(
-            system.get_cached_state_machine(&path).unwrap().current_state,
+            system
+                .get_cached_state_machine(&path)
+                .unwrap()
+                .current_state,
             "idle"
         );
     }

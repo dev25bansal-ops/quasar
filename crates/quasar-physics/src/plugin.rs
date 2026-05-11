@@ -584,12 +584,12 @@ impl quasar_core::Plugin for PhysicsPlugin {
 
         // Insert physics resource with accumulator
         let mut physics_resource = PhysicsResource::new();
-        
+
         // Connect collision event system to physics world
         if let Some(ref collision_system) = collision_event_system {
             physics_resource.set_collision_event_handler(collision_system.channel());
         }
-        
+
         app.world.insert_resource(physics_resource);
 
         // PreUpdate: Write transforms back to physics (before step)

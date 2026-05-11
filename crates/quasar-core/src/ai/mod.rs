@@ -1,4 +1,4 @@
-﻿//! Behavior Tree AI System for Quasar Engine.
+//! Behavior Tree AI System for Quasar Engine.
 //!
 //! **DEPRECATED**: This module is deprecated. Use the `quasar-ai` crate instead,
 //! which provides more comprehensive AI systems including GOAP, Utility AI,
@@ -21,7 +21,10 @@
 //!
 //! See `quasar-ai` documentation for full API.
 
-#![deprecated(since = "0.1.0", note = "Use quasar-ai crate instead for comprehensive AI systems")]
+#![deprecated(
+    since = "0.1.0",
+    note = "Use quasar-ai crate instead for comprehensive AI systems"
+)]
 
 mod behavior_tree;
 mod blackboard;

@@ -197,13 +197,15 @@ pub fn dequantize_rotation(quant: [i16; 3], largest_idx: u8) -> Quat {
 /// Quantize an angle to 0.1 degree precision.
 pub fn quantize_angle_degrees(angle: f32) -> u16 {
     const SCALE: f32 = 10.0; // 0.1 degree precision
-    ((angle * SCALE).round() as u16).wrapping_add(32768) // offset to handle negative
+    let scaled = (angle * SCALE).round() as i32;
+    let clamped = scaled.clamp(i16::MIN as i32, i16::MAX as i32);
+    (clamped + 32768) as u16
 }
 
 /// Dequantize an angle from 0.1 degree precision.
 pub fn dequantize_angle_degrees(quant: u16) -> f32 {
     const SCALE: f32 = 10.0;
-    (quant.wrapping_sub(32768) as f32) / SCALE
+    ((quant as i32) - 32768) as f32 / SCALE
 }
 
 // ---------------------------------------------------------------------------

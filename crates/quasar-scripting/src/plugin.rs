@@ -63,10 +63,10 @@ impl ScriptingResource {
     /// Initialize the hot-reload system with default scripts directory.
     fn init_hot_reload_system() -> Option<LuaHotReloadSystem> {
         let config = HotReloadConfig::development();
-        
+
         // Try common script directories
         let script_dirs = &["scripts", "assets/scripts", "src/scripts"];
-        
+
         for dir in script_dirs {
             if std::path::Path::new(dir).exists() {
                 match LuaHotReloadSystem::new(dir, config.clone()) {
@@ -80,7 +80,7 @@ impl ScriptingResource {
                 }
             }
         }
-        
+
         log::info!("Lua hot-reload disabled - no scripts directory found");
         None
     }
@@ -598,79 +598,79 @@ impl ScriptingSystem {
     /// Every frame, `on_update(entity_id, dt)` is called.
     /// When an entity is despawned or its script removed, `on_destroy(entity_id)`
     /// is called if present.
-/// Run entity scripts — restructured to avoid borrow conflicts.
-fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
-    // Phase 1: Collect script data
-    let scripts: Vec<(u32, String, bool)> = world
-        .query::<ScriptComponent>()
-        .into_iter()
-        .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
-        .collect();
+    /// Run entity scripts — restructured to avoid borrow conflicts.
+    fn run_entity_scripts(lua: &Lua, world: &mut World, dt: f32) {
+        // Phase 1: Collect script data
+        let scripts: Vec<(u32, String, bool)> = world
+            .query::<ScriptComponent>()
+            .into_iter()
+            .map(|(e, sc)| (e.index(), sc.path.clone(), sc.loaded))
+            .collect();
 
-    if scripts.is_empty() {
-        return;
-    }
+        if scripts.is_empty() {
+            return;
+        }
 
-    // Phase 2: Get registry key (scoped to drop resource borrow)
-    let reg_key_opt = {
-        let Some(resource) = world.resource::<ScriptingResource>() else {
+        // Phase 2: Get registry key (scoped to drop resource borrow)
+        let reg_key_opt = {
+            let Some(resource) = world.resource::<ScriptingResource>() else {
+                return;
+            };
+            resource.entity_scripts_key.as_ref().map(|k| k.clone())
+        };
+
+        // Resource borrow is dropped here
+
+        // Get the entity table if registry key exists
+        let Some(reg_key) = reg_key_opt else {
             return;
         };
-        resource.entity_scripts_key.as_ref().map(|k| k.clone())
-    };
-    
-    // Resource borrow is dropped here
 
-    // Get the entity table if registry key exists
-    let Some(reg_key) = reg_key_opt else {
-        return;
-    };
-    
-    let Ok(entity_table_result) = lua.registry_value::<LuaTable>(&reg_key) else {
-        return;
-    };
-    let entity_table: LuaTable = entity_table_result;
+        let Ok(entity_table_result) = lua.registry_value::<LuaTable>(&reg_key) else {
+            return;
+        };
+        let entity_table: LuaTable = entity_table_result;
 
-    // Phase 3: Process scripts and collect which ones need marking as loaded
-    let mut loaded_indices: Vec<u32> = Vec::new();
-    
-    for (eid, path, loaded) in &scripts {
-        if !loaded {
-            // Try to load the script
-            if let Ok(source) = std::fs::read_to_string(path) {
-                if let Ok(behaviour) = lua.load(&source).eval::<LuaTable>() {
-                    // Call on_start or on_init
-                    if let Ok(start_fn) = behaviour.get::<LuaFunction>("on_start") {
-                        let _ = start_fn.call::<()>(*eid);
-                    } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
-                        let _ = init_fn.call::<()>(*eid);
+        // Phase 3: Process scripts and collect which ones need marking as loaded
+        let mut loaded_indices: Vec<u32> = Vec::new();
+
+        for (eid, path, loaded) in &scripts {
+            if !loaded {
+                // Try to load the script
+                if let Ok(source) = std::fs::read_to_string(path) {
+                    if let Ok(behaviour) = lua.load(&source).eval::<LuaTable>() {
+                        // Call on_start or on_init
+                        if let Ok(start_fn) = behaviour.get::<LuaFunction>("on_start") {
+                            let _ = start_fn.call::<()>(*eid);
+                        } else if let Ok(init_fn) = behaviour.get::<LuaFunction>("on_init") {
+                            let _ = init_fn.call::<()>(*eid);
+                        }
+                        let _ = entity_table.set(*eid, behaviour);
+                        loaded_indices.push(*eid);
                     }
-                    let _ = entity_table.set(*eid, behaviour);
-                    loaded_indices.push(*eid);
+                }
+            }
+
+            // Call on_update for all scripts
+            if let Ok(table) = entity_table.get::<LuaTable>(*eid) {
+                if let Ok(update_fn) = table.get::<LuaFunction>("on_update") {
+                    let _ = update_fn.call::<()>(*eid);
                 }
             }
         }
 
-        // Call on_update for all scripts
-        if let Ok(table) = entity_table.get::<LuaTable>(*eid) {
-            if let Ok(update_fn) = table.get::<LuaFunction>("on_update") {
-                let _ = update_fn.call::<()>(*eid);
+        // Lua guard drops here when entity_table goes out of scope
+        drop(entity_table);
+
+        // Phase 4: Mark entities as loaded (world is now exclusively borrowed)
+        for entity_index in &loaded_indices {
+            if let Some(sc) = world.get_mut::<ScriptComponent>(Entity::from_raw(*entity_index, 0)) {
+                sc.loaded = true;
             }
         }
     }
 
-    // Lua guard drops here when entity_table goes out of scope
-    drop(entity_table);
-
-    // Phase 4: Mark entities as loaded (world is now exclusively borrowed)
-    for entity_index in &loaded_indices {
-        if let Some(sc) = world.get_mut::<ScriptComponent>(Entity::from_raw(*entity_index, 0)) {
-            sc.loaded = true;
-        }
-    }
-}
-
-/// Call `on_destroy(entity_id)` for entities that are about to be despawned.
+    /// Call `on_destroy(entity_id)` for entities that are about to be despawned.
     ///
     /// Should be called before the entity is actually removed from the world.
     fn call_on_destroy(lua: &Lua, world: &World, entity_index: u32) {
@@ -942,21 +942,35 @@ impl System for ScriptingSystem {
             if let Some(events) = hot_reload_events {
                 for event in events {
                     match event {
-                        HotReloadEvent::ScriptReloaded { path, state_preserved, reload_duration } => {
+                        HotReloadEvent::ScriptReloaded {
+                            path,
+                            state_preserved,
+                            reload_duration,
+                        } => {
                             log::info!(
                                 "[hot-reload] Lua script reloaded: {:?} (state: {}, {:.2}ms)",
-                                path, state_preserved,
+                                path,
+                                state_preserved,
                                 reload_duration.as_secs_f64() * 1000.0
                             );
                         }
                         HotReloadEvent::ScriptReloadFailed { path, error, .. } => {
-                            log::error!("[hot-reload] Lua script reload failed: {:?}: {}", path, error);
+                            log::error!(
+                                "[hot-reload] Lua script reload failed: {:?}: {}",
+                                path,
+                                error
+                            );
                         }
-                        HotReloadEvent::BatchReloadCompleted { reloaded_count, failed_count, total_duration } => {
+                        HotReloadEvent::BatchReloadCompleted {
+                            reloaded_count,
+                            failed_count,
+                            total_duration,
+                        } => {
                             if reloaded_count > 0 || failed_count > 0 {
                                 log::info!(
                                     "[hot-reload] Batch: {} ok, {} failed ({:.2}ms)",
-                                    reloaded_count, failed_count,
+                                    reloaded_count,
+                                    failed_count,
                                     total_duration.as_secs_f64() * 1000.0
                                 );
                             }
@@ -966,10 +980,10 @@ impl System for ScriptingSystem {
                         }
                         _ => {}
                     }
-        }
-        }
+                }
+            }
 
-        let _reloaded = resource.engine.check_hot_reload();
+            let _reloaded = resource.engine.check_hot_reload();
 
             if resource
                 .engine
@@ -999,7 +1013,7 @@ impl System for ScriptingSystem {
             // Get Lua state - clone Arc to avoid holding borrow
             let engine = resource.engine.clone();
             drop(resource); // Release resource borrow
-            
+
             let Ok(lua) = engine.lua() else {
                 return;
             };
@@ -1016,7 +1030,7 @@ impl System for ScriptingSystem {
             // Clone Arc to avoid holding borrow
             let engine = resource.engine.clone();
             drop(resource); // Release resource borrow
-            
+
             let Ok(lua) = engine.lua() else {
                 return;
             };
@@ -1050,6 +1064,3 @@ impl quasar_core::Plugin for ScriptingPlugin {
         log::info!("ScriptingPlugin loaded — Lua scripting active");
     }
 }
-
-
-

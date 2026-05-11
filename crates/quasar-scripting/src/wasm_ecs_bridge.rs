@@ -116,7 +116,9 @@ mod inner {
     /// Command from WASM script to host.
     #[derive(Debug, Clone)]
     pub enum WasmEcsCommand {
-        Spawn { wasm_id: u32 },,
+        Spawn {
+            result_entity_id: Arc<Mutex<u32>>,
+        },
         Despawn {
             entity: u32,
         },
@@ -293,7 +295,7 @@ mod inner {
                     let result_id = Arc::new(Mutex::new(0u32));
 
                     {
-                        let mut state = state_arc.lock().unwrap();
+                    let mut state = state_arc.lock().unwrap();
                         let result_clone = Arc::clone(&result_id);
                         state.commands.lock().unwrap().push(WasmEcsCommand::Spawn {
                             result_entity_id: result_clone,
@@ -342,26 +344,32 @@ mod inner {
             linker.func_wrap(
                 "quasar",
                 "get_position",
-                |caller: Caller<'_, Arc<Mutex<WasmEcsState>>>, entity: u32, out_ptr: i32| {
-                    let state = caller.data().lock().unwrap();
-                    let world = unsafe { &*state.world };
+                |mut caller: Caller<'_, Arc<Mutex<WasmEcsState>>>, entity: u32, out_ptr: i32| {
+                    let position = {
+                        let state = caller.data().lock().unwrap();
+                        let world = unsafe { &*state.world };
 
-                    if let Some(real_entity) = state.map_entity(entity) {
-                        if let Some(transform) = world.get::<quasar_math::Transform>(real_entity) {
-                            let mem = caller.get_export("memory").and_then(|e| e.into_memory());
-                            if let Some(mem) = mem {
-                                let data = unsafe { mem.data_mut(&caller) };
-                                let offset = out_ptr as usize;
-                                if offset + 12 <= data.len() {
-                                    let bytes = [
-                                        transform.position.x.to_le_bytes(),
-                                        transform.position.y.to_le_bytes(),
-                                        transform.position.z.to_le_bytes(),
-                                    ];
-                                    data[offset..offset + 4].copy_from_slice(&bytes[0]);
-                                    data[offset + 4..offset + 8].copy_from_slice(&bytes[1]);
-                                    data[offset + 8..offset + 12].copy_from_slice(&bytes[2]);
-                                }
+                        state.map_entity(entity).and_then(|real_entity| {
+                            world
+                                .get::<quasar_math::Transform>(real_entity)
+                                .map(|transform| transform.position)
+                        })
+                    };
+
+                    if let Some(position) = position {
+                        let mem = caller.get_export("memory").and_then(|e| e.into_memory());
+                        if let Some(mem) = mem {
+                            let data = mem.data_mut(&mut caller);
+                            let offset = out_ptr as usize;
+                            if offset + 12 <= data.len() {
+                                let bytes = [
+                                    position.x.to_le_bytes(),
+                                    position.y.to_le_bytes(),
+                                    position.z.to_le_bytes(),
+                                ];
+                                data[offset..offset + 4].copy_from_slice(&bytes[0]);
+                                data[offset + 4..offset + 8].copy_from_slice(&bytes[1]);
+                                data[offset + 8..offset + 12].copy_from_slice(&bytes[2]);
                             }
                         }
                     }
@@ -439,7 +447,7 @@ mod inner {
             linker.func_wrap(
                 "quasar",
                 "log_info",
-                |caller: Caller<'_, Arc<Mutex<WasmEcsState>>>, ptr: i32, len: i32| {
+                |mut caller: Caller<'_, Arc<Mutex<WasmEcsState>>>, ptr: i32, len: i32| {
                     let mem = caller.get_export("memory").and_then(|e| e.into_memory());
                     if let Some(mem) = mem {
                         let data = mem.data(&caller);

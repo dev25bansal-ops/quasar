@@ -7,17 +7,17 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
-pub mod ai_editor;
 pub mod ai_debug_overlay;
+pub mod ai_editor;
 pub mod animation_editor;
 pub mod asset_browser;
 pub mod asset_metadata;
 pub mod asset_processor;
-pub mod blackboard_debugger;
 pub mod behavior_tree_graph;
-pub mod bt_simulation;
-pub mod bt_serialization;
+pub mod blackboard_debugger;
 pub mod brush_tools;
+pub mod bt_serialization;
+pub mod bt_simulation;
 pub mod console;
 pub mod editor_state;
 pub mod foliage_editor;
@@ -38,34 +38,47 @@ pub mod terrain_editor;
 pub mod timeline;
 pub mod vfx_graph;
 
+pub use ai_editor::{AiBehaviorEditor, AiBehaviorTree, BehaviorTemplate, TemplateCategory};
 pub use asset_browser::{AssetBrowser, AssetEntry, AssetKind};
 pub use asset_processor::{AssetHandle, AssetImporter, LoadedAsset};
-pub use ai_editor::{AiBehaviorEditor, AiBehaviorTree, BehaviorTemplate, TemplateCategory};
 pub use behavior_tree_graph::{
     BtEditorNode, BtEditorNodeType, BtGraphState, GraphConnectionId, GraphNodeId,
 };
-pub use bt_simulation::{BtSimulation, SimNodeStatus, SimulationState, SimulationStats, TraceEntry};
+pub use brush_tools::{
+    apply_brush_heightmap, apply_brush_splatmap, generate_brush_preview, BrushSettings,
+    BrushStroke, BrushType, FalloffType, HeightmapSnapshot, SplatmapSnapshot,
+};
 pub use bt_serialization::{BtDeserializer, BtRuntimeConverter, BtSerializer};
+pub use bt_simulation::{
+    BtSimulation, SimNodeStatus, SimulationState, SimulationStats, TraceEntry,
+};
 pub use console::ConsoleLog;
 pub use editor_state::{
     DeleteEntityCommand, EditCommand, EditorMode, EditorState, SetMaterialCommand,
     SetPositionCommand, SetRotationCommand, SetScaleCommand, SpawnEntityCommand, TransformData,
     UndoStack, WorldSnapshot,
 };
+pub use foliage_editor::{
+    foliage_editor_ui, FoliageEditorState, FoliageInstance, FoliageKind, FoliageTypeDef,
+};
 pub use gizmos::{GizmoAxis, GizmoMode, GizmoRenderer, GizmoState};
 pub use inspector::{InspectorAction, InspectorData};
 pub use logic_graph::{LogicGraph, LogicGraphCompiler, LogicNodeKind};
 pub use logic_graph_editor::LogicGraphEditorState;
 pub use logic_graph_system::{LogicGraphAttachment, LogicGraphSystem};
-use quasar_core::ecs::Entity;
 pub use particle_editor::{
     presets, EditorTab as ParticleEditorTab, ParticleEditorState, SimulationMode,
 };
-pub use quest_editor::{
-    EditorTab, ObjectiveDef, PrerequisiteDef, QuestDef, QuestEditor, RewardDef,
-    RewardTypeEditor, TestModeState,
-};
+use quasar_core::ecs::Entity;
 pub use quasar_derive::Inspect as DeriveInspect;
+pub use quasar_render::terrain::{
+    TerrainBlendMode, TerrainBounds, TerrainConfig, TerrainData, TerrainFoliageInstance,
+    TerrainMaterial as RenderTerrainMaterial,
+};
+pub use quest_editor::{
+    EditorTab, ObjectiveDef, PrerequisiteDef, QuestDef, QuestEditor, RewardDef, RewardTypeEditor,
+    TestModeState,
+};
 pub use reflect::{
     widget_bool, widget_color3, widget_color4, widget_f32, widget_f64, widget_i32, widget_string,
     widget_u32, widget_vec3, FieldDescriptor, FieldMeta, Inspect, InspectFn, ReflectionRegistry,
@@ -74,20 +87,7 @@ pub use shader_graph_editor::ShaderGraphEditor;
 pub use splat_editor::{
     splat_editor_ui, BlendMode, SplatEditorState, SplatmapData, TerrainMaterial,
 };
-pub use terrain_editor::{
-    QuickBrush, TerrainEditor, TerrainEditorMode,
-};
-pub use foliage_editor::{
-    foliage_editor_ui, FoliageEditorState, FoliageInstance, FoliageTypeDef, FoliageKind,
-};
-pub use brush_tools::{
-    apply_brush_heightmap, apply_brush_splatmap, BrushSettings, BrushStroke, BrushType,
-    FalloffType, HeightmapSnapshot, SplatmapSnapshot, generate_brush_preview,
-};
-pub use quasar_render::terrain::{
-    TerrainData, TerrainMaterial as RenderTerrainMaterial, TerrainBlendMode,
-    TerrainBounds, TerrainFoliageInstance, TerrainConfig,
-};
+pub use terrain_editor::{QuickBrush, TerrainEditor, TerrainEditorMode};
 pub use vfx_graph::{graph_to_particle_system, VfxGraphEditorState};
 
 // ---------------------------------------------------------------------------

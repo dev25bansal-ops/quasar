@@ -97,8 +97,8 @@ impl QuinnBackend {
                 .with_no_client_auth();
 
             #[allow(clippy::expect_used)]
-            let quic_config =
-                quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+            let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
+                .expect("quinn client config");
 
             ClientConfig::new(Arc::new(quic_config))
         }
@@ -114,8 +114,8 @@ impl QuinnBackend {
                 .with_no_client_auth();
 
             #[allow(clippy::expect_used)]
-            let quic_config =
-                quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("quinn client config");
+            let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
+                .expect("quinn client config");
 
             ClientConfig::new(Arc::new(quic_config))
         }

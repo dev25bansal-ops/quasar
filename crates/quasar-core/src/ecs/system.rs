@@ -280,7 +280,9 @@ impl Schedule {
                 if self.parallel_enabled {
                     // Check if any systems in this stage have access declarations.
                     let systems = &self.stages[si].1;
-                    let has_access = systems.iter().any(|s| self.system_access.contains_key(s.name()));
+                    let has_access = systems
+                        .iter()
+                        .any(|s| self.system_access.contains_key(s.name()));
 
                     if has_access {
                         self.run_stage_parallel(si, world);
@@ -427,11 +429,7 @@ impl Schedule {
             let mut ready: Vec<usize> = remaining
                 .iter()
                 .copied()
-                .filter(|&idx| {
-                    dependencies[idx]
-                        .iter()
-                        .all(|dep| completed.contains(dep))
-                })
+                .filter(|&idx| dependencies[idx].iter().all(|dep| completed.contains(dep)))
                 .collect();
 
             if ready.is_empty() {
@@ -502,9 +500,7 @@ impl Schedule {
             let mut next_remaining = Vec::new();
 
             for &idx in &remaining {
-                let conflicts = batch
-                    .iter()
-                    .any(|&b| conflict_graph.has_conflict(b, idx));
+                let conflicts = batch.iter().any(|&b| conflict_graph.has_conflict(b, idx));
                 if conflicts {
                     next_remaining.push(idx);
                 } else {
@@ -523,12 +519,7 @@ impl Schedule {
 
     /// Execute systems in a single batch using rayon's parallel iterator.
     #[cfg(feature = "parallel")]
-    fn _execute_parallel_batch(
-        &mut self,
-        si: usize,
-        indices: &[usize],
-        world: &mut World,
-    ) {
+    fn _execute_parallel_batch(&mut self, si: usize, indices: &[usize], world: &mut World) {
         // Begin all systems.
         let systems = &mut self.stages[si].1;
         for &idx in indices {
@@ -562,8 +553,7 @@ impl Schedule {
                 for sys_addr in batch_addrs {
                     let w_addr = world_addr;
                     s.spawn(move |_| {
-                        let system: &mut Box<dyn System> =
-                            &mut *(sys_addr as *mut Box<dyn System>);
+                        let system: &mut Box<dyn System> = &mut *(sys_addr as *mut Box<dyn System>);
                         let world: &mut World = &mut *(w_addr as *mut World);
                         system.run(world);
                     });
@@ -607,7 +597,9 @@ impl Schedule {
                     {
                         if self.parallel_enabled {
                             let systems = &self.stages[si].1;
-                            let has_access = systems.iter().any(|s| self.system_access.contains_key(s.name()));
+                            let has_access = systems
+                                .iter()
+                                .any(|s| self.system_access.contains_key(s.name()));
                             if has_access {
                                 self.run_stage_parallel(si, world);
                             } else {
@@ -637,7 +629,9 @@ impl Schedule {
                 {
                     if self.parallel_enabled {
                         let systems = &self.stages[si].1;
-                        let has_access = systems.iter().any(|s| self.system_access.contains_key(s.name()));
+                        let has_access = systems
+                            .iter()
+                            .any(|s| self.system_access.contains_key(s.name()));
                         if has_access {
                             self.run_stage_parallel(si, world);
                         } else {

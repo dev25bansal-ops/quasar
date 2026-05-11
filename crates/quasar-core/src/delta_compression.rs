@@ -373,7 +373,9 @@ mod tests {
 
         // Set bit 0, claim 100 bytes but only provide 3.
         delta.changed_mask = 0b1;
-        delta.component_data.extend_from_slice(&100u32.to_le_bytes());
+        delta
+            .component_data
+            .extend_from_slice(&100u32.to_le_bytes());
         delta.component_data.extend_from_slice(&[1, 2, 3]); // only 3 bytes
 
         let collected: Vec<_> = delta.iter_components().collect();

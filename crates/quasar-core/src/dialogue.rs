@@ -179,10 +179,7 @@ impl DialogueTree {
         if self.start_node.is_empty() {
             errors.push("No start node defined".to_string());
         } else if !self.nodes.contains_key(&self.start_node) {
-            errors.push(format!(
-                "Start node '{}' not found",
-                self.start_node
-            ));
+            errors.push(format!("Start node '{}' not found", self.start_node));
         }
 
         // Check for unreachable nodes
@@ -195,7 +192,8 @@ impl DialogueTree {
 
         // Check for dead-end nodes (no choices and no auto-advance)
         // End nodes and choice targets don't need outgoing connections
-        let choice_targets: std::collections::HashSet<&str> = self.nodes
+        let choice_targets: std::collections::HashSet<&str> = self
+            .nodes
             .values()
             .flat_map(|n| n.choices.iter().map(|c| c.next_node.as_str()))
             .collect();
@@ -580,11 +578,7 @@ impl DialogueCondition {
         }
     }
 
-    pub fn compare(
-        variable: impl Into<String>,
-        operator: CompareOp,
-        value: f32,
-    ) -> Self {
+    pub fn compare(variable: impl Into<String>, operator: CompareOp, value: f32) -> Self {
         Self {
             condition_type: DialogueConditionType::Compare {
                 variable: variable.into(),
@@ -725,11 +719,7 @@ impl DialogueEffect {
         }
     }
 
-    pub fn modify_variable(
-        variable: impl Into<String>,
-        operation: ModifyOp,
-        value: f32,
-    ) -> Self {
+    pub fn modify_variable(variable: impl Into<String>, operation: ModifyOp, value: f32) -> Self {
         Self {
             effect_type: DialogueEffectType::ModifyVariable {
                 variable: variable.into(),
@@ -1357,10 +1347,14 @@ impl DialogueSystem {
                 self.state.get_variable(&key) >= *count as f32
             }
             DialogueConditionType::QuestComplete { quest_id } => {
-                self.state.get_variable(&format!("quest_{}_complete", quest_id)) > 0.5
+                self.state
+                    .get_variable(&format!("quest_{}_complete", quest_id))
+                    > 0.5
             }
             DialogueConditionType::QuestActive { quest_id } => {
-                let state = self.state.get_variable(&format!("quest_{}_state", quest_id));
+                let state = self
+                    .state
+                    .get_variable(&format!("quest_{}_state", quest_id));
                 (state - 1.0).abs() < 0.5 // Active = 1.0
             }
             DialogueConditionType::Level { min_level } => self.player_level >= *min_level,
@@ -1384,10 +1378,7 @@ impl DialogueSystem {
                     CompareOp::LessEqual => var_value <= *value,
                 }
             }
-            DialogueConditionType::TimeOfDay {
-                min_hour,
-                max_hour,
-            } => {
+            DialogueConditionType::TimeOfDay { min_hour, max_hour } => {
                 let current_hour = self.state.get_variable("game_hour");
                 if min_hour <= max_hour {
                     current_hour >= *min_hour && current_hour <= *max_hour
@@ -1400,9 +1391,7 @@ impl DialogueSystem {
                 let current = self.state.get_variable("current_weather");
                 (current - Self::weather_to_value(weather_type)).abs() < 0.5
             }
-            DialogueConditionType::DialogueSeen { dialogue_id } => {
-                self.state.has_seen(dialogue_id)
-            }
+            DialogueConditionType::DialogueSeen { dialogue_id } => self.state.has_seen(dialogue_id),
             DialogueConditionType::LuaScript { script } => {
                 // In production, this would execute the Lua script
                 // For now, treat as true (script would set flags/variables)
@@ -1554,16 +1543,8 @@ mod tests {
         let mut tree = DialogueTree::new("test_dialogue");
         tree.start_node = "start".to_string();
 
-        tree.add_node(DialogueNode::new(
-            "start",
-            "npc",
-            "dialog.test.greeting",
-        ));
-        tree.add_node(DialogueNode::new(
-            "quest",
-            "npc",
-            "dialog.test.quest",
-        ));
+        tree.add_node(DialogueNode::new("start", "npc", "dialog.test.greeting"));
+        tree.add_node(DialogueNode::new("quest", "npc", "dialog.test.quest"));
         tree.add_node(DialogueNode::new("end", "npc", "dialog.test.farewell"));
 
         tree.add_choice("start", "quest", "dialog.test.choice_quest", None);
@@ -1622,18 +1603,8 @@ mod tests {
         tree.add_node(DialogueNode::new("end", "npc", "dialog.end"));
         tree.start_node = "start".to_string();
 
-        assert!(tree.add_choice(
-            "start",
-            "end",
-            "dialog.choice",
-            None
-        ));
-        assert!(!tree.add_choice(
-            "nonexistent",
-            "end",
-            "dialog.choice",
-            None
-        ));
+        assert!(tree.add_choice("start", "end", "dialog.choice", None));
+        assert!(!tree.add_choice("nonexistent", "end", "dialog.choice", None));
     }
 
     #[test]
@@ -1733,10 +1704,7 @@ mod tests {
         assert!(choice.on_select_script.is_some());
         assert_eq!(choice.time_limit, Some(5.0));
         assert_eq!(choice.required_item, Some("key_item".to_string()));
-        assert_eq!(
-            choice.required_skill,
-            Some(("persuasion".to_string(), 10))
-        );
+        assert_eq!(choice.required_skill, Some(("persuasion".to_string(), 10)));
     }
 
     // =========================================================================
@@ -1757,7 +1725,10 @@ mod tests {
             .with_default_portrait("portraits/default.png")
             .voice_pitch(0.8);
 
-        assert_eq!(speaker.default_portrait, Some("portraits/default.png".to_string()));
+        assert_eq!(
+            speaker.default_portrait,
+            Some("portraits/default.png".to_string())
+        );
         assert_eq!(speaker.voice_pitch, 0.8);
     }
 
@@ -1830,25 +1801,46 @@ mod tests {
     #[test]
     fn dialogue_effect_types() {
         let give = DialogueEffect::give_item("sword", 1);
-        assert!(matches!(give.effect_type, DialogueEffectType::GiveItem { .. }));
+        assert!(matches!(
+            give.effect_type,
+            DialogueEffectType::GiveItem { .. }
+        ));
 
         let quest = DialogueEffect::start_quest("quest_1");
-        assert!(matches!(quest.effect_type, DialogueEffectType::StartQuest { .. }));
+        assert!(matches!(
+            quest.effect_type,
+            DialogueEffectType::StartQuest { .. }
+        ));
 
         let rep = DialogueEffect::add_reputation("faction", 50);
-        assert!(matches!(rep.effect_type, DialogueEffectType::AddReputation { .. }));
+        assert!(matches!(
+            rep.effect_type,
+            DialogueEffectType::AddReputation { .. }
+        ));
 
         let gold = DialogueEffect::add_gold(100);
-        assert!(matches!(gold.effect_type, DialogueEffectType::AddGold { .. }));
+        assert!(matches!(
+            gold.effect_type,
+            DialogueEffectType::AddGold { .. }
+        ));
 
         let xp = DialogueEffect::add_experience(500);
-        assert!(matches!(xp.effect_type, DialogueEffectType::AddExperience { .. }));
+        assert!(matches!(
+            xp.effect_type,
+            DialogueEffectType::AddExperience { .. }
+        ));
 
         let sound = DialogueEffect::play_sound("click");
-        assert!(matches!(sound.effect_type, DialogueEffectType::PlaySound { .. }));
+        assert!(matches!(
+            sound.effect_type,
+            DialogueEffectType::PlaySound { .. }
+        ));
 
         let spawn = DialogueEffect::spawn_entity("enemy");
-        assert!(matches!(spawn.effect_type, DialogueEffectType::SpawnEntity { .. }));
+        assert!(matches!(
+            spawn.effect_type,
+            DialogueEffectType::SpawnEntity { .. }
+        ));
     }
 
     // =========================================================================
@@ -2141,8 +2133,7 @@ mod tests {
         let mut tree = DialogueTree::new("test");
         tree.start_node = "start".to_string();
         tree.add_node(
-            DialogueNode::new("start", "npc", "dialog.start")
-                .auto_advance("end", Some(2.0)),
+            DialogueNode::new("start", "npc", "dialog.start").auto_advance("end", Some(2.0)),
         );
         tree.add_node(DialogueNode::new("end", "npc", "dialog.end"));
 

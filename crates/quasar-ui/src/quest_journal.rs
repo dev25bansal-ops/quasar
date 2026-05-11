@@ -8,11 +8,11 @@
 //!
 //! Built with egui for integration with the Quasar editor/runtime.
 
-use egui::{self, Color32, RichText, Ui, WidgetText};
 use crate::widget::WidgetId;
+use egui::{self, Color32, RichText, Ui, WidgetText};
 use quasar_core::quest::{
-    QuestCategory, QuestJournalEntry, QuestJournalFilter, QuestJournalSort,
-    QuestObjectiveEntry, QuestState,
+    QuestCategory, QuestJournalEntry, QuestJournalFilter, QuestJournalSort, QuestObjectiveEntry,
+    QuestState,
 };
 
 // ---------------------------------------------------------------------------
@@ -179,11 +179,7 @@ impl QuestJournalPanel {
                         QuestState::Available => Color32::BLUE,
                         QuestState::Locked => Color32::DARK_GRAY,
                     };
-                    ui.label(
-                        RichText::new("●")
-                            .color(state_color)
-                            .size(12.0),
-                    );
+                    ui.label(RichText::new("●").color(state_color).size(12.0));
 
                     // Title
                     let title_text = if entry.title_key.is_empty() {
@@ -295,10 +291,7 @@ impl QuestJournalPanel {
 
                     // Progress
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(format!(
-                            "{}/{}",
-                            objective.progress, objective.required
-                        ));
+                        ui.label(format!("{}/{}", objective.progress, objective.required));
                     });
                 });
 
@@ -316,9 +309,7 @@ impl QuestJournalPanel {
             }
 
             // Abandon button (only for active quests)
-            if entry.state == QuestState::Active
-                || entry.state == QuestState::ReadyToTurnIn
-            {
+            if entry.state == QuestState::Active || entry.state == QuestState::ReadyToTurnIn {
                 ui.separator();
                 if ui
                     .button(RichText::new("Abandon Quest").color(Color32::RED))
@@ -365,11 +356,7 @@ impl ObjectiveTrackerWidget {
     }
 
     /// Show the objective tracker panel.
-    pub fn show(
-        &mut self,
-        ctx: &egui::Context,
-        entries: &[QuestJournalEntry],
-    ) {
+    pub fn show(&mut self, ctx: &egui::Context, entries: &[QuestJournalEntry]) {
         let mut open = true;
         egui::Window::new("Objectives")
             .open(&mut open)
@@ -399,9 +386,7 @@ impl ObjectiveTrackerWidget {
                     break;
                 }
 
-                if entry.state != QuestState::Active
-                    && entry.state != QuestState::ReadyToTurnIn
-                {
+                if entry.state != QuestState::Active && entry.state != QuestState::ReadyToTurnIn {
                     continue;
                 }
 
@@ -430,10 +415,7 @@ impl ObjectiveTrackerWidget {
 
                     ui.horizontal(|ui| {
                         ui.label(format!("• {}", objective_text));
-                        ui.label(format!(
-                            "({}/{})",
-                            objective.progress, objective.required
-                        ));
+                        ui.label(format!("({}/{})", objective.progress, objective.required));
                     });
 
                     if self.show_progress_bars {
@@ -546,12 +528,7 @@ impl DialoguePanel {
     }
 
     /// Render inside a container.
-    pub fn ui(
-        &self,
-        ui: &mut Ui,
-        on_select_choice: &impl Fn(usize),
-        on_advance: &impl Fn(),
-    ) {
+    pub fn ui(&self, ui: &mut Ui, on_select_choice: &impl Fn(usize), on_advance: &impl Fn()) {
         ui.vertical(|ui| {
             // Speaker name
             ui.horizontal(|ui| {
@@ -762,21 +739,33 @@ impl RewardNotificationPopup {
             for (i, notification) in self.notifications.iter().enumerate() {
                 // Fade out near end of lifetime
                 let remaining = notification.lifetime - notification.age;
-                let alpha = if remaining < 1.0 {
-                    remaining
-                } else {
-                    1.0
-                };
+                let alpha = if remaining < 1.0 { remaining } else { 1.0 };
 
                 let bg_color = match notification.reward_type {
-                    RewardType::Experience => Color32::from_rgba_premultiplied(255, 215, 0, (alpha * 200.0) as u8),
-                    RewardType::Gold => Color32::from_rgba_premultiplied(255, 215, 0, (alpha * 200.0) as u8),
-                    RewardType::Item => Color32::from_rgba_premultiplied(100, 149, 237, (alpha * 200.0) as u8),
-                    RewardType::Reputation => Color32::from_rgba_premultiplied(144, 238, 144, (alpha * 200.0) as u8),
-                    RewardType::Achievement => Color32::from_rgba_premultiplied(255, 165, 0, (alpha * 200.0) as u8),
-                    RewardType::QuestComplete => Color32::from_rgba_premultiplied(50, 205, 50, (alpha * 200.0) as u8),
-                    RewardType::LevelUp => Color32::from_rgba_premultiplied(255, 105, 180, (alpha * 200.0) as u8),
-                    RewardType::Unlock => Color32::from_rgba_premultiplied(0, 255, 255, (alpha * 200.0) as u8),
+                    RewardType::Experience => {
+                        Color32::from_rgba_premultiplied(255, 215, 0, (alpha * 200.0) as u8)
+                    }
+                    RewardType::Gold => {
+                        Color32::from_rgba_premultiplied(255, 215, 0, (alpha * 200.0) as u8)
+                    }
+                    RewardType::Item => {
+                        Color32::from_rgba_premultiplied(100, 149, 237, (alpha * 200.0) as u8)
+                    }
+                    RewardType::Reputation => {
+                        Color32::from_rgba_premultiplied(144, 238, 144, (alpha * 200.0) as u8)
+                    }
+                    RewardType::Achievement => {
+                        Color32::from_rgba_premultiplied(255, 165, 0, (alpha * 200.0) as u8)
+                    }
+                    RewardType::QuestComplete => {
+                        Color32::from_rgba_premultiplied(50, 205, 50, (alpha * 200.0) as u8)
+                    }
+                    RewardType::LevelUp => {
+                        Color32::from_rgba_premultiplied(255, 105, 180, (alpha * 200.0) as u8)
+                    }
+                    RewardType::Unlock => {
+                        Color32::from_rgba_premultiplied(0, 255, 255, (alpha * 200.0) as u8)
+                    }
                 };
 
                 egui::Frame::new()
@@ -824,17 +813,15 @@ mod tests {
             description_key: format!("quest.{}.desc", id),
             category: QuestCategory::Main,
             state,
-            objectives: vec![
-                QuestObjectiveEntry {
-                    id: "obj1".to_string(),
-                    description_key: "objective 1".to_string(),
-                    progress: 3,
-                    required: 5,
-                    is_complete: false,
-                    is_optional: false,
-                    objective_type: "DefeatEnemy".to_string(),
-                },
-            ],
+            objectives: vec![QuestObjectiveEntry {
+                id: "obj1".to_string(),
+                description_key: "objective 1".to_string(),
+                progress: 3,
+                required: 5,
+                is_complete: false,
+                is_optional: false,
+                objective_type: "DefeatEnemy".to_string(),
+            }],
             progress: 0.6,
             start_time: None,
             time_remaining: Some(120.0),
@@ -883,13 +870,11 @@ mod tests {
         panel.set_dialogue(
             "NPC",
             "Hello, adventurer!",
-            vec![
-                DialogueChoiceUI {
-                    text: "Tell me more".to_string(),
-                    index: 0,
-                    is_available: true,
-                },
-            ],
+            vec![DialogueChoiceUI {
+                text: "Tell me more".to_string(),
+                index: 0,
+                is_available: true,
+            }],
         );
 
         assert_eq!(panel.speaker_name, "NPC");

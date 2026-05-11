@@ -122,17 +122,17 @@ pub use parallel::{
 pub use query::{
     CachedArchetypeQueryIter, CachedArchetypeQueryState, FilterAdded, FilterChanged, FilterRemoved,
     FilterWith, FilterWithout, Query, Query2Iter, QueryFilter, QueryIter, QueryIterSingle,
-    QueryMutRef, QueryRef, QueryState, QueryStateCache, QueryStateMut, QueryStateReadonly,
-    Res, ResMut, ResMutRef, ResMutState, ResRef, ResState, SystemQuery, SystemQueryMut, WorldQuery,
+    QueryMutRef, QueryRef, QueryState, QueryStateCache, QueryStateMut, QueryStateReadonly, Res,
+    ResMut, ResMutRef, ResMutState, ResRef, ResState, SystemQuery, SystemQueryMut, WorldQuery,
     WorldQueryArchFetch,
 };
 pub use relation::{ChildOf, OwnedBy, Relation, RelationGraph};
 pub use sparse_set::{SparseSet, SparseSetStorage};
 pub use system::Schedule;
-pub use system::{run_system_with, System, SystemExecutor, SystemStage, FnSystem};
+pub use system::{run_system_with, FnSystem, System, SystemExecutor, SystemStage};
 pub use system_param::{
-    Access, AccessKind, FnSystemWithParams, ParamSet, Read, SystemParam, SystemState, Write,
-    system_fn,
+    system_fn, Access, AccessKind, FnSystemWithParams, ParamSet, Read, SystemParam, SystemState,
+    Write,
 };
 pub use world::{
     Bundle, Children, EntityBuilder, ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent,

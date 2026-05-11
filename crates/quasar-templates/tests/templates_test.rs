@@ -1,535 +1,303 @@
-//! Tests for quasar-templates crate
+//! Integration tests for the public quasar-templates API.
 
-use quasar_templates::prelude::*;
-
-#[test]
-fn test_template_transform_default() {
-    let transform = TemplateTransform::default();
-    
-    assert_eq!(transform.position, Vec3::ZERO);
-    assert_eq!(transform.rotation, glam::Quat::IDENTITY);
-    assert_eq!(transform.scale, Vec3::ONE);
-}
-
-#[test]
-fn test_template_transform_creation() {
-    let transform = TemplateTransform {
-        position: Vec3::new(1.0, 2.0, 3.0),
-        rotation: glam::Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.0, 0.0),
-        scale: Vec3::new(2.0, 2.0, 2.0),
-    };
-    
-    assert_eq!(transform.position, Vec3::new(1.0, 2.0, 3.0));
-    assert_eq!(transform.scale, Vec3::new(2.0, 2.0, 2.0));
-}
-
-#[test]
-fn test_template_velocity_default() {
-    let velocity = TemplateVelocity::default();
-    
-    assert_eq!(velocity.linear, Vec3::ZERO);
-    assert_eq!(velocity.angular, Vec3::ZERO);
-}
+use glam::{Vec2 as GlamVec2, Vec3};
+use quasar_core::ecs::{System, World};
+use quasar_core::Plugin;
+use quasar_templates::fps::{
+    Ammo, EnemyAI, EnemyAISystem, EnemyState, FpsMovementSystem, FpsPlayer, FpsPlugin, Weapon,
+    WeaponSystem, WeaponType,
+};
+use quasar_templates::platformer::{
+    Collectible, CollectibleType, PlatformerPlayer, PlayerInventory,
+};
+use quasar_templates::rpg::{
+    Ability, CharacterStats, Equipment, EquipmentSlot, Inventory, InventoryItem, ItemType,
+    ObjectiveType, Quest, QuestObjective, QuestState, RpgPlayer, RpgPlugin, RpgQuestSystem,
+    RpgSkillSystem, Skill, SkillType, StatType,
+};
+use quasar_templates::rts::{
+    FogOfWar, PlayerResources, ResourceCarrying, ResourceCost, ResourceGenerator, ResourceType,
+    SelectionManager,
+};
+use quasar_templates::{
+    spawn_entity, spawn_entity_at, Health, InputState, Team, TemplateTransform, TemplateVelocity,
+    Timer, Vec2 as TemplateVec2,
+};
 
 #[test]
-fn test_template_velocity_creation() {
-    let velocity = TemplateVelocity {
-        linear: Vec3::new(1.0, 0.0, 0.0),
-        angular: Vec3::new(0.0, 1.0, 0.0),
-    };
-    
-    assert_eq!(velocity.linear, Vec3::new(1.0, 0.0, 0.0));
-    assert_eq!(velocity.angular, Vec3::new(0.0, 1.0, 0.0));
-}
-
-#[test]
-fn test_health_creation() {
-    let health = Health::new(100.0);
-    
-    assert_eq!(health.current, 100.0);
-    assert_eq!(health.max, 100.0);
-    assert_eq!(health.regen_rate, 0.0);
-}
-
-#[test]
-fn test_health_with_regen() {
-    let health = Health::new(100.0).with_regen(1.0);
-    
-    assert_eq!(health.current, 100.0);
-    assert_eq!(health.max, 100.0);
-    assert_eq!(health.regen_rate, 1.0);
-}
-
-#[test]
-fn test_health_is_alive() {
+fn common_components_track_health_timer_and_transform_state() {
     let mut health = Health::new(100.0);
     assert!(health.is_alive());
-    
-    health.current = 0.0;
-    assert!(!health.is_alive());
-}
-
-#[test]
-fn test_health_take_damage() {
-    let mut health = Health::new(100.0);
-    
-    health.take_damage(25.0);
+    assert!(!health.take_damage(25.0));
     assert_eq!(health.current, 75.0);
-    
-    health.take_damage(30.0);
-    assert_eq!(health.current, 45.0);
-}
+    health.heal(200.0);
+    assert_eq!(health.current, health.max);
 
-#[test]
-fn test_health_heal() {
-    let mut health = Health::new(100.0);
-    
-    health.take_damage(50.0);
-    assert_eq!(health.current, 50.0);
-    
-    health.heal(25.0);
-    assert_eq!(health.current, 75.0);
-}
+    health.invulnerable = true;
+    assert!(!health.take_damage(50.0));
+    assert_eq!(health.current, health.max);
 
-#[test]
-fn test_health_heal_over_max() {
-    let mut health = Health::new(100.0);
-    
-    health.take_damage(50.0);
-    health.heal(100.0); // Try to heal more than max
-    
-    assert_eq!(health.current, 100.0); // Should cap at max
-}
+    let mut timer = Timer::repeating(0.5);
+    assert!(!timer.tick(0.25));
+    assert!(timer.tick(0.30));
+    assert!(timer.finished);
+    assert!(timer.elapsed < timer.duration);
+    timer.reset();
+    assert_eq!(timer.progress(), 0.0);
 
-#[test]
-fn test_health_percentage() {
-    let mut health = Health::new(100.0);
-    
-    assert_eq!(health.percentage(), 1.0);
-    
-    health.take_damage(50.0);
-    assert_eq!(health.percentage(), 0.5);
-    
-    health.take_damage(25.0);
-    assert_eq!(health.percentage(), 0.25);
-}
-
-#[test]
-fn test_health_regen() {
-    let mut health = Health::new(100.0).with_regen(10.0);
-    
-    health.take_damage(50.0);
-    assert_eq!(health.current, 50.0);
-    
-    health.regen(1.0); // 1 second of regen
-    assert_eq!(health.current, 60.0);
-}
-
-#[test]
-fn test_health_regen_over_max() {
-    let mut health = Health::new(100.0).with_regen(100.0);
-    
-    health.take_damage(50.0);
-    health.regen(1.0); // Should cap at max
-    
-    assert_eq!(health.current, 100.0);
-}
-
-#[test]
-fn test_health_is_full() {
-    let health = Health::new(100.0);
-    assert!(health.is_full());
-    
-    let mut health = Health::new(100.0);
-    health.take_damage(10.0);
-    assert!(!health.is_full());
-}
-
-#[test]
-fn test_health_is_dead() {
-    let health = Health::new(100.0);
-    assert!(!health.is_dead());
-    
-    let mut health = Health::new(100.0);
-    health.current = 0.0;
-    assert!(health.is_dead());
-}
-
-#[test]
-fn test_health_clone() {
-    let health1 = Health::new(100.0);
-    let health2 = health1.clone();
-    
-    assert_eq!(health1.current, health2.current);
-    assert_eq!(health1.max, health2.max);
-}
-
-#[test]
-fn test_health_serialization() {
-    let health = Health::new(100.0).with_regen(5.0);
-    
-    let json = serde_json::to_string(&health).unwrap();
-    let deserialized: Health = serde_json::from_str(&json).unwrap();
-    
-    assert_eq!(health.current, deserialized.current);
-    assert_eq!(health.max, deserialized.max);
-    assert_eq!(health.regen_rate, deserialized.regen_rate);
-}
-
-#[test]
-fn test_inventory_creation() {
-    let inventory = Inventory::new(10);
-    
-    assert_eq!(inventory.capacity(), 10);
-    assert_eq!(inventory.count(), 0);
-    assert!(inventory.is_empty());
-}
-
-#[test]
-fn test_inventory_add_item() {
-    let mut inventory = Inventory::new(10);
-    
-    let item = InventoryItem::new("test_item");
-    inventory.add(item);
-    
-    assert_eq!(inventory.count(), 1);
-    assert!(!inventory.is_empty());
-}
-
-#[test]
-fn test_inventory_remove_item() {
-    let mut inventory = Inventory::new(10);
-    
-    let item = InventoryItem::new("test_item");
-    inventory.add(item.clone());
-    
-    let removed = inventory.remove(&item);
-    assert!(removed.is_some());
-    assert_eq!(inventory.count(), 0);
-}
-
-#[test]
-fn test_inventory_capacity() {
-    let mut inventory = Inventory::new(2);
-    
-    inventory.add(InventoryItem::new("item1"));
-    inventory.add(InventoryItem::new("item2"));
-    
-    assert_eq!(inventory.count(), 2);
-    assert!(inventory.is_full());
-}
-
-#[test]
-fn test_inventory_is_full() {
-    let inventory = Inventory::new(1);
-    assert!(!inventory.is_full());
-    
-    let mut inventory = Inventory::new(1);
-    inventory.add(InventoryItem::new("item1"));
-    assert!(inventory.is_full());
-}
-
-#[test]
-fn test_inventory_has_item() {
-    let mut inventory = Inventory::new(10);
-    
-    let item = InventoryItem::new("test_item");
-    inventory.add(item.clone());
-    
-    assert!(inventory.has(&item));
-    assert!(!inventory.has(&InventoryItem::new("other_item")));
-}
-
-#[test]
-fn test_inventory_count() {
-    let mut inventory = Inventory::new(10);
-    
-    assert_eq!(inventory.count(), 0);
-    
-    inventory.add(InventoryItem::new("item1"));
-    assert_eq!(inventory.count(), 1);
-    
-    inventory.add(InventoryItem::new("item2"));
-    assert_eq!(inventory.count(), 2);
-}
-
-#[test]
-fn test_inventory_clear() {
-    let mut inventory = Inventory::new(10);
-    
-    inventory.add(InventoryItem::new("item1"));
-    inventory.add(InventoryItem::new("item2"));
-    
-    assert_eq!(inventory.count(), 2);
-    
-    inventory.clear();
-    assert_eq!(inventory.count(), 0);
-    assert!(inventory.is_empty());
-}
-
-#[test]
-fn test_inventory_item_creation() {
-    let item = InventoryItem::new("test_item");
-    
-    assert_eq!(item.name(), "test_item");
-    assert_eq!(item.quantity(), 1);
-}
-
-#[test]
-fn test_inventory_item_with_quantity() {
-    let item = InventoryItem::new("test_item").with_quantity(5);
-    
-    assert_eq!(item.name(), "test_item");
-    assert_eq!(item.quantity(), 5);
-}
-
-#[test]
-fn test_inventory_item_set_quantity() {
-    let mut item = InventoryItem::new("test_item");
-    
-    item.set_quantity(10);
-    assert_eq!(item.quantity(), 10);
-}
-
-#[test]
-fn test_inventory_item_add_quantity() {
-    let mut item = InventoryItem::new("test_item");
-    
-    item.add_quantity(5);
-    assert_eq!(item.quantity(), 6);
-    
-    item.add_quantity(3);
-    assert_eq!(item.quantity(), 9);
-}
-
-#[test]
-fn test_inventory_item_remove_quantity() {
-    let mut item = InventoryItem::new("test_item").with_quantity(10);
-    
-    item.remove_quantity(3);
-    assert_eq!(item.quantity(), 7);
-    
-    item.remove_quantity(5);
-    assert_eq!(item.quantity(), 2);
-}
-
-#[test]
-fn test_inventory_item_is_empty() {
-    let item = InventoryItem::new("test_item");
-    assert!(!item.is_empty());
-    
-    let mut item = InventoryItem::new("test_item");
-    item.set_quantity(0);
-    assert!(item.is_empty());
-}
-
-#[test]
-fn test_inventory_item_clone() {
-    let item1 = InventoryItem::new("test_item").with_quantity(5);
-    let item2 = item1.clone();
-    
-    assert_eq!(item1.name(), item2.name());
-    assert_eq!(item1.quantity(), item2.quantity());
-}
-
-#[test]
-fn test_inventory_item_serialization() {
-    let item = InventoryItem::new("test_item").with_quantity(5);
-    
-    let json = serde_json::to_string(&item).unwrap();
-    let deserialized: InventoryItem = serde_json::from_str(&json).unwrap();
-    
-    assert_eq!(item.name(), deserialized.name());
-    assert_eq!(item.quantity(), deserialized.quantity());
-}
-
-#[test]
-fn test_template_system_creation() {
-    let system = TemplateSystem::new();
-    assert!(system.is_some());
-}
-
-#[test]
-fn test_template_system_spawn_entity() {
-    let mut system = TemplateSystem::new().unwrap();
     let mut world = World::new();
-    
-    let entity = system.spawn_entity(&mut world, "test_template");
-    assert!(entity.is_some());
+    let empty = spawn_entity(&mut world);
+    assert!(world.get::<TemplateTransform>(empty).is_none());
+
+    let positioned = spawn_entity_at(&mut world, Vec3::new(1.0, 2.0, 3.0));
+    let transform = world.get::<TemplateTransform>(positioned).unwrap();
+    assert_eq!(transform.position, Vec3::new(1.0, 2.0, 3.0));
+
+    assert!(Team::Player.is_hostile_to(&Team::Enemy));
+    assert!(!Team::Ally.is_hostile_to(&Team::Player));
 }
 
 #[test]
-fn test_template_system_get_template() {
-    let system = TemplateSystem::new().unwrap();
-    
-    let template = system.get_template("test_template");
-    // Template may or may not exist depending on implementation
-    assert!(template.is_some() || template.is_none());
+fn fps_weapons_ammo_and_systems_follow_current_api() {
+    let mut weapon = Weapon::new(WeaponType::Rifle);
+    assert!(weapon.can_fire());
+    assert!(weapon.fire());
+    assert_eq!(weapon.ammo_in_magazine, weapon.config.magazine_size - 1);
+    assert!(!weapon.can_fire());
+    assert!(weapon.fire_timer > 0.0);
+
+    weapon.tick(weapon.config.fire_rate);
+    weapon.start_reload();
+    assert!(weapon.is_reloading);
+    assert!(weapon.tick(weapon.config.reload_time));
+    assert_eq!(weapon.ammo_in_magazine, weapon.config.magazine_size);
+
+    let mut ammo = Ammo::default();
+    ammo.add(WeaponType::Rifle, 60);
+    assert_eq!(ammo.consume(WeaponType::Rifle, 17), 17);
+    assert_eq!(ammo.get(WeaponType::Rifle), 43);
+
+    let mut world = World::new();
+    world.insert_resource(InputState {
+        move_axis: Vec3::new(1.0, 0.0, -1.0),
+        attack: true,
+        reload: false,
+        ..Default::default()
+    });
+
+    let entity = world.spawn();
+    world.insert(
+        entity,
+        FpsPlayer {
+            is_sprinting: true,
+            ..Default::default()
+        },
+    );
+    world.insert(entity, TemplateVelocity::default());
+    world.insert(entity, Weapon::new(WeaponType::Pistol));
+
+    FpsMovementSystem.run(&mut world);
+    let velocity = world.get::<TemplateVelocity>(entity).unwrap();
+    assert_eq!(velocity.linear.x, 7.5);
+    assert_eq!(velocity.linear.z, 7.5);
+
+    WeaponSystem.run(&mut world);
+    let pistol = world.get::<Weapon>(entity).unwrap();
+    assert_eq!(
+        pistol.ammo_in_magazine,
+        WeaponType::Pistol.config().magazine_size - 1
+    );
+
+    let enemy = world.spawn();
+    world.insert(
+        enemy,
+        EnemyAI {
+            state: EnemyState::Idle,
+            patrol_points: vec![Vec3::ZERO, Vec3::ONE],
+            ..Default::default()
+        },
+    );
+    EnemyAISystem.run(&mut world);
+    assert_eq!(
+        world.get::<EnemyAI>(enemy).unwrap().state,
+        EnemyState::Patrol
+    );
+
+    assert_eq!(FpsPlugin.name(), "fps_template");
 }
 
 #[test]
-fn test_template_system_register_template() {
-    let mut system = TemplateSystem::new().unwrap();
-    
-    let template = GameTemplate::new("test_template");
-    system.register_template(template);
-    
-    // Template should be registered
-    let retrieved = system.get_template("test_template");
-    assert!(retrieved.is_some());
+fn rpg_progression_inventory_quests_and_cooldowns_are_consistent() {
+    let mut player = RpgPlayer::default();
+    assert!(player.add_experience(250));
+    assert_eq!(player.level, 3);
+    assert_eq!(player.stat_points, 6);
+    assert_eq!(player.skill_points, 2);
+
+    let mut stats = CharacterStats::default();
+    stats.increase(StatType::Strength, 5);
+    stats.increase(StatType::Constitution, 2);
+    assert_eq!(stats.physical_damage(), 30.0);
+    assert_eq!(stats.max_health(), 170.0);
+
+    let mut inventory = Inventory::new(2);
+    let potion = InventoryItem::new(1, "Potion", ItemType::Consumable);
+    let sword = InventoryItem::new(2, "Sword", ItemType::Weapon);
+    let gold = InventoryItem::new(3, "Gold", ItemType::Gold);
+    assert_eq!(inventory.add_item(potion.clone(), 120), potion.max_stack);
+    assert_eq!(inventory.add_item(potion, 1), 0);
+    assert_eq!(inventory.add_item(sword.clone(), 2), 1);
+    assert!(inventory.has_item(sword.id, 1));
+    assert_eq!(inventory.add_item(gold, 250), 250);
+    assert_eq!(inventory.gold, 250);
+    assert!(inventory.is_full());
+    assert_eq!(inventory.remove_item(sword.id, 1), 1);
+
+    let mut equipment = Equipment::default();
+    let replacement = InventoryItem::new(4, "Axe", ItemType::Weapon);
+    assert!(equipment
+        .equip(EquipmentSlot::MainHand, sword.clone())
+        .is_none());
+    let previous = equipment
+        .equip(EquipmentSlot::MainHand, replacement)
+        .unwrap();
+    assert_eq!(previous.id, sword.id);
+    assert_eq!(equipment.total_armor(), 10);
+
+    let mut skill = Skill::new(10, "Blink", SkillType::Active);
+    assert!(!skill.can_use());
+    assert!(skill.upgrade());
+    assert!(skill.use_skill());
+    assert_eq!(skill.cooldown_timer, skill.cooldown);
+
+    let mut ability = Ability::new(20, "Smite");
+    assert!(ability.activate());
+    assert!(!ability.is_ready());
+
+    let objective = QuestObjective {
+        id: 1,
+        description: "Collect three herbs".to_string(),
+        objective_type: ObjectiveType::Collect,
+        target_id: 7,
+        required: 3,
+        current: 0,
+    };
+    let mut quest = Quest::new(99, "Herbal Remedy").add_objective(objective);
+    quest.start();
+    quest.objectives[0].progress(3);
+    quest.complete();
+    assert_eq!(quest.state, QuestState::Completed);
+
+    let mut world = World::new();
+    let quest_entity = world.spawn();
+    let mut active_quest = Quest::new(100, "Already Done").add_objective(QuestObjective {
+        id: 2,
+        description: "Talk to the elder".to_string(),
+        objective_type: ObjectiveType::TalkTo,
+        target_id: 1,
+        required: 1,
+        current: 1,
+    });
+    active_quest.start();
+    world.insert(quest_entity, active_quest);
+
+    let cooldown_entity = world.spawn();
+    world.insert(
+        cooldown_entity,
+        Skill {
+            cooldown_timer: 1.0,
+            ..Skill::new(11, "Dash", SkillType::Active)
+        },
+    );
+    world.insert(
+        cooldown_entity,
+        Ability {
+            cooldown_timer: 1.0,
+            ..Ability::new(21, "Heal")
+        },
+    );
+
+    RpgQuestSystem.run(&mut world);
+    assert_eq!(
+        world.get::<Quest>(quest_entity).unwrap().state,
+        QuestState::Completed
+    );
+
+    RpgSkillSystem.run(&mut world);
+    assert!(world.get::<Skill>(cooldown_entity).unwrap().cooldown_timer < 1.0);
+    assert!(
+        world
+            .get::<Ability>(cooldown_entity)
+            .unwrap()
+            .cooldown_timer
+            < 1.0
+    );
+
+    assert_eq!(RpgPlugin.name(), "rpg_template");
 }
 
 #[test]
-fn test_game_template_creation() {
-    let template = GameTemplate::new("test_template");
-    
-    assert_eq!(template.name(), "test_template");
+fn platformer_helpers_cover_movement_collectibles_and_keys() {
+    let mut player = PlatformerPlayer::default();
+    assert!(player.can_jump());
+    player.jump();
+    assert!(player.is_jumping);
+    assert_eq!(player.velocity[1], player.jump_force);
+    player.apply_gravity(0.5);
+    assert!(player.velocity[1] < player.jump_force);
+    player.land();
+    assert!(player.is_grounded);
+
+    let mut inventory = PlayerInventory::default();
+    inventory.add_collectible(&Collectible::coin(5));
+    inventory.add_collectible(&Collectible {
+        collectible_type: CollectibleType::Key { door_id: 42 },
+        value: 1,
+        spawn_weight: 1.0,
+        bob_speed: 0.0,
+        bob_amount: 0.0,
+        rotation_speed: 0.0,
+        bob_offset: 0.0,
+    });
+    assert_eq!(inventory.coins, 5);
+    assert!(inventory.has_key(42));
+    assert!(inventory.use_key(42));
+    assert!(!inventory.has_key(42));
 }
 
 #[test]
-fn test_game_template_with_description() {
-    let template = GameTemplate::new("test_template")
-        .with_description("A test template");
-    
-    assert_eq!(template.description(), Some("A test template"));
-}
+fn rts_resource_selection_and_fog_helpers_are_usable() {
+    let cost = ResourceCost::new(50, 25, 10, 0);
+    assert_eq!(cost.food + cost.wood + cost.gold + cost.stone, 85);
 
-#[test]
-fn test_game_template_add_component() {
-    let mut template = GameTemplate::new("test_template");
-    
-    template.add_component("Transform");
-    template.add_component("Health");
-    
-    let components = template.components();
-    assert_eq!(components.len(), 2);
-    assert!(components.contains(&"Transform".to_string()));
-    assert!(components.contains(&"Health".to_string()));
-}
+    let resources = PlayerResources::default();
+    assert_eq!(resources.max_population, 5);
 
-#[test]
-fn test_game_template_components() {
-    let mut template = GameTemplate::new("test_template");
-    
-    template.add_component("Transform");
-    template.add_component("Health");
-    
-    let components = template.components();
-    assert_eq!(components.len(), 2);
-}
+    let generator = ResourceGenerator::new(ResourceType::Wood, 1000.0);
+    assert_eq!(generator.gather_rate, 0.39);
+    assert_eq!(generator.resource_amount, 1000.0);
 
-#[test]
-fn test_game_template_clone() {
-    let template1 = GameTemplate::new("test_template")
-        .with_description("A test template");
-    
-    let template2 = template1.clone();
-    
-    assert_eq!(template1.name(), template2.name());
-    assert_eq!(template1.description(), template2.description());
-}
+    let carrying = ResourceCarrying {
+        amount: 10.0,
+        ..Default::default()
+    };
+    assert!(carrying.is_full());
 
-#[test]
-fn test_game_template_serialization() {
-    let template = GameTemplate::new("test_template")
-        .with_description("A test template");
-    
-    let json = serde_json::to_string(&template).unwrap();
-    let deserialized: GameTemplate = serde_json::from_str(&json).unwrap();
-    
-    assert_eq!(template.name(), deserialized.name());
-    assert_eq!(template.description(), deserialized.description());
-}
+    let mut selection = SelectionManager::default();
+    selection.select_entity(1);
+    selection.add_to_selection(2);
+    selection.create_control_group(1);
+    selection.clear_selection();
+    assert!(selection.select_control_group(1));
+    assert_eq!(selection.selected_entities.len(), 2);
 
-#[test]
-fn test_template_registry_creation() {
-    let registry = TemplateRegistry::new();
-    assert!(registry.is_some());
-}
+    let fog = FogOfWar::new(GlamVec2::new(100.0, 50.0), 10.0);
+    assert_eq!(fog.grid_size, [10, 5]);
+    assert_eq!(fog.world_to_grid(GlamVec2::new(15.0, 25.0)), Some([1, 2]));
 
-#[test]
-fn test_template_registry_register() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    let template = GameTemplate::new("test_template");
-    registry.register(template);
-    
-    let retrieved = registry.get("test_template");
-    assert!(retrieved.is_some());
-}
-
-#[test]
-fn test_template_registry_get() {
-    let registry = TemplateRegistry::new().unwrap();
-    
-    let template = registry.get("nonexistent_template");
-    assert!(template.is_none());
-}
-
-#[test]
-fn test_template_registry_list() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    registry.register(GameTemplate::new("template1"));
-    registry.register(GameTemplate::new("template2"));
-    
-    let templates = registry.list();
-    assert_eq!(templates.len(), 2);
-}
-
-#[test]
-fn test_template_registry_has() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    registry.register(GameTemplate::new("test_template"));
-    
-    assert!(registry.has("test_template"));
-    assert!(!registry.has("nonexistent_template"));
-}
-
-#[test]
-fn test_template_registry_remove() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    registry.register(GameTemplate::new("test_template"));
-    assert!(registry.has("test_template"));
-    
-    registry.remove("test_template");
-    assert!(!registry.has("test_template"));
-}
-
-#[test]
-fn test_template_registry_clear() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    registry.register(GameTemplate::new("template1"));
-    registry.register(GameTemplate::new("template2"));
-    
-    assert_eq!(registry.list().len(), 2);
-    
-    registry.clear();
-    assert_eq!(registry.list().len(), 0);
-}
-
-#[test]
-fn test_template_registry_count() {
-    let mut registry = TemplateRegistry::new().unwrap();
-    
-    assert_eq!(registry.count(), 0);
-    
-    registry.register(GameTemplate::new("template1"));
-    assert_eq!(registry.count(), 1);
-    
-    registry.register(GameTemplate::new("template2"));
-    assert_eq!(registry.count(), 2);
-}
-
-#[test]
-fn test_template_registry_is_empty() {
-    let registry = TemplateRegistry::new().unwrap();
-    assert!(registry.is_empty());
-    
-    let mut registry = TemplateRegistry::new().unwrap();
-    registry.register(GameTemplate::new("template1"));
-    assert!(!registry.is_empty());
+    let input = InputState {
+        look_axis: TemplateVec2 { x: 1.0, y: -1.0 },
+        ..Default::default()
+    };
+    assert_eq!(input.look_axis.x, 1.0);
 }

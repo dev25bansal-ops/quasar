@@ -13,9 +13,9 @@
 
 use egui::{self, Color32, RichText, Ui};
 use quasar_core::quest::{
-    ObjectiveState, Quest, QuestCategory, QuestObjective, QuestObjectiveType,
-    QuestPrerequisite, QuestPrerequisiteType, QuestReward, QuestRewardType,
-    QuestState, QuestInstance, QuestSystem,
+    ObjectiveState, Quest, QuestCategory, QuestInstance, QuestObjective, QuestObjectiveType,
+    QuestPrerequisite, QuestPrerequisiteType, QuestReward, QuestRewardType, QuestState,
+    QuestSystem,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -179,9 +179,17 @@ impl QuestDef {
             hidden: quest.hidden,
             repeatable: quest.repeatable,
             time_limit: quest.time_limit,
-            objectives: quest.objectives.iter().map(ObjectiveDef::from_runtime).collect(),
+            objectives: quest
+                .objectives
+                .iter()
+                .map(ObjectiveDef::from_runtime)
+                .collect(),
             rewards: quest.rewards.iter().map(RewardDef::from_runtime).collect(),
-            prerequisites: quest.prerequisites.iter().map(PrerequisiteDef::from_runtime).collect(),
+            prerequisites: quest
+                .prerequisites
+                .iter()
+                .map(PrerequisiteDef::from_runtime)
+                .collect(),
             dialogue_tree_id: quest.dialogue_tree_id.clone().unwrap_or_default(),
             tags: quest.tags.clone(),
             availability_script: quest.availability_script.clone().unwrap_or_default(),
@@ -316,36 +324,24 @@ impl ObjectiveTypeEditor {
                     location_id: location_id.clone(),
                 }
             }
-            ObjectiveTypeEditor::TalkTo { npc_id } => {
-                QuestObjectiveType::TalkTo {
-                    npc_id: npc_id.clone(),
-                }
-            }
-            ObjectiveTypeEditor::CollectItem { item_id } => {
-                QuestObjectiveType::CollectItem {
-                    item_id: item_id.clone(),
-                }
-            }
-            ObjectiveTypeEditor::DefeatEnemy { enemy_type } => {
-                QuestObjectiveType::DefeatEnemy {
-                    enemy_type: enemy_type.clone(),
-                }
-            }
-            ObjectiveTypeEditor::Interact { object_id } => {
-                QuestObjectiveType::Interact {
-                    object_id: object_id.clone(),
-                }
-            }
-            ObjectiveTypeEditor::UseAbility { ability_id } => {
-                QuestObjectiveType::UseAbility {
-                    ability_id: ability_id.clone(),
-                }
-            }
-            ObjectiveTypeEditor::Count { counter } => {
-                QuestObjectiveType::Count {
-                    counter: counter.clone(),
-                }
-            }
+            ObjectiveTypeEditor::TalkTo { npc_id } => QuestObjectiveType::TalkTo {
+                npc_id: npc_id.clone(),
+            },
+            ObjectiveTypeEditor::CollectItem { item_id } => QuestObjectiveType::CollectItem {
+                item_id: item_id.clone(),
+            },
+            ObjectiveTypeEditor::DefeatEnemy { enemy_type } => QuestObjectiveType::DefeatEnemy {
+                enemy_type: enemy_type.clone(),
+            },
+            ObjectiveTypeEditor::Interact { object_id } => QuestObjectiveType::Interact {
+                object_id: object_id.clone(),
+            },
+            ObjectiveTypeEditor::UseAbility { ability_id } => QuestObjectiveType::UseAbility {
+                ability_id: ability_id.clone(),
+            },
+            ObjectiveTypeEditor::Count { counter } => QuestObjectiveType::Count {
+                counter: counter.clone(),
+            },
             ObjectiveTypeEditor::Escort {
                 npc_id,
                 location_id,
@@ -353,11 +349,9 @@ impl ObjectiveTypeEditor {
                 npc_id: npc_id.clone(),
                 location_id: location_id.clone(),
             },
-            ObjectiveTypeEditor::Survive { duration } => {
-                QuestObjectiveType::Survive {
-                    duration: *duration,
-                }
-            }
+            ObjectiveTypeEditor::Survive { duration } => QuestObjectiveType::Survive {
+                duration: *duration,
+            },
             ObjectiveTypeEditor::Custom { id, params } => {
                 let params_map: HashMap<String, String> = params
                     .iter()
@@ -378,36 +372,24 @@ impl ObjectiveTypeEditor {
                     location_id: location_id.clone(),
                 }
             }
-            QuestObjectiveType::TalkTo { npc_id } => {
-                ObjectiveTypeEditor::TalkTo {
-                    npc_id: npc_id.clone(),
-                }
-            }
-            QuestObjectiveType::CollectItem { item_id } => {
-                ObjectiveTypeEditor::CollectItem {
-                    item_id: item_id.clone(),
-                }
-            }
-            QuestObjectiveType::DefeatEnemy { enemy_type } => {
-                ObjectiveTypeEditor::DefeatEnemy {
-                    enemy_type: enemy_type.clone(),
-                }
-            }
-            QuestObjectiveType::Interact { object_id } => {
-                ObjectiveTypeEditor::Interact {
-                    object_id: object_id.clone(),
-                }
-            }
-            QuestObjectiveType::UseAbility { ability_id } => {
-                ObjectiveTypeEditor::UseAbility {
-                    ability_id: ability_id.clone(),
-                }
-            }
-            QuestObjectiveType::Count { counter } => {
-                ObjectiveTypeEditor::Count {
-                    counter: counter.clone(),
-                }
-            }
+            QuestObjectiveType::TalkTo { npc_id } => ObjectiveTypeEditor::TalkTo {
+                npc_id: npc_id.clone(),
+            },
+            QuestObjectiveType::CollectItem { item_id } => ObjectiveTypeEditor::CollectItem {
+                item_id: item_id.clone(),
+            },
+            QuestObjectiveType::DefeatEnemy { enemy_type } => ObjectiveTypeEditor::DefeatEnemy {
+                enemy_type: enemy_type.clone(),
+            },
+            QuestObjectiveType::Interact { object_id } => ObjectiveTypeEditor::Interact {
+                object_id: object_id.clone(),
+            },
+            QuestObjectiveType::UseAbility { ability_id } => ObjectiveTypeEditor::UseAbility {
+                ability_id: ability_id.clone(),
+            },
+            QuestObjectiveType::Count { counter } => ObjectiveTypeEditor::Count {
+                counter: counter.clone(),
+            },
             QuestObjectiveType::Escort {
                 npc_id,
                 location_id,
@@ -415,11 +397,9 @@ impl ObjectiveTypeEditor {
                 npc_id: npc_id.clone(),
                 location_id: location_id.clone(),
             },
-            QuestObjectiveType::Survive { duration } => {
-                ObjectiveTypeEditor::Survive {
-                    duration: *duration,
-                }
-            }
+            QuestObjectiveType::Survive { duration } => ObjectiveTypeEditor::Survive {
+                duration: *duration,
+            },
             QuestObjectiveType::Custom { id, params } => {
                 let params_vec: Vec<ParamDef> = params
                     .iter()
@@ -503,23 +483,45 @@ impl RewardDef {
 /// Reward type editor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RewardTypeEditor {
-    Experience { amount: u32 },
-    Gold { amount: u32 },
-    Item { item_id: String, count: u32 },
-    Reputation { faction: String, amount: i32 },
-    Unlock { unlock_type: String, unlock_id: String },
-    Achievement { achievement_id: String },
-    Ability { ability_id: String },
-    AreaUnlock { area_id: String },
-    Custom { id: String, params: Vec<ParamDef> },
+    Experience {
+        amount: u32,
+    },
+    Gold {
+        amount: u32,
+    },
+    Item {
+        item_id: String,
+        count: u32,
+    },
+    Reputation {
+        faction: String,
+        amount: i32,
+    },
+    Unlock {
+        unlock_type: String,
+        unlock_id: String,
+    },
+    Achievement {
+        achievement_id: String,
+    },
+    Ability {
+        ability_id: String,
+    },
+    AreaUnlock {
+        area_id: String,
+    },
+    Custom {
+        id: String,
+        params: Vec<ParamDef>,
+    },
 }
 
 impl RewardTypeEditor {
     pub fn to_runtime(&self) -> QuestRewardType {
         match self {
-            RewardTypeEditor::Experience { amount } => QuestRewardType::Experience {
-                amount: *amount,
-            },
+            RewardTypeEditor::Experience { amount } => {
+                QuestRewardType::Experience { amount: *amount }
+            }
             RewardTypeEditor::Gold { amount } => QuestRewardType::Gold { amount: *amount },
             RewardTypeEditor::Item { item_id, count } => QuestRewardType::Item {
                 item_id: item_id.clone(),
@@ -536,21 +538,15 @@ impl RewardTypeEditor {
                 unlock_type: unlock_type.clone(),
                 unlock_id: unlock_id.clone(),
             },
-            RewardTypeEditor::Achievement { achievement_id } => {
-                QuestRewardType::Achievement {
-                    achievement_id: achievement_id.clone(),
-                }
-            }
-            RewardTypeEditor::Ability { ability_id } => {
-                QuestRewardType::Ability {
-                    ability_id: ability_id.clone(),
-                }
-            }
-            RewardTypeEditor::AreaUnlock { area_id } => {
-                QuestRewardType::AreaUnlock {
-                    area_id: area_id.clone(),
-                }
-            }
+            RewardTypeEditor::Achievement { achievement_id } => QuestRewardType::Achievement {
+                achievement_id: achievement_id.clone(),
+            },
+            RewardTypeEditor::Ability { ability_id } => QuestRewardType::Ability {
+                ability_id: ability_id.clone(),
+            },
+            RewardTypeEditor::AreaUnlock { area_id } => QuestRewardType::AreaUnlock {
+                area_id: area_id.clone(),
+            },
             RewardTypeEditor::Custom { id, params } => {
                 let params_map: HashMap<String, String> = params
                     .iter()
@@ -574,12 +570,10 @@ impl RewardTypeEditor {
                 item_id: item_id.clone(),
                 count: *count,
             },
-            QuestRewardType::Reputation { faction, amount } => {
-                RewardTypeEditor::Reputation {
-                    faction: faction.clone(),
-                    amount: *amount,
-                }
-            }
+            QuestRewardType::Reputation { faction, amount } => RewardTypeEditor::Reputation {
+                faction: faction.clone(),
+                amount: *amount,
+            },
             QuestRewardType::Unlock {
                 unlock_type,
                 unlock_id,
@@ -587,21 +581,15 @@ impl RewardTypeEditor {
                 unlock_type: unlock_type.clone(),
                 unlock_id: unlock_id.clone(),
             },
-            QuestRewardType::Achievement { achievement_id } => {
-                RewardTypeEditor::Achievement {
-                    achievement_id: achievement_id.clone(),
-                }
-            }
-            QuestRewardType::Ability { ability_id } => {
-                RewardTypeEditor::Ability {
-                    ability_id: ability_id.clone(),
-                }
-            }
-            QuestRewardType::AreaUnlock { area_id } => {
-                RewardTypeEditor::AreaUnlock {
-                    area_id: area_id.clone(),
-                }
-            }
+            QuestRewardType::Achievement { achievement_id } => RewardTypeEditor::Achievement {
+                achievement_id: achievement_id.clone(),
+            },
+            QuestRewardType::Ability { ability_id } => RewardTypeEditor::Ability {
+                ability_id: ability_id.clone(),
+            },
+            QuestRewardType::AreaUnlock { area_id } => RewardTypeEditor::AreaUnlock {
+                area_id: area_id.clone(),
+            },
             QuestRewardType::Custom { id, params } => {
                 let params_vec: Vec<ParamDef> = params
                     .iter()
@@ -682,22 +670,17 @@ impl PrerequisiteTypeEditor {
                 QuestPrerequisiteType::Level { level: *level }
             }
             PrerequisiteTypeEditor::FlagSet { flag } => {
-                QuestPrerequisiteType::FlagSet {
-                    flag: flag.clone(),
-                }
+                QuestPrerequisiteType::FlagSet { flag: flag.clone() }
             }
-            PrerequisiteTypeEditor::ItemOwned { item_id } => {
-                QuestPrerequisiteType::ItemOwned {
-                    item_id: item_id.clone(),
-                }
-            }
-            PrerequisiteTypeEditor::Reputation {
-                faction,
-                min_rep,
-            } => QuestPrerequisiteType::Reputation {
-                faction: faction.clone(),
-                min_rep: *min_rep,
+            PrerequisiteTypeEditor::ItemOwned { item_id } => QuestPrerequisiteType::ItemOwned {
+                item_id: item_id.clone(),
             },
+            PrerequisiteTypeEditor::Reputation { faction, min_rep } => {
+                QuestPrerequisiteType::Reputation {
+                    faction: faction.clone(),
+                    min_rep: *min_rep,
+                }
+            }
             PrerequisiteTypeEditor::Custom { id } => {
                 QuestPrerequisiteType::Custom { id: id.clone() }
             }
@@ -720,22 +703,17 @@ impl PrerequisiteTypeEditor {
                 PrerequisiteTypeEditor::Level { level: *level }
             }
             QuestPrerequisiteType::FlagSet { flag } => {
-                PrerequisiteTypeEditor::FlagSet {
-                    flag: flag.clone(),
-                }
+                PrerequisiteTypeEditor::FlagSet { flag: flag.clone() }
             }
-            QuestPrerequisiteType::ItemOwned { item_id } => {
-                PrerequisiteTypeEditor::ItemOwned {
-                    item_id: item_id.clone(),
-                }
-            }
-            QuestPrerequisiteType::Reputation {
-                faction,
-                min_rep,
-            } => PrerequisiteTypeEditor::Reputation {
-                faction: faction.clone(),
-                min_rep: *min_rep,
+            QuestPrerequisiteType::ItemOwned { item_id } => PrerequisiteTypeEditor::ItemOwned {
+                item_id: item_id.clone(),
             },
+            QuestPrerequisiteType::Reputation { faction, min_rep } => {
+                PrerequisiteTypeEditor::Reputation {
+                    faction: faction.clone(),
+                    min_rep: *min_rep,
+                }
+            }
             QuestPrerequisiteType::Custom { id } => {
                 PrerequisiteTypeEditor::Custom { id: id.clone() }
             }
@@ -791,8 +769,7 @@ impl TestModeState {
         self.quest_system.register_quest(quest);
 
         if self.quest_system.start_quest(&quest_def.id) {
-            self.log
-                .push(format!("Started quest: {}", quest_def.name));
+            self.log.push(format!("Started quest: {}", quest_def.name));
         } else {
             self.log
                 .push(format!("Failed to start quest: {}", quest_def.name));
@@ -804,10 +781,14 @@ impl TestModeState {
             return;
         }
 
-        let current = self.quest_system.get_objective_progress(quest_id, objective_id);
+        let current = self
+            .quest_system
+            .get_objective_progress(quest_id, objective_id);
         self.quest_system
             .add_objective_progress(quest_id, objective_id, amount);
-        let new = self.quest_system.get_objective_progress(quest_id, objective_id);
+        let new = self
+            .quest_system
+            .get_objective_progress(quest_id, objective_id);
 
         self.log.push(format!(
             "Objective {}: {} -> {}",
@@ -823,7 +804,8 @@ impl TestModeState {
             } = event
             {
                 if eq == quest_id && eo == objective_id {
-                    self.log.push(format!("Objective completed: {}", objective_id));
+                    self.log
+                        .push(format!("Objective completed: {}", objective_id));
                 }
             }
         }
@@ -836,10 +818,8 @@ impl TestModeState {
 
         let rewards = self.quest_system.complete_quest(quest_id);
         if !rewards.is_empty() {
-            self.log.push(format!(
-                "Quest completed with {} rewards",
-                rewards.len()
-            ));
+            self.log
+                .push(format!("Quest completed with {} rewards", rewards.len()));
         } else {
             self.log.push("Quest completion failed".to_string());
         }
@@ -1085,7 +1065,11 @@ impl QuestEditor {
             };
 
             if ui
-                .selectable_value(&mut self.selected_quest, Some(i), format!("{} {}", category_icon, quest.name))
+                .selectable_value(
+                    &mut self.selected_quest,
+                    Some(i),
+                    format!("{} {}", category_icon, quest.name),
+                )
                 .clicked()
             {
                 self.active_tab = EditorTab::General;
@@ -1103,7 +1087,11 @@ impl QuestEditor {
             ui.selectable_value(&mut self.active_tab, EditorTab::General, "General");
             ui.selectable_value(&mut self.active_tab, EditorTab::Objectives, "Objectives");
             ui.selectable_value(&mut self.active_tab, EditorTab::Rewards, "Rewards");
-            ui.selectable_value(&mut self.active_tab, EditorTab::Prerequisites, "Prerequisites");
+            ui.selectable_value(
+                &mut self.active_tab,
+                EditorTab::Prerequisites,
+                "Prerequisites",
+            );
             ui.selectable_value(&mut self.active_tab, EditorTab::Dialogue, "Dialogue");
             ui.selectable_value(&mut self.active_tab, EditorTab::Testing, "Testing");
         });
@@ -1182,10 +1170,7 @@ impl QuestEditor {
 
         ui.horizontal(|ui| {
             ui.label("Time Limit (s):");
-            let mut time_str = quest
-                .time_limit
-                .map(|t| t.to_string())
-                .unwrap_or_default();
+            let mut time_str = quest.time_limit.map(|t| t.to_string()).unwrap_or_default();
             if ui.text_edit_singleline(&mut time_str).lost_focus()
                 && ui.input(|i| i.key_pressed(egui::Key::Enter))
             {
@@ -1228,7 +1213,9 @@ impl QuestEditor {
                     });
                 });
             }
-            if delete_objective.is_some() { self.save_state(); }
+            if delete_objective.is_some() {
+                self.save_state();
+            }
         });
     }
 
@@ -1268,7 +1255,9 @@ impl QuestEditor {
                     });
                 });
             }
-            if delete_reward.is_some() { self.save_state(); }
+            if delete_reward.is_some() {
+                self.save_state();
+            }
         });
     }
 
@@ -1304,7 +1293,9 @@ impl QuestEditor {
                     });
                 });
             }
-            if delete_prereq.is_some() { self.save_state(); }
+            if delete_prereq.is_some() {
+                self.save_state();
+            }
         });
     }
 
@@ -1362,12 +1353,10 @@ impl QuestEditor {
                 ui.horizontal(|ui| {
                     ui.label(format!("{}. {}", i + 1, obj.description));
                     if ui.button("+1 Progress").clicked() {
-                        self.test_mode
-                            .progress_objective(&quest.id, &obj.id, 1);
+                        self.test_mode.progress_objective(&quest.id, &obj.id, 1);
                     }
                     if ui.button("+5 Progress").clicked() {
-                        self.test_mode
-                            .progress_objective(&quest.id, &obj.id, 5);
+                        self.test_mode.progress_objective(&quest.id, &obj.id, 5);
                     }
                 });
             }

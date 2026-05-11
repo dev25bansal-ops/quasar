@@ -14,10 +14,10 @@
 
 use egui::{Color32, RichText, Ui};
 use quasar_render::particle::{
-    AlignmentDef, BlendModeDef, CpuParticleSimulator, CollisionDef, CollisionType, ColorKeyframe,
-    CurveKeyframe, EmitterDef, EmitterShape, ForceDef, ForceType, ModifierDef, ModifierType,
-    ParticleRendererDef, ParticleSystemDef, SortingDef, SimulationSpace,
-    evaluate_curve, evaluate_color_gradient,
+    evaluate_color_gradient, evaluate_curve, AlignmentDef, BlendModeDef, CollisionDef,
+    CollisionType, ColorKeyframe, CpuParticleSimulator, CurveKeyframe, EmitterDef, EmitterShape,
+    ForceDef, ForceType, ModifierDef, ModifierType, ParticleRendererDef, ParticleSystemDef,
+    SimulationSpace, SortingDef,
 };
 use quasar_render::vfx_graph::{VfxGraph, VfxNodeId};
 use serde::{Deserialize, Serialize};
@@ -205,10 +205,10 @@ impl ParticleEditorState {
 
     /// Load particle system from JSON file.
     pub fn load_from_file(&mut self, path: &PathBuf) -> Result<(), String> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
-        let system_def: ParticleSystemDef = serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let json =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+        let system_def: ParticleSystemDef =
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse JSON: {}", e))?;
         self.push_undo();
         self.system_def = system_def;
         self.simulator = CpuParticleSimulator::new(self.system_def.clone());
@@ -399,7 +399,11 @@ impl ParticleEditorState {
 
             // Play/Pause/Reset
             if ui
-                .button(if self.is_playing { "\u{23F8} Pause" } else { "\u{25B6} Play" })
+                .button(if self.is_playing {
+                    "\u{23F8} Pause"
+                } else {
+                    "\u{25B6} Play"
+                })
                 .clicked()
             {
                 self.is_playing = !self.is_playing;
@@ -412,11 +416,21 @@ impl ParticleEditorState {
             ui.separator();
 
             // Undo/Redo
-            if ui.add_enabled(!self.undo_stack.is_empty(), egui::Button::new("\u{21A9} Undo")).clicked()
+            if ui
+                .add_enabled(
+                    !self.undo_stack.is_empty(),
+                    egui::Button::new("\u{21A9} Undo"),
+                )
+                .clicked()
             {
                 self.undo();
             }
-            if ui.add_enabled(!self.redo_stack.is_empty(), egui::Button::new("\u{21AA} Redo")).clicked()
+            if ui
+                .add_enabled(
+                    !self.redo_stack.is_empty(),
+                    egui::Button::new("\u{21AA} Redo"),
+                )
+                .clicked()
             {
                 self.redo();
             }
@@ -506,15 +520,27 @@ impl ParticleEditorState {
             ui.collapsing("Emission", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Rate:");
-                    ui.add(egui::DragValue::new(&mut emitter.rate).speed(1.0).range(0.0..=10000.0));
+                    ui.add(
+                        egui::DragValue::new(&mut emitter.rate)
+                            .speed(1.0)
+                            .range(0.0..=10000.0),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("Burst Count:");
-                    ui.add(egui::DragValue::new(&mut emitter.burst_count).speed(1.0).range(0..=1000));
+                    ui.add(
+                        egui::DragValue::new(&mut emitter.burst_count)
+                            .speed(1.0)
+                            .range(0..=1000),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.label("Burst Interval:");
-                    ui.add(egui::DragValue::new(&mut emitter.burst_interval).speed(0.1).range(0.1..=60.0));
+                    ui.add(
+                        egui::DragValue::new(&mut emitter.burst_interval)
+                            .speed(0.1)
+                            .range(0.1..=60.0),
+                    );
                 });
             });
 
@@ -542,7 +568,12 @@ impl ParticleEditorState {
                 emitter.velocity = min..=max;
                 ui.horizontal(|ui| {
                     ui.label("Spread Angle:");
-                    ui.add(egui::DragValue::new(&mut emitter.spread_angle).speed(1.0).range(0.0..=180.0).suffix("°"));
+                    ui.add(
+                        egui::DragValue::new(&mut emitter.spread_angle)
+                            .speed(1.0)
+                            .range(0.0..=180.0)
+                            .suffix("°"),
+                    );
                 });
             });
 
@@ -551,9 +582,17 @@ impl ParticleEditorState {
                 let mut max = *emitter.size.end();
                 ui.horizontal(|ui| {
                     ui.label("Min:");
-                    ui.add(egui::DragValue::new(&mut min).speed(0.01).range(0.001..=10.0));
+                    ui.add(
+                        egui::DragValue::new(&mut min)
+                            .speed(0.01)
+                            .range(0.001..=10.0),
+                    );
                     ui.label("Max:");
-                    ui.add(egui::DragValue::new(&mut max).speed(0.01).range(0.001..=10.0));
+                    ui.add(
+                        egui::DragValue::new(&mut max)
+                            .speed(0.01)
+                            .range(0.001..=10.0),
+                    );
                 });
                 emitter.size = min..=max;
             });
@@ -576,7 +615,11 @@ impl ParticleEditorState {
             });
 
             ui.collapsing("Max Particles", |ui| {
-                ui.add(egui::DragValue::new(&mut emitter.max_particles).speed(10.0).range(1..=100000));
+                ui.add(
+                    egui::DragValue::new(&mut emitter.max_particles)
+                        .speed(10.0)
+                        .range(1..=100000),
+                );
             });
 
             self.system_def.emitters[idx] = emitter;
@@ -598,22 +641,42 @@ impl ParticleEditorState {
         egui::ComboBox::from_label("Shape")
             .selected_text(current_shape)
             .show_ui(ui, |ui| {
-                if ui.selectable_label(current_shape == "Point", "Point").clicked() {
+                if ui
+                    .selectable_label(current_shape == "Point", "Point")
+                    .clicked()
+                {
                     emitter.shape = EmitterShape::Point;
                 }
                 if ui.selectable_label(current_shape == "Box", "Box").clicked() {
-                    emitter.shape = EmitterShape::Box { size: [1.0, 1.0, 1.0] };
+                    emitter.shape = EmitterShape::Box {
+                        size: [1.0, 1.0, 1.0],
+                    };
                 }
-                if ui.selectable_label(current_shape == "Sphere", "Sphere").clicked() {
+                if ui
+                    .selectable_label(current_shape == "Sphere", "Sphere")
+                    .clicked()
+                {
                     emitter.shape = EmitterShape::Sphere { radius: 1.0 };
                 }
-                if ui.selectable_label(current_shape == "Cone", "Cone").clicked() {
-                    emitter.shape = EmitterShape::Cone { angle: 30.0, length: 2.0 };
+                if ui
+                    .selectable_label(current_shape == "Cone", "Cone")
+                    .clicked()
+                {
+                    emitter.shape = EmitterShape::Cone {
+                        angle: 30.0,
+                        length: 2.0,
+                    };
                 }
-                if ui.selectable_label(current_shape == "Circle", "Circle").clicked() {
+                if ui
+                    .selectable_label(current_shape == "Circle", "Circle")
+                    .clicked()
+                {
                     emitter.shape = EmitterShape::Circle { radius: 1.0 };
                 }
-                if ui.selectable_label(current_shape == "Hemisphere", "Hemisphere").clicked() {
+                if ui
+                    .selectable_label(current_shape == "Hemisphere", "Hemisphere")
+                    .clicked()
+                {
                     emitter.shape = EmitterShape::Hemisphere { radius: 1.0 };
                 }
             });
@@ -628,7 +691,9 @@ impl ParticleEditorState {
                     ui.add(egui::DragValue::new(&mut size[2]).speed(0.1));
                 });
             }
-            EmitterShape::Sphere { radius } | EmitterShape::Circle { radius } | EmitterShape::Hemisphere { radius } => {
+            EmitterShape::Sphere { radius }
+            | EmitterShape::Circle { radius }
+            | EmitterShape::Hemisphere { radius } => {
                 ui.horizontal(|ui| {
                     ui.label("Radius:");
                     ui.add(egui::DragValue::new(radius).speed(0.1).range(0.01..=100.0));
@@ -655,19 +720,40 @@ impl ParticleEditorState {
                 self.add_force(ForceType::Gravity { strength: 9.81 });
             }
             if ui.button("\u{1F4A8} Wind").clicked() {
-                self.add_force(ForceType::Wind { direction: [1.0, 0.0, 0.0], strength: 1.0 });
+                self.add_force(ForceType::Wind {
+                    direction: [1.0, 0.0, 0.0],
+                    strength: 1.0,
+                });
             }
             if ui.button("\u{1F300} Turbulence").clicked() {
-                self.add_force(ForceType::Turbulence { strength: 1.0, frequency: 1.0, speed: 1.0, seed: 0 });
+                self.add_force(ForceType::Turbulence {
+                    strength: 1.0,
+                    frequency: 1.0,
+                    speed: 1.0,
+                    seed: 0,
+                });
             }
             if ui.button("\u{1F300} Vortex").clicked() {
-                self.add_force(ForceType::Vortex { center: [0.0, 0.0, 0.0], axis: [0.0, 1.0, 0.0], strength: 1.0, radius: 5.0 });
+                self.add_force(ForceType::Vortex {
+                    center: [0.0, 0.0, 0.0],
+                    axis: [0.0, 1.0, 0.0],
+                    strength: 1.0,
+                    radius: 5.0,
+                });
             }
             if ui.button("\u{1F9F2} Attractor").clicked() {
-                self.add_force(ForceType::Attractor { position: [0.0, 0.0, 0.0], strength: 1.0, range: 10.0 });
+                self.add_force(ForceType::Attractor {
+                    position: [0.0, 0.0, 0.0],
+                    strength: 1.0,
+                    range: 10.0,
+                });
             }
             if ui.button("\u{1F9F2} Repeller").clicked() {
-                self.add_force(ForceType::Repeller { position: [0.0, 0.0, 0.0], strength: 1.0, range: 10.0 });
+                self.add_force(ForceType::Repeller {
+                    position: [0.0, 0.0, 0.0],
+                    strength: 1.0,
+                    range: 10.0,
+                });
             }
         });
 
@@ -696,7 +782,10 @@ impl ParticleEditorState {
                             ui.add(egui::DragValue::new(strength).speed(0.1).range(0.0..=50.0));
                         });
                     }
-                    ForceType::Wind { direction, strength } => {
+                    ForceType::Wind {
+                        direction,
+                        strength,
+                    } => {
                         ui.horizontal(|ui| {
                             ui.label("Direction:");
                             ui.add(egui::DragValue::new(&mut direction[0]).speed(0.1));
@@ -708,7 +797,12 @@ impl ParticleEditorState {
                             ui.add(egui::DragValue::new(strength).speed(0.1));
                         });
                     }
-                    ForceType::Turbulence { strength, frequency, speed, seed } => {
+                    ForceType::Turbulence {
+                        strength,
+                        frequency,
+                        speed,
+                        seed,
+                    } => {
                         ui.horizontal(|ui| {
                             ui.label("Strength:");
                             ui.add(egui::DragValue::new(strength).speed(0.1));
@@ -726,7 +820,12 @@ impl ParticleEditorState {
                             ui.add(egui::DragValue::new(seed).speed(1.0));
                         });
                     }
-                    ForceType::Vortex { center, axis, strength, radius } => {
+                    ForceType::Vortex {
+                        center,
+                        axis,
+                        strength,
+                        radius,
+                    } => {
                         ui.horizontal(|ui| {
                             ui.label("Center:");
                             ui.add(egui::DragValue::new(&mut center[0]).speed(0.1));
@@ -746,8 +845,16 @@ impl ParticleEditorState {
                             ui.add(egui::DragValue::new(radius).speed(0.1));
                         });
                     }
-                    ForceType::Attractor { position, strength, range }
-                    | ForceType::Repeller { position, strength, range } => {
+                    ForceType::Attractor {
+                        position,
+                        strength,
+                        range,
+                    }
+                    | ForceType::Repeller {
+                        position,
+                        strength,
+                        range,
+                    } => {
                         ui.horizontal(|ui| {
                             ui.label("Position:");
                             ui.add(egui::DragValue::new(&mut position[0]).speed(0.1));
@@ -764,7 +871,11 @@ impl ParticleEditorState {
                     ForceType::Drag { coefficient } => {
                         ui.horizontal(|ui| {
                             ui.label("Coefficient:");
-                            ui.add(egui::DragValue::new(coefficient).speed(0.01).range(0.0..=1.0));
+                            ui.add(
+                                egui::DragValue::new(coefficient)
+                                    .speed(0.01)
+                                    .range(0.0..=1.0),
+                            );
                         });
                     }
                     ForceType::Noise { strength, scale } => {
@@ -794,16 +905,32 @@ impl ParticleEditorState {
             if ui.button("\u{1F3A8} Color Over Lifetime").clicked() {
                 self.add_modifier(ModifierType::ColorOverLifetime {
                     gradient: vec![
-                        ColorKeyframe { time: 0.0, color: [1.0, 1.0, 1.0, 1.0] },
-                        ColorKeyframe { time: 1.0, color: [1.0, 1.0, 1.0, 0.0] },
+                        ColorKeyframe {
+                            time: 0.0,
+                            color: [1.0, 1.0, 1.0, 1.0],
+                        },
+                        ColorKeyframe {
+                            time: 1.0,
+                            color: [1.0, 1.0, 1.0, 0.0],
+                        },
                     ],
                 });
             }
             if ui.button("\u{1F4D0} Size Over Lifetime").clicked() {
                 self.add_modifier(ModifierType::SizeOverLifetime {
                     curve: vec![
-                        CurveKeyframe { time: 0.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
-                        CurveKeyframe { time: 1.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                        CurveKeyframe {
+                            time: 0.0,
+                            value: 1.0,
+                            in_tangent: 0.0,
+                            out_tangent: 0.0,
+                        },
+                        CurveKeyframe {
+                            time: 1.0,
+                            value: 1.0,
+                            in_tangent: 0.0,
+                            out_tangent: 0.0,
+                        },
                     ],
                 });
             }
@@ -811,7 +938,10 @@ impl ParticleEditorState {
                 self.add_modifier(ModifierType::LimitVelocity { max_speed: 10.0 });
             }
             if ui.button("\u{1F4CF} Clamp Size").clicked() {
-                self.add_modifier(ModifierType::ClampSize { min: 0.01, max: 10.0 });
+                self.add_modifier(ModifierType::ClampSize {
+                    min: 0.01,
+                    max: 10.0,
+                });
             }
         });
 
@@ -844,7 +974,11 @@ impl ParticleEditorState {
                 ModifierType::LimitVelocity { max_speed } => {
                     ui.horizontal(|ui| {
                         ui.label("Max Speed:");
-                        ui.add(egui::DragValue::new(max_speed).speed(0.1).range(0.1..=100.0));
+                        ui.add(
+                            egui::DragValue::new(max_speed)
+                                .speed(0.1)
+                                .range(0.1..=100.0),
+                        );
                     });
                 }
                 ModifierType::ClampSize { min, max } => {
@@ -865,7 +999,7 @@ impl ParticleEditorState {
             }
 
             self.system_def.modifiers[idx] = modifier;
-            
+
             if remove {
                 self.remove_selected_modifier();
             }
@@ -916,7 +1050,11 @@ impl ParticleEditorState {
 
                 ui.horizontal(|ui| {
                     ui.label("Bounce Factor:");
-                    ui.add(egui::DragValue::new(&mut collision.bounce_factor).speed(0.01).range(0.0..=1.0));
+                    ui.add(
+                        egui::DragValue::new(&mut collision.bounce_factor)
+                            .speed(0.01)
+                            .range(0.0..=1.0),
+                    );
                 });
                 ui.checkbox(&mut collision.kill_on_collision, "Kill on Collision");
 
@@ -1035,7 +1173,8 @@ impl ParticleEditorState {
 
             ui.separator();
             if ui.button("\u{1F504} Convert Graph to System").clicked() {
-                self.system_def = crate::vfx_graph::graph_to_particle_system(&self.vfx_graph_editor.graph);
+                self.system_def =
+                    crate::vfx_graph::graph_to_particle_system(&self.vfx_graph_editor.graph);
                 self.simulator = CpuParticleSimulator::new(self.system_def.clone());
                 self.status_message = "Converted VFX graph to particle system".to_string();
             }
@@ -1053,7 +1192,11 @@ impl ParticleEditorState {
 
         ui.horizontal(|ui| {
             ui.label("Playback Speed:");
-            ui.add(egui::DragValue::new(&mut self.playback_speed).speed(0.1).range(0.1..=5.0));
+            ui.add(
+                egui::DragValue::new(&mut self.playback_speed)
+                    .speed(0.1)
+                    .range(0.1..=5.0),
+            );
         });
 
         ui.checkbox(&mut self.show_grid, "Show Grid");
@@ -1061,7 +1204,11 @@ impl ParticleEditorState {
 
         ui.horizontal(|ui| {
             ui.label("Preview Size:");
-            ui.add(egui::DragValue::new(&mut self.preview_particle_size).speed(0.1).range(0.1..=5.0));
+            ui.add(
+                egui::DragValue::new(&mut self.preview_particle_size)
+                    .speed(0.1)
+                    .range(0.1..=5.0),
+            );
         });
 
         ui.label("Background Color:");
@@ -1099,7 +1246,8 @@ impl ParticleEditorState {
         let gradient_height = 30.0;
         let width = ui.available_width() - 40.0;
 
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, gradient_height), egui::Sense::click());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, gradient_height), egui::Sense::click());
         let painter = ui.painter_at(rect);
 
         // Draw gradient
@@ -1135,7 +1283,8 @@ impl ParticleEditorState {
         let graph_height = 80.0;
         let width = ui.available_width() - 40.0;
 
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(width, graph_height), egui::Sense::click());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, graph_height), egui::Sense::click());
         let painter = ui.painter_at(rect);
 
         // Draw grid
@@ -1177,7 +1326,11 @@ impl ParticleEditorState {
             let x = rect.min.x + kf.time * width;
             let y = rect.max.y - kf.value * graph_height;
             painter.circle_filled(egui::pos2(x, y), 5.0, egui::Color32::from_rgb(255, 200, 50));
-            painter.circle_stroke(egui::pos2(x, y), 5.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+            painter.circle_stroke(
+                egui::pos2(x, y),
+                5.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
         }
     }
 
@@ -1202,7 +1355,9 @@ impl ParticleEditorState {
 
                 for (id, label) in &presets {
                     if !self.preset_search.is_empty()
-                        && !label.to_lowercase().contains(&self.preset_search.to_lowercase())
+                        && !label
+                            .to_lowercase()
+                            .contains(&self.preset_search.to_lowercase())
                     {
                         continue;
                     }
@@ -1227,7 +1382,10 @@ pub mod presets {
         let mut def = ParticleSystemDef::default();
         def.name = "Fire".to_string();
         def.emitters[0].name = "FireEmitter".to_string();
-        def.emitters[0].shape = EmitterShape::Cone { angle: 40.0, length: 0.5 };
+        def.emitters[0].shape = EmitterShape::Cone {
+            angle: 40.0,
+            length: 0.5,
+        };
         def.emitters[0].rate = 50.0;
         def.emitters[0].lifetime = 0.5..=1.5;
         def.emitters[0].velocity = 2.0..=5.0;
@@ -1237,7 +1395,10 @@ pub mod presets {
         def.emitters[0].color_end = [0.8, 0.2, 0.0, 0.0];
         def.forces.push(ForceDef {
             name: "Updraft".to_string(),
-            force_type: ForceType::Wind { direction: [0.0, 1.0, 0.0], strength: 2.0 },
+            force_type: ForceType::Wind {
+                direction: [0.0, 1.0, 0.0],
+                strength: 2.0,
+            },
             enabled: true,
         });
         def.renderer.blend_mode = BlendModeDef::Additive;
@@ -1258,12 +1419,20 @@ pub mod presets {
         def.emitters[0].color_end = [0.6, 0.6, 0.6, 0.0];
         def.forces.push(ForceDef {
             name: "Rise".to_string(),
-            force_type: ForceType::Wind { direction: [0.0, 0.5, 0.0], strength: 0.5 },
+            force_type: ForceType::Wind {
+                direction: [0.0, 0.5, 0.0],
+                strength: 0.5,
+            },
             enabled: true,
         });
         def.forces.push(ForceDef {
             name: "Turbulence".to_string(),
-            force_type: ForceType::Turbulence { strength: 0.5, frequency: 2.0, speed: 1.0, seed: 0 },
+            force_type: ForceType::Turbulence {
+                strength: 0.5,
+                frequency: 2.0,
+                speed: 1.0,
+                seed: 0,
+            },
             enabled: true,
         });
         def.renderer.blend_mode = BlendModeDef::Alpha;
@@ -1344,7 +1513,9 @@ pub mod presets {
         let mut def = ParticleSystemDef::default();
         def.name = "Rain".to_string();
         def.emitters[0].name = "RainEmitter".to_string();
-        def.emitters[0].shape = EmitterShape::Box { size: [20.0, 0.1, 20.0] };
+        def.emitters[0].shape = EmitterShape::Box {
+            size: [20.0, 0.1, 20.0],
+        };
         def.emitters[0].position = [0.0, 20.0, 0.0];
         def.emitters[0].rate = 500.0;
         def.emitters[0].lifetime = 1.5..=2.5;
@@ -1360,7 +1531,10 @@ pub mod presets {
         });
         def.collisions.push(CollisionDef {
             name: "Ground".to_string(),
-            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            collision_type: CollisionType::Plane {
+                normal: [0.0, 1.0, 0.0],
+                distance: 0.0,
+            },
             bounce_factor: 0.0,
             kill_on_collision: true,
             enabled: true,
@@ -1373,7 +1547,9 @@ pub mod presets {
         let mut def = ParticleSystemDef::default();
         def.name = "Snow".to_string();
         def.emitters[0].name = "SnowEmitter".to_string();
-        def.emitters[0].shape = EmitterShape::Box { size: [20.0, 0.1, 20.0] };
+        def.emitters[0].shape = EmitterShape::Box {
+            size: [20.0, 0.1, 20.0],
+        };
         def.emitters[0].position = [0.0, 15.0, 0.0];
         def.emitters[0].rate = 100.0;
         def.emitters[0].lifetime = 5.0..=8.0;
@@ -1389,17 +1565,28 @@ pub mod presets {
         });
         def.forces.push(ForceDef {
             name: "Wind".to_string(),
-            force_type: ForceType::Wind { direction: [1.0, 0.0, 0.5], strength: 0.5 },
+            force_type: ForceType::Wind {
+                direction: [1.0, 0.0, 0.5],
+                strength: 0.5,
+            },
             enabled: true,
         });
         def.forces.push(ForceDef {
             name: "Turbulence".to_string(),
-            force_type: ForceType::Turbulence { strength: 0.3, frequency: 0.5, speed: 0.5, seed: 42 },
+            force_type: ForceType::Turbulence {
+                strength: 0.3,
+                frequency: 0.5,
+                speed: 0.5,
+                seed: 42,
+            },
             enabled: true,
         });
         def.collisions.push(CollisionDef {
             name: "Ground".to_string(),
-            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            collision_type: CollisionType::Plane {
+                normal: [0.0, 1.0, 0.0],
+                distance: 0.0,
+            },
             bounce_factor: 0.0,
             kill_on_collision: true,
             enabled: true,
@@ -1427,7 +1614,10 @@ pub mod presets {
         });
         def.collisions.push(CollisionDef {
             name: "WaterSurface".to_string(),
-            collision_type: CollisionType::Plane { normal: [0.0, 1.0, 0.0], distance: 0.0 },
+            collision_type: CollisionType::Plane {
+                normal: [0.0, 1.0, 0.0],
+                distance: 0.0,
+            },
             bounce_factor: 0.2,
             kill_on_collision: false,
             enabled: true,

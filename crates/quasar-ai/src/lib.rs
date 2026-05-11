@@ -25,34 +25,34 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
-pub mod blackboard;
 pub mod behavior_tree;
-pub mod goap;
-pub mod utility;
-pub mod sensors;
-pub mod navigation;
-pub mod steering;
+pub mod blackboard;
 pub mod debug;
 pub mod editor;
+pub mod goap;
+pub mod navigation;
+pub mod sensors;
+pub mod steering;
+pub mod utility;
 
+pub use behavior_tree::{BehaviorTree, BtContext, BtNode, BtState, BtStatus};
 pub use blackboard::{Blackboard, BlackboardKey, BlackboardValue};
-pub use behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext, BtState};
-pub use goap::{GoapPlanner, GoapAction, GoapGoal, GoapWorldState};
-pub use utility::{UtilityBrain, UtilityAction, Consideration, ResponseCurve};
-pub use sensors::{SensorSystem, Perception, AwarenessLevel};
-pub use navigation::{NavAgent, PathRequest, PathResult};
-pub use steering::{SteeringBehavior, SteeringOutput};
 pub use debug::{AiDebugger, DebugDraw};
 pub use editor::{AiAgentConfig, AiAgentRegistry, AiEditorManager, EditorBehaviorTree};
+pub use goap::{GoapAction, GoapGoal, GoapPlanner, GoapWorldState};
+pub use navigation::{NavAgent, PathRequest, PathResult};
+pub use sensors::{AwarenessLevel, Perception, SensorSystem};
+pub use steering::{SteeringBehavior, SteeringOutput};
+pub use utility::{Consideration, ResponseCurve, UtilityAction, UtilityBrain};
 
 pub mod prelude {
+    pub use crate::behavior_tree::{BehaviorTree, BtContext, BtNode, BtState, BtStatus};
     pub use crate::blackboard::{Blackboard, BlackboardKey, BlackboardValue};
-    pub use crate::behavior_tree::{BehaviorTree, BtNode, BtStatus, BtContext, BtState};
-    pub use crate::goap::{GoapPlanner, GoapAction, GoapGoal, GoapWorldState};
-    pub use crate::utility::{UtilityBrain, UtilityAction, Consideration, ResponseCurve};
-    pub use crate::sensors::{SensorSystem, Perception, AwarenessLevel};
-    pub use crate::navigation::{NavAgent, PathRequest, PathResult};
-    pub use crate::steering::{SteeringBehavior, SteeringOutput};
     pub use crate::debug::{AiDebugger, DebugDraw};
     pub use crate::editor::{AiAgentConfig, AiAgentRegistry, AiEditorManager, EditorBehaviorTree};
+    pub use crate::goap::{GoapAction, GoapGoal, GoapPlanner, GoapWorldState};
+    pub use crate::navigation::{NavAgent, PathRequest, PathResult};
+    pub use crate::sensors::{AwarenessLevel, Perception, SensorSystem};
+    pub use crate::steering::{SteeringBehavior, SteeringOutput};
+    pub use crate::utility::{Consideration, ResponseCurve, UtilityAction, UtilityBrain};
 }

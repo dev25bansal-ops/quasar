@@ -188,10 +188,8 @@ impl AppExt for App {
         self.world.insert_resource(StateManager::<S>::new());
 
         // Add state update system (runs every frame)
-        self.schedule.add_system(
-            SystemStage::Update,
-            Box::new(StateUpdateSystem::<S>::new()),
-        );
+        self.schedule
+            .add_system(SystemStage::Update, Box::new(StateUpdateSystem::<S>::new()));
 
         // Add state transition system (runs at end of frame)
         self.schedule.add_system(
@@ -199,7 +197,10 @@ impl AppExt for App {
             Box::new(StateTransitionSystem::<S>::new()),
         );
 
-        log::info!("State machine registered for {:?}", std::any::type_name::<S>());
+        log::info!(
+            "State machine registered for {:?}",
+            std::any::type_name::<S>()
+        );
         self
     }
 
@@ -218,7 +219,8 @@ impl AppExt for App {
             _marker: std::marker::PhantomData,
         };
 
-        self.schedule.add_system(SystemStage::Update, Box::new(system));
+        self.schedule
+            .add_system(SystemStage::Update, Box::new(system));
         self
     }
 
@@ -237,7 +239,8 @@ impl AppExt for App {
             _marker: std::marker::PhantomData,
         };
 
-        self.schedule.add_system(SystemStage::Update, Box::new(system));
+        self.schedule
+            .add_system(SystemStage::Update, Box::new(system));
         self
     }
 }

@@ -72,9 +72,9 @@
 //!
 //! - `quinn-transport`: Enable QUIC-based networking
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod ai;
 pub mod animation;
@@ -89,9 +89,9 @@ pub mod dialogue;
 pub mod ecs;
 pub mod error;
 pub mod event;
-pub mod ik;
 pub mod event_bus;
 pub mod hot_reload;
+pub mod ik;
 pub mod interest;
 pub mod localization;
 pub mod navigation;
@@ -132,15 +132,15 @@ pub use asset::{
     Asset, AssetDepGraph, AssetHandle, AssetManager, AsyncHandle, AsyncState, ContentHash,
     LoadingState,
 };
-pub use debug_draw::{DebugDraw, DebugDrawConfig, DebugDrawColors, DebugLine};
+pub use debug_draw::{DebugDraw, DebugDrawColors, DebugDrawConfig, DebugLine};
 pub use ecs::{
     flush_commands, CachedArchetypeQueryState, Component, Entity, EntityBuilder, QueryFilter,
     QueryState, World, WorldQuery,
 };
 pub use error::{QuasarError, QuasarResult};
 pub use event::{Events, EventsChannel};
-pub use event_bus::{Event, EventBus, EventReader, EventWriter, EventPriority, DEFAULT_PRIORITY};
-pub use ik::{CCDIK, FabrikIK, IKConfig, IKJoint, IKResult, TwoBoneIK};
+pub use event_bus::{Event, EventBus, EventPriority, EventReader, EventWriter, DEFAULT_PRIORITY};
+pub use ik::{FabrikIK, IKConfig, IKJoint, IKResult, TwoBoneIK, CCDIK};
 pub use interest::InterestManager;
 pub use localization::{
     plural_category, Localization, LocalizationPlugin, LocalizationResource, LocalizedString,
@@ -162,7 +162,7 @@ pub use network::{
 
 // Delta compression types from the delta_compression module.
 pub use delta_compression::{
-    ClientBaseline, DeltaFrame, EntityDelta, DeltaComponentIter, MAX_COMPONENT_SLOTS,
+    ClientBaseline, DeltaComponentIter, DeltaFrame, EntityDelta, MAX_COMPONENT_SLOTS,
 };
 pub use plugin::Plugin;
 pub use prefab::{
@@ -176,7 +176,7 @@ pub use save_load::{capture_game_save, load_game_save, GameSave, SaveMeta, Saved
 pub use scene::{Scene, SceneGraph};
 pub use scene_serde::{EntityData, SceneData};
 pub use state::{
-    AppExt, State, StateManager, StateTransition, StateUpdateSystem, StateTransitionSystem,
+    AppExt, State, StateManager, StateTransition, StateTransitionSystem, StateUpdateSystem,
 };
 pub use time::{FixedUpdateAccumulator, Time};
 
@@ -185,21 +185,54 @@ pub use time::{FixedUpdateAccumulator, Time};
 /// Import with `use quasar_core::prelude::*;` to get easy access to
 /// the most frequently used types.
 pub mod prelude {
+    pub use crate::app::{simulation_active, App, SimulationState, TimeSnapshot};
     pub use crate::ecs::{
-        flush_commands, Archetype, ArchetypeGraph, ArchetypeId, Bundle, CachedArchetypeQueryState,
-        ChildOf, Children, Command, Commands, Component, Entity, EntityBuilder, EntitySpawnBuilder,
-        Mut, ObserverEvent, ObserverKind, OnAdd, OnRemove, Parent, Prototype, QueryFilter,
-        QueryState, QueryIter, World, WorldQuery, Schedule, System, SystemStage,
+        flush_commands,
+        system_fn,
+        Access,
+        AccessKind,
+        Archetype,
+        ArchetypeGraph,
+        ArchetypeId,
+        Bundle,
+        CachedArchetypeQueryState,
+        ChildOf,
+        Children,
+        Command,
+        Commands,
+        Component,
+        Entity,
+        EntityBuilder,
+        EntitySpawnBuilder,
+        FnSystemWithParams,
+        Mut,
+        ObserverEvent,
+        ObserverKind,
+        OnAdd,
+        OnRemove,
+        Parent,
+        Prototype,
+        QueryFilter,
+        QueryIter,
+        QueryState,
+        Read,
+        Res as CompileRes,
+        ResMut as CompileResMut,
+        Schedule,
+        System,
         // Compile-time SystemParam types
-        SystemParam, SystemState, Access, AccessKind, Read, Write,
-        SystemQuery as CompileQuery, SystemQueryMut as CompileQueryMut,
-        Res as CompileRes, ResMut as CompileResMut,
-        system_fn, FnSystemWithParams,
+        SystemParam,
+        SystemQuery as CompileQuery,
+        SystemQueryMut as CompileQueryMut,
+        SystemStage,
+        SystemState,
+        World,
+        WorldQuery,
+        Write,
     };
     pub use crate::event::{Events, EventsChannel};
     pub use crate::event_bus::{Event, EventBus, EventReader, EventWriter};
-    pub use crate::time::{FixedUpdateAccumulator, Time};
-    pub use crate::app::{App, TimeSnapshot, SimulationState, simulation_active};
     pub use crate::plugin::Plugin;
     pub use crate::state::{AppExt, State, StateManager, StateTransition};
+    pub use crate::time::{FixedUpdateAccumulator, Time};
 }

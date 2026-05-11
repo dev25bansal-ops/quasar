@@ -8,13 +8,10 @@
 //! - Mesh shader uniform layout
 //! - Fallback path verification
 
+use quasar_render::mesh_shader::{MeshShaderCapabilities, MeshShaderUniforms, TaskShaderUniforms};
 use quasar_render::meshlet::{
-    build_lod_meshlets, build_meshlets, LodConfig, LodMeshletData, LodMeshletMesh,
-    MeshletBounds, MeshletData, VisibilityEntry, MAX_LOD_LEVELS, MAX_MESHLET_TRIANGLES,
-    MAX_MESHLET_VERTICES,
-};
-use quasar_render::mesh_shader::{
-    MeshShaderCapabilities, MeshShaderUniforms, TaskShaderUniforms,
+    build_lod_meshlets, build_meshlets, LodConfig, LodMeshletData, LodMeshletMesh, MeshletBounds,
+    MeshletData, VisibilityEntry, MAX_LOD_LEVELS, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES,
 };
 
 // ── LOD Meshlet Generation Tests ────────────────────────────────
@@ -75,7 +72,11 @@ fn lod_meshlet_generation_sphere() {
     }
 
     // Verify LOD 0 has the most meshlets (highest detail)
-    let lod0_count = lod_mesh.meshlets.iter().filter(|m| m.lod_level == 0).count();
+    let lod0_count = lod_mesh
+        .meshlets
+        .iter()
+        .filter(|m| m.lod_level == 0)
+        .count();
     assert!(lod0_count > 0, "LOD 0 should have meshlets");
 }
 
@@ -196,14 +197,20 @@ fn visibility_buffer_zero_init() {
 #[test]
 fn task_shader_uniform_layout() {
     let uniforms = TaskShaderUniforms {
-        view_proj: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+        view_proj: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
         camera_pos: [0.0, 0.0, 5.0],
         meshlet_count: 1000,
         lod_count: 4,
         screen_width: 1920.0,
         screen_height: 1080.0,
+        _pad0: [0.0; 1],
         lod_thresholds: [1000.0, 500.0, 250.0, 100.0],
-        _pad: [0.0; 2],
+        _pad: [0.0; 4],
     };
 
     let bytes = bytemuck::bytes_of(&uniforms);
@@ -216,9 +223,24 @@ fn task_shader_uniform_layout() {
 #[test]
 fn mesh_shader_uniform_layout() {
     let uniforms = MeshShaderUniforms {
-        view_proj: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
-        model: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
-        normal_matrix: [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+        view_proj: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        model: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        normal_matrix: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
         meshlet_count: 500,
         _pad: [0.0; 3],
     };
@@ -296,9 +318,7 @@ fn lod_empty_mesh_panics() {
     let config = LodConfig::default();
 
     // Should handle empty mesh gracefully or panic with clear message
-    let result = std::panic::catch_unwind(|| {
-        build_lod_meshlets(&positions, &indices, config)
-    });
+    let result = std::panic::catch_unwind(|| build_lod_meshlets(&positions, &indices, config));
 
     // Either it succeeds with empty data or panics
     if let Ok(lod_mesh) = result {
@@ -318,9 +338,7 @@ fn lod_config_validation() {
     let positions = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     let indices = [0u32, 1, 2];
 
-    let result = std::panic::catch_unwind(|| {
-        build_lod_meshlets(&positions, &indices, config)
-    });
+    let result = std::panic::catch_unwind(|| build_lod_meshlets(&positions, &indices, config));
 
     assert!(result.is_err(), "Should panic with too many LOD levels");
 }
@@ -337,9 +355,8 @@ fn lod_reduction_ratio_bounds() {
         preserve_boundaries: true,
     };
 
-    let result_zero = std::panic::catch_unwind(|| {
-        build_lod_meshlets(&positions, &indices, config_zero)
-    });
+    let result_zero =
+        std::panic::catch_unwind(|| build_lod_meshlets(&positions, &indices, config_zero));
     assert!(result_zero.is_err(), "Should panic with ratio 0.0");
 
     // Test ratio = 1.0 (invalid)
@@ -349,9 +366,8 @@ fn lod_reduction_ratio_bounds() {
         preserve_boundaries: true,
     };
 
-    let result_one = std::panic::catch_unwind(|| {
-        build_lod_meshlets(&positions, &indices, config_one)
-    });
+    let result_one =
+        std::panic::catch_unwind(|| build_lod_meshlets(&positions, &indices, config_one));
     assert!(result_one.is_err(), "Should panic with ratio 1.0");
 }
 
@@ -391,10 +407,8 @@ fn meshlet_bounds_computation() {
         assert!(b.radius > 0.0);
 
         // Cone axis should be normalized (or zero)
-        let axis_len = (b.cone_axis[0].powi(2)
-            + b.cone_axis[1].powi(2)
-            + b.cone_axis[2].powi(2))
-        .sqrt();
+        let axis_len =
+            (b.cone_axis[0].powi(2) + b.cone_axis[1].powi(2) + b.cone_axis[2].powi(2)).sqrt();
         assert!(axis_len <= 1.0 + f32::EPSILON);
 
         // Cone cutoff should be in [-1, 1]

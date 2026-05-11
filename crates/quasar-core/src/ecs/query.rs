@@ -793,9 +793,7 @@ impl<Q: WorldQuery, F: QueryFilter> CachedArchetypeQueryState<Q, F> {
     /// but can be called manually to pre-warm the cache.
     pub fn rebuild(&mut self, world: &World) {
         let type_ids = Q::type_ids();
-        self.cached_archetype_ids = world
-            .archetype_graph()
-            .find_with_components_ids(&type_ids);
+        self.cached_archetype_ids = world.archetype_graph().find_with_components_ids(&type_ids);
         self.cached_generation = world.archetype_graph().generation();
     }
 
@@ -840,7 +838,9 @@ impl<Q: WorldQuery, F: QueryFilter> CachedArchetypeQueryState<Q, F> {
                 // Check that all required columns exist and are non-empty
                 let all_columns_valid = type_ids.iter().all(|tid| {
                     arch.type_to_column.get(tid).map_or(false, |&col_idx| {
-                        arch.columns.get(col_idx).map_or(false, |col| !col.is_empty())
+                        arch.columns
+                            .get(col_idx)
+                            .map_or(false, |col| !col.is_empty())
                     })
                 });
                 if all_columns_valid {
@@ -948,9 +948,13 @@ impl<'w, Q: WorldQuery, F: QueryFilter> Iterator for CachedArchetypeQueryIter<'w
         let mut upper = 0;
         for i in self.current_arch..self.archetype_ids.len() {
             if let Some(arch) = self.world.archetype_graph().get(self.archetype_ids[i]) {
-                let remaining_in_arch = arch.entity_count().saturating_sub(
-                    if i == self.current_arch { self.current_row } else { 0 }
-                );
+                let remaining_in_arch =
+                    arch.entity_count()
+                        .saturating_sub(if i == self.current_arch {
+                            self.current_row
+                        } else {
+                            0
+                        });
                 upper += remaining_in_arch;
             }
         }
@@ -1796,7 +1800,9 @@ pub struct SystemQuery<Q: WorldQuery + 'static, F: QueryFilter = ()> {
     _marker: PhantomData<(Q, F)>,
 }
 
-impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam for SystemQuery<Q, F> {
+impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam
+    for SystemQuery<Q, F>
+{
     type State = QueryStateReadonly<Q, F>;
     type Item<'w, 's> = QueryRef<'w, 's, Q, F>;
 
@@ -1812,10 +1818,7 @@ impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'stat
         access
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         QueryRef {
             state: &state.query_state,
             world: NonNull::new_unchecked(world),
@@ -1843,7 +1846,9 @@ pub struct SystemQueryMut<Q: WorldQuery + 'static, F: QueryFilter = ()> {
     _marker: PhantomData<(Q, F)>,
 }
 
-impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam for SystemQueryMut<Q, F> {
+impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'static> SystemParam
+    for SystemQueryMut<Q, F>
+{
     type State = QueryStateMut<Q, F>;
     type Item<'w, 's> = QueryMutRef<'w, 's, Q, F>;
 
@@ -1859,10 +1864,7 @@ impl<Q: WorldQuery + Send + Sync + 'static, F: QueryFilter + Send + Sync + 'stat
         access
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         QueryMutRef {
             state: &state.query_state,
             world: NonNull::new_unchecked(world),
@@ -1970,10 +1972,7 @@ impl<T: Send + Sync + 'static> SystemParam for Res<T> {
         Access::new().read_resource::<T>()
     }
 
-    unsafe fn get_param<'w, 's>(
-        _state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(_state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         let resource = (*world)
             .resource::<T>()
             .expect("Resource not found in Res<T> SystemParam");
@@ -2008,10 +2007,7 @@ impl<T: Send + Sync + 'static> SystemParam for ResMut<T> {
         Access::new().write_resource::<T>()
     }
 
-    unsafe fn get_param<'w, 's>(
-        _state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(_state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         let resource = (*world)
             .resource_mut::<T>()
             .expect("Resource not found in ResMut<T> SystemParam");
@@ -2159,8 +2155,7 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_single_component() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         // Initially empty
         assert!(query.is_empty(&world));
@@ -2238,8 +2233,7 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_cache_stale_detection() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         // Initial state
         assert!(!query.is_stale(&world)); // generation 0 == cached 0
@@ -2262,8 +2256,7 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_manual_rebuild() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         let e = world.spawn();
         world.insert(e, Position { x: 1.0, y: 1.0 });
@@ -2341,14 +2334,13 @@ mod zero_alloc_tests {
             .filter(|(_, (_, vel))| vel.is_some())
             .collect();
         assert_eq!(with_vel.len(), 1);
-        assert_eq!(with_vel[0].1 .0 .x, 3.0);
+        assert_eq!(with_vel[0].1 .0.x, 3.0);
     }
 
     #[test]
     fn cached_archetype_query_state_after_despawn() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         let e1 = world.spawn();
         world.insert(e1, Position { x: 1.0, y: 1.0 });
@@ -2377,8 +2369,7 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_empty_world() {
         let world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         assert!(query.is_empty(&world));
         let results: Vec<_> = query.iter(&world).collect();
@@ -2388,8 +2379,7 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_multiple_archetypes() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         // Entity with only Position (archetype 1)
         let e1 = world.spawn();
@@ -2418,12 +2408,17 @@ mod zero_alloc_tests {
     #[test]
     fn cached_archetype_query_state_collect() {
         let mut world = World::new();
-        let mut query: CachedArchetypeQueryState<&Position, ()> =
-            CachedArchetypeQueryState::new();
+        let mut query: CachedArchetypeQueryState<&Position, ()> = CachedArchetypeQueryState::new();
 
         for i in 0..10 {
             let e = world.spawn();
-            world.insert(e, Position { x: i as f32, y: i as f32 });
+            world.insert(
+                e,
+                Position {
+                    x: i as f32,
+                    y: i as f32,
+                },
+            );
         }
 
         let results = query.collect(&world);
@@ -2441,6 +2436,6 @@ mod zero_alloc_tests {
 
         let results: Vec<_> = query.iter(&world).collect();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].1 .0 .x, 5.0);
+        assert_eq!(results[0].1 .0.x, 5.0);
     }
 }

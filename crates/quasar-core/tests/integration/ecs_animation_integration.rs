@@ -8,8 +8,8 @@
 //! - Testing cross-fade between animations
 
 use quasar_core::animation::{
-    AnimationClip, AnimationPlayer, AnimationResource, AnimationState, AnimationStateNode,
-    AnimationStateMachine, AnimationTransition, TransitionCondition, TransformKeyframe,
+    AnimationClip, AnimationPlayer, AnimationResource, AnimationState, AnimationStateMachine,
+    AnimationStateNode, AnimationTransition, TransformKeyframe, TransitionCondition,
 };
 use quasar_core::ecs::World;
 use quasar_math::{Quat, Transform, Vec3};
@@ -40,14 +40,26 @@ fn test_spawn_entity_with_animation_resource() {
     let idle_clip = AnimationClip::new("idle")
         .with_duration(2.0)
         .looped(true)
-        .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::new(0.0, 0.0, 0.0)))
-        .add_keyframe(TransformKeyframe::at_position(2.0, Vec3::new(0.0, 0.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ))
+        .add_keyframe(TransformKeyframe::at_position(
+            2.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ));
 
     let walk_clip = AnimationClip::new("walk")
         .with_duration(1.0)
         .looped(true)
-        .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::new(0.0, 0.0, 0.0)))
-        .add_keyframe(TransformKeyframe::at_position(1.0, Vec3::new(2.0, 0.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ))
+        .add_keyframe(TransformKeyframe::at_position(
+            1.0,
+            Vec3::new(2.0, 0.0, 0.0),
+        ));
 
     let mut anim_resource = AnimationResource::new();
     anim_resource.add_clip(idle_clip);
@@ -61,7 +73,10 @@ fn test_spawn_entity_with_animation_resource() {
 
     assert!(world.get::<AnimationPlayer>(entity).is_some());
     assert!(world.resource::<AnimationResource>().is_some());
-    assert_eq!(world.resource::<AnimationResource>().unwrap().clip_count(), 2);
+    assert_eq!(
+        world.resource::<AnimationResource>().unwrap().clip_count(),
+        2
+    );
 }
 
 #[test]
@@ -148,7 +163,10 @@ fn test_animation_state_machine_set_params() {
         .add_transition(AnimationTransition {
             from: "idle".to_string(),
             to: "walking".to_string(),
-            conditions: vec![TransitionCondition::FloatGreaterThan("speed".to_string(), 0.1)],
+            conditions: vec![TransitionCondition::FloatGreaterThan(
+                "speed".to_string(),
+                0.1,
+            )],
             blend_duration: 0.3,
         });
 
@@ -168,8 +186,14 @@ fn test_animation_clip_sampling() {
     let clip = AnimationClip::new("test_clip")
         .with_duration(1.0)
         .looped(false)
-        .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::new(0.0, 0.0, 0.0)))
-        .add_keyframe(TransformKeyframe::at_position(1.0, Vec3::new(10.0, 0.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ))
+        .add_keyframe(TransformKeyframe::at_position(
+            1.0,
+            Vec3::new(10.0, 0.0, 0.0),
+        ));
 
     // Sample at start
     let start = clip.sample(0.0).unwrap();
@@ -189,8 +213,14 @@ fn test_animation_clip_looping() {
     let clip = AnimationClip::new("looped_clip")
         .with_duration(2.0)
         .looped(true)
-        .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::new(0.0, 0.0, 0.0)))
-        .add_keyframe(TransformKeyframe::at_position(2.0, Vec3::new(5.0, 0.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ))
+        .add_keyframe(TransformKeyframe::at_position(
+            2.0,
+            Vec3::new(5.0, 0.0, 0.0),
+        ));
 
     // Sample past duration should wrap around
     let sampled = clip.sample(3.0).unwrap(); // 3.0 % 2.0 = 1.0
@@ -228,15 +258,14 @@ fn test_animation_keyframe_transform_lerp() {
 #[test]
 fn test_animation_keyframe_rotation_lerp() {
     let kf1 = TransformKeyframe::at_rotation(0.0, Quat::IDENTITY);
-    let kf2 = TransformKeyframe::at_rotation(
-        1.0,
-        Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-    );
+    let kf2 =
+        TransformKeyframe::at_rotation(1.0, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2));
 
     let transform = kf1.lerp(&kf2, 0.5);
 
-    // Rotation should be halfway between identity and 90° Y rotation
-    assert!(transform.rotation.w > 0.7 && transform.rotation.w < 0.8);
+    // Halfway between identity and a 90 degree Y rotation is a 45 degree rotation.
+    let expected = Quat::from_rotation_y(std::f32::consts::FRAC_PI_4);
+    assert!(transform.rotation.abs_diff_eq(expected, 0.001));
 }
 
 #[test]
@@ -357,9 +386,7 @@ fn test_animation_player_speed_control() {
 fn test_animation_resource_management() {
     let mut world = World::new();
 
-    let clip = AnimationClip::new("jump")
-        .with_duration(1.5)
-        .looped(false);
+    let clip = AnimationClip::new("jump").with_duration(1.5).looped(false);
 
     let mut resource = AnimationResource::new();
     resource.add_clip(clip.clone());
@@ -381,13 +408,9 @@ fn test_multiple_animation_clips_in_world() {
     let mut world = World::new();
 
     // Create multiple clips
-    let idle_clip = AnimationClip::new("idle")
-        .with_duration(2.0)
-        .looped(true);
+    let idle_clip = AnimationClip::new("idle").with_duration(2.0).looped(true);
 
-    let walk_clip = AnimationClip::new("walk")
-        .with_duration(1.0)
-        .looped(true);
+    let walk_clip = AnimationClip::new("walk").with_duration(1.0).looped(true);
 
     let mut anim_resource = AnimationResource::new();
     anim_resource.add_clip(idle_clip);
@@ -460,7 +483,10 @@ fn test_animation_clip_empty_returns_none() {
 fn test_animation_clip_single_keyframe() {
     let clip = AnimationClip::new("single")
         .with_duration(1.0)
-        .add_keyframe(TransformKeyframe::at_position(0.5, Vec3::new(5.0, 0.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.5,
+            Vec3::new(5.0, 0.0, 0.0),
+        ));
 
     // Single keyframe should return that transform at any time
     let sampled = clip.sample(0.5).unwrap();
@@ -477,8 +503,14 @@ fn test_animation_transform_application() {
     // Create animation clip
     let clip = AnimationClip::new("move")
         .with_duration(1.0)
-        .add_keyframe(TransformKeyframe::at_position(0.0, Vec3::new(0.0, 0.0, 0.0)))
-        .add_keyframe(TransformKeyframe::at_position(1.0, Vec3::new(10.0, 5.0, 0.0)));
+        .add_keyframe(TransformKeyframe::at_position(
+            0.0,
+            Vec3::new(0.0, 0.0, 0.0),
+        ))
+        .add_keyframe(TransformKeyframe::at_position(
+            1.0,
+            Vec3::new(10.0, 5.0, 0.0),
+        ));
 
     // Sample and apply to transform
     let sampled = clip.sample(0.5).unwrap();

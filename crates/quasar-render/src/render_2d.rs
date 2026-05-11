@@ -158,15 +158,13 @@ impl Default for SpriteAnimator {
 // ────────────────────────────────────────────────────────────────────────────
 
 /// A single tile in a tilemap.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub struct Tile {
     pub tile_id: u32,
     pub flip_x: bool,
     pub flip_y: bool,
     pub rotation: u8,
 }
-
 
 /// A tileset containing tile textures.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -10,7 +10,7 @@
 
 #![allow(deprecated)]
 
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2, epaint::Shape};
+use egui::{epaint::Shape, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -416,7 +416,12 @@ impl BtGraphState {
     }
 
     /// Add a node and return its ID.
-    pub fn add_node(&mut self, node_type: BtEditorNodeType, name: &str, position: Pos2) -> GraphNodeId {
+    pub fn add_node(
+        &mut self,
+        node_type: BtEditorNodeType,
+        name: &str,
+        position: Pos2,
+    ) -> GraphNodeId {
         let id = GraphNodeId(self.next_node_id);
         self.next_node_id += 1;
 
@@ -453,7 +458,11 @@ impl BtGraphState {
     }
 
     /// Add a connection between two nodes.
-    pub fn add_connection(&mut self, from: GraphNodeId, to: GraphNodeId) -> Option<GraphConnectionId> {
+    pub fn add_connection(
+        &mut self,
+        from: GraphNodeId,
+        to: GraphNodeId,
+    ) -> Option<GraphConnectionId> {
         if !self.nodes.contains_key(&from) || !self.nodes.contains_key(&to) {
             return None;
         }
@@ -481,15 +490,16 @@ impl BtGraphState {
         let id = GraphConnectionId(self.next_connection_id);
         self.next_connection_id += 1;
 
-        let order = self
-            .connections
-            .values()
-            .filter(|c| c.from == from)
-            .count() as u32;
+        let order = self.connections.values().filter(|c| c.from == from).count() as u32;
 
         self.connections.insert(
             id,
-            BtEditorConnection { id, from, to, order },
+            BtEditorConnection {
+                id,
+                from,
+                to,
+                order,
+            },
         );
         Some(id)
     }
@@ -502,7 +512,8 @@ impl BtGraphState {
     /// Check if `potential_ancestor` is an ancestor of `node`.
     fn is_ancestor(&self, potential_ancestor: GraphNodeId, node: GraphNodeId) -> bool {
         // Find parent of `node`
-        let parent = self.connections
+        let parent = self
+            .connections
             .values()
             .find(|c| c.to == node)
             .map(|c| c.from);
@@ -628,7 +639,11 @@ impl BtGraphState {
         // Check node-specific constraints
         for node in self.nodes.values() {
             if let Some(max) = node.node_type.max_children() {
-                let child_count = self.connections.values().filter(|c| c.from == node.id).count();
+                let child_count = self
+                    .connections
+                    .values()
+                    .filter(|c| c.from == node.id)
+                    .count();
                 if child_count > max {
                     errors.push(format!(
                         "Node '{}' exceeds max children ({} > {})",
@@ -637,7 +652,11 @@ impl BtGraphState {
                 }
             }
             if node.node_type.is_leaf() {
-                let child_count = self.connections.values().filter(|c| c.from == node.id).count();
+                let child_count = self
+                    .connections
+                    .values()
+                    .filter(|c| c.from == node.id)
+                    .count();
                 if child_count > 0 {
                     errors.push(format!(
                         "Leaf node '{}' has {} children",
@@ -700,8 +719,7 @@ impl BtGraphState {
             || (response.dragged() && ui.input(|i| i.modifiers.shift))
         {
             if let Some(delta) = response.interact_pointer_pos().map(|p| {
-                let prev = ui.input(|i| i.pointer.interact_pos())
-                    .unwrap_or(p);
+                let prev = ui.input(|i| i.pointer.interact_pos()).unwrap_or(p);
                 p - prev
             }) {
                 new_state.pan_offset[0] += delta.x;
@@ -870,12 +888,24 @@ impl BtGraphState {
         }
     }
 
-    fn draw_bezier_connection(&self, painter: &egui::Painter, from: Pos2, to: Pos2, color: Color32) {
+    fn draw_bezier_connection(
+        &self,
+        painter: &egui::Painter,
+        from: Pos2,
+        to: Pos2,
+        color: Color32,
+    ) {
         let stroke = Stroke::new(2.0, color);
         self.draw_bezier_connection_stroke(painter, from, to, stroke);
     }
 
-    fn draw_bezier_connection_stroke(&self, painter: &egui::Painter, from: Pos2, to: Pos2, stroke: Stroke) {
+    fn draw_bezier_connection_stroke(
+        &self,
+        painter: &egui::Painter,
+        from: Pos2,
+        to: Pos2,
+        stroke: Stroke,
+    ) {
         let vertical_dist = (to.y - from.y).abs();
         let ctrl_offset = vertical_dist.max(30.0) * 0.4;
         let ctrl1 = Pos2::new(from.x, from.y + ctrl_offset);
@@ -930,7 +960,12 @@ impl BtGraphState {
 
             // Main rect
             painter.rect_filled(rect, 6.0, bg_color);
-            painter.rect_stroke(rect, 6.0, Stroke::new(if is_selected { 2.5 } else { 1.5 }, border_color), egui::epaint::StrokeKind::Outside);
+            painter.rect_stroke(
+                rect,
+                6.0,
+                Stroke::new(if is_selected { 2.5 } else { 1.5 }, border_color),
+                egui::epaint::StrokeKind::Outside,
+            );
 
             // Node type icon
             let icon_pos = Pos2::new(rect.min.x + 14.0, rect.center().y);
@@ -971,18 +1006,30 @@ impl BtGraphState {
             painter.circle_filled(
                 input_pos,
                 6.0,
-                if has_parent { Color32::from_rgb(180, 180, 200) } else { Color32::from_gray(100) },
+                if has_parent {
+                    Color32::from_rgb(180, 180, 200)
+                } else {
+                    Color32::from_gray(100)
+                },
             );
             painter.circle_stroke(input_pos, 6.0, Stroke::new(1.5, Color32::from_gray(60)));
 
             // Output slot (bottom) - only if node can have children
             if node.node_type.can_have_children() {
                 let output_pos = self.world_to_screen(node.output_slot_pos());
-                let child_count = self.connections.values().filter(|c| c.from == node.id).count();
+                let child_count = self
+                    .connections
+                    .values()
+                    .filter(|c| c.from == node.id)
+                    .count();
                 painter.circle_filled(
                     output_pos,
                     6.0,
-                    if child_count > 0 { Color32::from_rgb(100, 200, 100) } else { Color32::from_gray(150) },
+                    if child_count > 0 {
+                        Color32::from_rgb(100, 200, 100)
+                    } else {
+                        Color32::from_gray(150)
+                    },
                 );
                 painter.circle_stroke(output_pos, 6.0, Stroke::new(1.5, Color32::from_gray(60)));
             }
@@ -1009,34 +1056,45 @@ impl BtGraphState {
             BtEditorNodeType::Selector => RuntimeNode::Sequence { children },
             BtEditorNodeType::Sequence => RuntimeNode::Sequence { children },
             BtEditorNodeType::Parallel => {
-                let policy = if node.properties.get("policy").map(|s| s.as_str()) == Some("RequireOne") {
-                    quasar_ai::behavior_tree::ParallelPolicy::RequireOne
-                } else {
-                    quasar_ai::behavior_tree::ParallelPolicy::RequireAll
-                };
+                let policy =
+                    if node.properties.get("policy").map(|s| s.as_str()) == Some("RequireOne") {
+                        quasar_ai::behavior_tree::ParallelPolicy::RequireOne
+                    } else {
+                        quasar_ai::behavior_tree::ParallelPolicy::RequireAll
+                    };
                 RuntimeNode::Parallel { children, policy }
             }
             BtEditorNodeType::RandomSelector => RuntimeNode::Selector { children },
             BtEditorNodeType::RandomSequence => RuntimeNode::Sequence { children },
             BtEditorNodeType::Inverter => {
                 if let Some(child) = children.into_iter().next() {
-                    RuntimeNode::Inverter { child: Box::new(child) }
+                    RuntimeNode::Inverter {
+                        child: Box::new(child),
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::Repeater => {
                 if let Some(child) = children.into_iter().next() {
-                    let count = node.properties.get("count")
+                    let count = node
+                        .properties
+                        .get("count")
                         .and_then(|s| s.parse::<u32>().ok());
-                    RuntimeNode::Repeater { child: Box::new(child), count }
+                    RuntimeNode::Repeater {
+                        child: Box::new(child),
+                        count,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::Succeeder => {
                 if let Some(child) = children.into_iter().next() {
-                    RuntimeNode::Repeater { child: Box::new(child), count: None }
+                    RuntimeNode::Repeater {
+                        child: Box::new(child),
+                        count: None,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
@@ -1044,41 +1102,60 @@ impl BtGraphState {
             BtEditorNodeType::Failer => RuntimeNode::Fail,
             BtEditorNodeType::Timeout => {
                 if let Some(child) = children.into_iter().next() {
-                    let duration = node.properties.get("timeout")
+                    let duration = node
+                        .properties
+                        .get("timeout")
                         .and_then(|s| s.parse::<f32>().ok())
                         .unwrap_or(5.0);
-                    RuntimeNode::Timeout { child: Box::new(child), duration_secs: duration }
+                    RuntimeNode::Timeout {
+                        child: Box::new(child),
+                        duration_secs: duration,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::Cooldown => {
                 if let Some(child) = children.into_iter().next() {
-                    RuntimeNode::Repeater { child: Box::new(child), count: Some(1) }
+                    RuntimeNode::Repeater {
+                        child: Box::new(child),
+                        count: Some(1),
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::Retry => {
                 if let Some(child) = children.into_iter().next() {
-                    let max_tries = node.properties.get("max_retries")
+                    let max_tries = node
+                        .properties
+                        .get("max_retries")
                         .and_then(|s| s.parse::<u32>().ok())
                         .unwrap_or(3);
-                    RuntimeNode::Retry { child: Box::new(child), max_tries }
+                    RuntimeNode::Retry {
+                        child: Box::new(child),
+                        max_tries,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::AlwaysRunning => RuntimeNode::Running,
             BtEditorNodeType::Action => {
-                let action_name = node.properties.get("action_name")
+                let action_name = node
+                    .properties
+                    .get("action_name")
                     .cloned()
                     .unwrap_or_else(|| node.name.clone());
                 RuntimeNode::Action { name: action_name }
             }
             BtEditorNodeType::Condition => {
                 let key = node.properties.get("key").cloned().unwrap_or_default();
-                let expected_str = node.properties.get("expected").cloned().unwrap_or_else(|| "true".to_string());
+                let expected_str = node
+                    .properties
+                    .get("expected")
+                    .cloned()
+                    .unwrap_or_else(|| "true".to_string());
                 let expected = if expected_str == "true" {
                     quasar_ai::BlackboardValue::Bool(true)
                 } else if expected_str == "false" {
@@ -1093,17 +1170,27 @@ impl BtGraphState {
                 RuntimeNode::Condition { key, expected }
             }
             BtEditorNodeType::Wait => {
-                let duration = node.properties.get("duration")
+                let duration = node
+                    .properties
+                    .get("duration")
                     .and_then(|s| s.parse::<f32>().ok())
                     .unwrap_or(1.0);
-                RuntimeNode::Wait { duration_secs: duration }
+                RuntimeNode::Wait {
+                    duration_secs: duration,
+                }
             }
-            BtEditorNodeType::SetBlackboard => {
-                RuntimeNode::Action { name: format!("SetBB({})", node.properties.get("key").cloned().unwrap_or_default()) }
-            }
-            BtEditorNodeType::Log => {
-                RuntimeNode::Action { name: format!("Log({})", node.properties.get("message").cloned().unwrap_or_default()) }
-            }
+            BtEditorNodeType::SetBlackboard => RuntimeNode::Action {
+                name: format!(
+                    "SetBB({})",
+                    node.properties.get("key").cloned().unwrap_or_default()
+                ),
+            },
+            BtEditorNodeType::Log => RuntimeNode::Action {
+                name: format!(
+                    "Log({})",
+                    node.properties.get("message").cloned().unwrap_or_default()
+                ),
+            },
             BtEditorNodeType::Comment => RuntimeNode::Succeed,
         };
 

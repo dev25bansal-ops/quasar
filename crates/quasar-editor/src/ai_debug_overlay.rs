@@ -473,14 +473,23 @@ impl AiDebugOverlay {
                         }
 
                         if ui
-                            .collapsing(format!("Considerations ({})", action.considerations.len()), |ui| {
-                                for cons in &action.considerations {
-                                    ui.horizontal(|ui| {
-                                        ui.label(format!("  {}: {:.3}", cons.name, cons.output));
-                                        ui.small(format!("({} -> {:.2})", cons.input, cons.output));
-                                    });
-                                }
-                            })
+                            .collapsing(
+                                format!("Considerations ({})", action.considerations.len()),
+                                |ui| {
+                                    for cons in &action.considerations {
+                                        ui.horizontal(|ui| {
+                                            ui.label(format!(
+                                                "  {}: {:.3}",
+                                                cons.name, cons.output
+                                            ));
+                                            ui.small(format!(
+                                                "({} -> {:.2})",
+                                                cons.input, cons.output
+                                            ));
+                                        });
+                                    }
+                                },
+                            )
                             .openness
                             > 0.0
                         {

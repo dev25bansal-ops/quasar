@@ -206,7 +206,13 @@ impl EventBus {
         let type_id = TypeId::of::<T>();
         let reader_id = next_reader_id();
         let mut states = self.reader_states.write();
-        states.entry(type_id).or_default().insert(reader_id, ReaderState { reader_id, last_seen_index: 0 });
+        states.entry(type_id).or_default().insert(
+            reader_id,
+            ReaderState {
+                reader_id,
+                last_seen_index: 0,
+            },
+        );
         reader_id
     }
 

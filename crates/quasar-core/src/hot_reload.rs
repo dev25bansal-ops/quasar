@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, Config};
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::asset_server::{AssetReloadedEvent, ReloadKind};
 
@@ -112,10 +112,7 @@ pub enum HotReloadEvent {
         timestamp: Instant,
     },
     /// Reload started
-    ReloadStarted {
-        path: PathBuf,
-        kind: ReloadKind,
-    },
+    ReloadStarted { path: PathBuf, kind: ReloadKind },
     /// Reload completed successfully
     ReloadCompleted {
         path: PathBuf,
@@ -433,7 +430,13 @@ impl HotReloadManager {
                         });
 
                         // Record failure
-                        self.record_reload_record(path.clone(), kind.clone(), false, duration, Some(e.clone()));
+                        self.record_reload_record(
+                            path.clone(),
+                            kind.clone(),
+                            false,
+                            duration,
+                            Some(e.clone()),
+                        );
 
                         log::error!("Failed to hot-reload {:?}: {}", path, e);
                     }
@@ -476,12 +479,12 @@ impl HotReloadManager {
                 // Validate Lua syntax
                 let content = std::fs::read_to_string(path)
                     .map_err(|e| format!("Failed to read {:?}: {}", path, e))?;
-                
+
                 // Basic syntax validation
                 if content.is_empty() {
                     return Err("File is empty".to_string());
                 }
-                
+
                 Ok(())
             }
             ReloadKind::Shader | ReloadKind::Texture | ReloadKind::Hdr => {
@@ -598,9 +601,11 @@ impl HotReloadManager {
         let total_reloads = self.reload_history.len();
         let successful_reloads = self.reload_history.iter().filter(|r| r.success).count();
         let failed_reloads = total_reloads - successful_reloads;
-        
+
         let avg_duration = if total_reloads > 0 {
-            let total_ms: f64 = self.reload_history.iter()
+            let total_ms: f64 = self
+                .reload_history
+                .iter()
                 .map(|r| r.duration.as_secs_f64())
                 .sum();
             Duration::from_secs_f64(total_ms / total_reloads as f64)
@@ -608,7 +613,9 @@ impl HotReloadManager {
             Duration::ZERO
         };
 
-        let recent_failures: Vec<&ReloadRecord> = self.reload_history.iter()
+        let recent_failures: Vec<&ReloadRecord> = self
+            .reload_history
+            .iter()
             .filter(|r| !r.success)
             .rev()
             .take(10)
@@ -758,16 +765,16 @@ mod tests {
 
     fn create_temp_asset_dir() -> TempDir {
         let dir = TempDir::new().expect("Failed to create temp dir");
-        
+
         // Create test files
         let lua_path = dir.path().join("test.lua");
         let mut file = std::fs::File::create(&lua_path).expect("Failed to create test file");
         writeln!(file, "print('hello')").expect("Failed to write");
-        
+
         let shader_path = dir.path().join("test.wgsl");
         let mut file = std::fs::File::create(&shader_path).expect("Failed to create test file");
         writeln!(file, "// Test shader").expect("Failed to write");
-        
+
         dir
     }
 
@@ -800,7 +807,7 @@ mod tests {
     fn test_manager_creation() {
         let config = HotReloadConfig::development();
         let manager = HotReloadManager::new(config);
-        
+
         assert!(manager.config.enabled);
         assert!(manager.watcher.is_some());
         assert!(manager.debounce_queue.is_empty());
@@ -811,7 +818,7 @@ mod tests {
     fn test_manager_production_mode() {
         let config = HotReloadConfig::production();
         let manager = HotReloadManager::new(config);
-        
+
         assert!(!manager.config.enabled);
     }
 
@@ -819,7 +826,7 @@ mod tests {
     fn test_watch_directory() {
         let temp_dir = create_temp_asset_dir();
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let result = manager.watch_directory(temp_dir.path(), true);
         assert!(result.is_ok());
         assert!(manager.watched_paths.contains(temp_dir.path()));
@@ -828,7 +835,7 @@ mod tests {
     #[test]
     fn test_watch_nonexistent_directory() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let result = manager.watch_directory(Path::new("/nonexistent/path"), true);
         assert!(result.is_err());
     }
@@ -836,20 +843,20 @@ mod tests {
     #[test]
     fn test_dependency_tracking() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let source = PathBuf::from("scripts/base.lua");
         let dependent = PathBuf::from("scripts/player.lua");
-        
+
         manager.add_dependency(dependent.clone(), source.clone());
-        
+
         // Check forward dependency
         assert!(manager.dependencies.contains_key(&dependent));
         assert!(manager.dependencies[&dependent].contains(&source));
-        
+
         // Check reverse dependency
         assert!(manager.reverse_dependencies.contains_key(&source));
         assert!(manager.reverse_dependencies[&source].contains(&dependent));
-        
+
         // Test get_dependents
         let dependents = manager.get_dependents(&source);
         assert_eq!(dependents.len(), 1);
@@ -859,15 +866,15 @@ mod tests {
     #[test]
     fn test_transitive_dependencies() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         // A -> B -> C (when A changes, B and C should reload)
         let a = PathBuf::from("a.lua");
         let b = PathBuf::from("b.lua");
         let c = PathBuf::from("c.lua");
-        
+
         manager.add_dependency(b.clone(), a.clone());
         manager.add_dependency(c.clone(), b.clone());
-        
+
         let dependents = manager.get_dependents(&a);
         assert_eq!(dependents.len(), 2);
         assert!(dependents.contains(&b));
@@ -877,13 +884,13 @@ mod tests {
     #[test]
     fn test_remove_dependency() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let source = PathBuf::from("base.lua");
         let dependent = PathBuf::from("player.lua");
-        
+
         manager.add_dependency(dependent.clone(), source.clone());
         manager.remove_dependency(&dependent, &source);
-        
+
         assert!(!manager.dependencies[&dependent].contains(&source));
         assert!(!manager.reverse_dependencies[&source].contains(&dependent));
     }
@@ -891,10 +898,10 @@ mod tests {
     #[test]
     fn test_force_reload() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let path = PathBuf::from("test.lua");
         manager.force_reload(&path);
-        
+
         assert_eq!(manager.pending_reloads.len(), 1);
         assert_eq!(manager.pending_reloads[0].0, path);
     }
@@ -902,14 +909,14 @@ mod tests {
     #[test]
     fn test_clear_pending() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         manager.force_reload(&PathBuf::from("test1.lua"));
         manager.force_reload(&PathBuf::from("test2.lua"));
-        
+
         assert_eq!(manager.pending_reloads.len(), 2);
-        
+
         manager.clear_pending();
-        
+
         assert_eq!(manager.pending_reloads.len(), 0);
     }
 
@@ -917,9 +924,9 @@ mod tests {
     fn test_get_stats() {
         let config = HotReloadConfig::development();
         let manager = HotReloadManager::new(config);
-        
+
         let stats = manager.get_stats();
-        
+
         assert!(stats.is_enabled);
         assert!(!stats.is_reloading);
         assert_eq!(stats.pending_count, 0);
@@ -929,10 +936,10 @@ mod tests {
     #[test]
     fn test_is_reloading_path() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let path = PathBuf::from("test.lua");
         manager.reloading_paths.insert(path.clone());
-        
+
         assert!(manager.is_reloading_path(&path));
         assert!(!manager.is_reloading_path(&PathBuf::from("other.lua")));
     }
@@ -940,14 +947,14 @@ mod tests {
     #[test]
     fn test_reload_record_recording() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let path = PathBuf::from("test.lua");
         let kind = ReloadKind::Lua;
         let duration = Duration::from_millis(50);
-        
+
         // Simulate recording via get_stats after forcing reload
         manager.force_reload(&path);
-        
+
         let stats = manager.get_stats();
         assert_eq!(stats.pending_count, 1);
     }
@@ -956,10 +963,10 @@ mod tests {
     fn test_asset_server_integration() {
         let temp_dir = create_temp_asset_dir();
         let mut integration = AssetServerHotReload::new(HotReloadConfig::development());
-        
+
         let result = integration.watch_assets(temp_dir.path());
         assert!(result.is_ok());
-        
+
         // Process should not panic
         let events = integration.process();
         // Events may be empty since we didn't actually modify files
@@ -968,18 +975,16 @@ mod tests {
 
     #[test]
     fn test_debounce_queue_processing() {
-        let mut manager = HotReloadManager::new(
-            HotReloadConfig::development()
-        );
-        
+        let mut manager = HotReloadManager::new(HotReloadConfig::development());
+
         // Manually add to debounce queue with old timestamp
         let path = PathBuf::from("test.lua");
         let old_time = Instant::now() - Duration::from_secs(1);
         manager.debounce_queue.insert(path.clone(), old_time);
-        
+
         // Process debounce queue
         manager.process_debounce_queue();
-        
+
         // Should have moved to pending
         assert_eq!(manager.pending_reloads.len(), 1);
         assert_eq!(manager.pending_reloads[0].0, path);
@@ -988,15 +993,15 @@ mod tests {
     #[test]
     fn test_debounce_queue_not_ready() {
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         // Add with recent timestamp
         let path = PathBuf::from("test.lua");
         let recent_time = Instant::now() - Duration::from_millis(10);
         manager.debounce_queue.insert(path.clone(), recent_time);
-        
+
         // Process debounce queue
         manager.process_debounce_queue();
-        
+
         // Should still be in debounce queue (not ready yet)
         assert_eq!(manager.pending_reloads.len(), 0);
         assert!(manager.debounce_queue.contains_key(&path));
@@ -1006,7 +1011,7 @@ mod tests {
     fn test_perform_reload_lua_validation() {
         let temp_dir = create_temp_asset_dir();
         let manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let lua_path = temp_dir.path().join("test.lua");
         let result = manager.perform_reload(&lua_path, &ReloadKind::Lua);
         assert!(result.is_ok());
@@ -1015,7 +1020,7 @@ mod tests {
     #[test]
     fn test_perform_reload_nonexistent_file() {
         let manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         let path = PathBuf::from("/nonexistent/test.lua");
         let result = manager.perform_reload(&path, &ReloadKind::Lua);
         assert!(result.is_err());
@@ -1025,14 +1030,14 @@ mod tests {
     fn test_events_are_emitted() {
         let temp_dir = create_temp_asset_dir();
         let mut manager = HotReloadManager::new(HotReloadConfig::development());
-        
+
         // Force a reload to generate events
         let path = temp_dir.path().join("test.lua");
         manager.force_reload(&path);
-        
+
         // Process to generate events
         let events = manager.process_pending_reloads();
-        
+
         // Should have at least ReloadStarted event
         assert!(!events.is_empty());
         assert!(matches!(events[0], HotReloadEvent::ReloadStarted { .. }));

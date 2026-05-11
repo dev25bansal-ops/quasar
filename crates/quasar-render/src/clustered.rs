@@ -144,68 +144,70 @@ impl GpuClusterPass {
         });
 
         // Create bind group layout
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Cluster Assignment Bind Group Layout"),
-                entries: &[
-                    // Cluster parameters (uniform)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<ClusterParams>() as u64),
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Cluster Assignment Bind Group Layout"),
+            entries: &[
+                // Cluster parameters (uniform)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<ClusterParams>() as u64,
+                        ),
                     },
-                    // Light input array (storage, read-only)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // Light input array (storage, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // Cluster AABBs (storage, read-only)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // Cluster AABBs (storage, read-only)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // Cluster counts (storage, read-write atomics)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<u32>() as u64,
-                            ),
-                        },
-                        count: None,
+                    count: None,
+                },
+                // Cluster counts (storage, read-write atomics)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: std::num::NonZeroU64::new(
+                            std::mem::size_of::<u32>() as u64
+                        ),
                     },
-                    // Cluster light indices (storage, read-write)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // Cluster light indices (storage, read-write)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         // Create compute pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -243,8 +245,7 @@ impl GpuClusterPass {
         let cluster_counts = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cluster Counts Buffer"),
             size: (TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -254,8 +255,7 @@ impl GpuClusterPass {
         let cluster_lights = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cluster Lights Buffer"),
             size: cluster_lights_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
 
@@ -276,52 +276,57 @@ impl GpuClusterPass {
         });
 
         // Create initial (empty) bind group
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Cluster Assignment Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &params_buffer,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ClusterParams>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &aabbs_buffer, // placeholder â€” will be replaced at dispatch time
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &aabbs_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &cluster_counts,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new((TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &cluster_lights,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(cluster_lights_size),
-                    }),
-                },
-            ],
-        });
+        let bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Cluster Assignment Bind Group"),
+                layout: &bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &params_buffer,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(
+                                std::mem::size_of::<ClusterParams>() as u64
+                            ),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &aabbs_buffer, // placeholder â€” will be replaced at dispatch time
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &aabbs_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &cluster_counts,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(
+                                (TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64,
+                            ),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &cluster_lights,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(cluster_lights_size),
+                        }),
+                    },
+                ],
+            });
 
         // Write initial params
         let params = ClusterParams {
@@ -378,11 +383,7 @@ impl GpuClusterPass {
             screen_width: screen_width as f32,
             screen_height: screen_height as f32,
         };
-        queue.write_buffer(
-            &self.params_buffer,
-            0,
-            bytemuck::bytes_of(&params),
-        );
+        queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(&params));
     }
 
     /// Rebuild the bind group if dirty (e.g., after AABBs upload).
@@ -391,52 +392,62 @@ impl GpuClusterPass {
             return;
         }
 
-        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Cluster Assignment Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.params_buffer,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(std::mem::size_of::<ClusterParams>() as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: light_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.aabbs_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.cluster_counts,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new((TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &self.cluster_lights,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new((TOTAL_CLUSTERS * MAX_LIGHTS_PER_CLUSTER * std::mem::size_of::<u16>()) as u64),
-                    }),
-                },
-            ],
-        });
+        self.bind_group =
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Cluster Assignment Bind Group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.params_buffer,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(
+                                std::mem::size_of::<ClusterParams>() as u64
+                            ),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: light_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.aabbs_buffer,
+                            offset: 0,
+                            size: None,
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.cluster_counts,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(
+                                (TOTAL_CLUSTERS * std::mem::size_of::<u32>()) as u64,
+                            ),
+                        }),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &self.cluster_lights,
+                            offset: 0,
+                            size: std::num::NonZeroU64::new(
+                                (TOTAL_CLUSTERS
+                                    * MAX_LIGHTS_PER_CLUSTER
+                                    * std::mem::size_of::<u16>())
+                                    as u64,
+                            ),
+                        }),
+                    },
+                ],
+            });
 
         self.bind_group_dirty = false;
     }
@@ -575,8 +586,10 @@ impl LightClusterGrid {
         let log_ratio = (self.far / self.near).ln();
 
         for z in 0..CLUSTER_Z {
-            let z_near = self.near * ((z as f32 / CLUSTER_Z as f32) * log_ratio).exp();
-            let z_far = self.near * (((z + 1) as f32 / CLUSTER_Z as f32) * log_ratio).exp();
+            let z_near = (self.near * ((z as f32 / CLUSTER_Z as f32) * log_ratio).exp())
+                .clamp(self.near, self.far);
+            let z_far = (self.near * (((z + 1) as f32 / CLUSTER_Z as f32) * log_ratio).exp())
+                .clamp(self.near, self.far);
 
             for y in 0..CLUSTER_Y {
                 for x in 0..CLUSTER_X {
@@ -593,10 +606,27 @@ impl LightClusterGrid {
                     let ndc_min_y = min_y / self.screen_height as f32 * 2.0 - 1.0;
                     let ndc_max_y = max_y / self.screen_height as f32 * 2.0 - 1.0;
 
+                    let x_near_min = ndc_min_x * z_near;
+                    let x_near_max = ndc_max_x * z_near;
+                    let x_far_min = ndc_min_x * z_far;
+                    let x_far_max = ndc_max_x * z_far;
+                    let y_near_min = ndc_min_y * z_near;
+                    let y_near_max = ndc_max_y * z_near;
+                    let y_far_min = ndc_min_y * z_far;
+                    let y_far_max = ndc_max_y * z_far;
+
                     self.aabbs[idx] = ClusterAabb {
-                        min: [ndc_min_x * z_near, ndc_min_y * z_near, z_near],
+                        min: [
+                            x_near_min.min(x_near_max).min(x_far_min).min(x_far_max),
+                            y_near_min.min(y_near_max).min(y_far_min).min(y_far_max),
+                            z_near,
+                        ],
                         _pad0: 0.0,
-                        max: [ndc_max_x * z_far, ndc_max_y * z_far, z_far],
+                        max: [
+                            x_near_min.max(x_near_max).max(x_far_min).max(x_far_max),
+                            y_near_min.max(y_near_max).max(y_far_min).max(y_far_max),
+                            z_far,
+                        ],
                         _pad1: 0.0,
                     };
                 }
@@ -650,7 +680,7 @@ impl LightClusterGrid {
 
     /// Returns the Z-slice range `(min, max)` that a sphere at `view_pos` with
     /// the given `radius` overlaps, or `None` if entirely outside the frustum.
-    fn z_range_for_sphere(&self, pos: &[f32; 3], radius: f32) -> Option<(usize, usize)> {
+    pub fn z_range_for_sphere(&self, pos: &[f32; 3], radius: f32) -> Option<(usize, usize)> {
         let z = pos[2]; // View-space depth (positive = into screen)
         let z_min_f = z - radius;
         let z_max_f = z + radius;
@@ -838,10 +868,6 @@ mod tests {
         assert!(last_aabb.max[2] <= 200.0);
     }
 }
-
-
-
-
 
 unsafe impl bytemuck::Pod for ClusterAabb {}
 unsafe impl bytemuck::Pod for ClusterParams {}

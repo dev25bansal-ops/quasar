@@ -42,7 +42,8 @@ impl Wheel {
     }
 
     pub fn contact_point(&self) -> Vec3 {
-        self.position - Vec3::Y * (self.suspension_length - self.suspension_compression + self.radius)
+        self.position
+            - Vec3::Y * (self.suspension_length - self.suspension_compression + self.radius)
     }
 }
 
@@ -193,11 +194,7 @@ impl Vehicle {
     pub fn local_velocity(&self) -> Vec3 {
         let forward = self.forward();
         let right = self.right();
-        Vec3::new(
-            self.velocity.dot(right),
-            0.0,
-            self.velocity.dot(forward),
-        )
+        Vec3::new(self.velocity.dot(right), 0.0, self.velocity.dot(forward))
     }
 
     pub fn step(&mut self, dt: f32, ground_height: impl Fn(Vec3) -> f32) {
@@ -211,7 +208,7 @@ impl Vehicle {
     fn update_steering(&mut self, dt: f32) {
         let target_angle = self.input.steering * self.config.max_steering_angle;
         let steering_rate = 3.0;
-        
+
         for wheel in self.wheels.iter_mut().take(2) {
             wheel.steering_angle += (target_angle - wheel.steering_angle) * steering_rate * dt;
         }
@@ -221,15 +218,15 @@ impl Vehicle {
         for wheel in &mut self.wheels {
             let world_pos = wheel.world_position(self.position, self.rotation);
             let ground_y = ground_height(world_pos);
-            
+
             let suspension_bottom = world_pos.y - wheel.suspension_length;
             let penetration = suspension_bottom - ground_y;
-            
+
             wheel.suspension_compression = penetration.clamp(
                 self.config.suspension.min_compression,
                 self.config.suspension.max_compression,
             );
-            
+
             wheel.is_grounded = wheel.suspension_compression > 0.0;
             wheel.ground_normal = Vec3::Y;
         }
@@ -237,7 +234,7 @@ impl Vehicle {
 
     fn update_wheels(&mut self, dt: f32) {
         let forward_speed = self.local_velocity().z;
-        
+
         for (i, wheel) in self.wheels.iter_mut().enumerate() {
             if wheel.is_grounded {
                 let wheel_speed = if i < 2 {
@@ -245,12 +242,12 @@ impl Vehicle {
                 } else {
                     forward_speed
                 };
-                
+
                 wheel.rotation_speed = wheel_speed / (2.0 * std::f32::consts::PI * wheel.radius);
             } else {
                 wheel.rotation_speed *= 0.99;
             }
-            
+
             let rotation_delta = wheel.rotation_speed * dt * 2.0 * std::f32::consts::PI;
             wheel.rotation = Quat::from_rotation_x(rotation_delta) * wheel.rotation;
         }
@@ -260,7 +257,7 @@ impl Vehicle {
         let forward = self.forward();
         let right = self.right();
         let local_vel = self.local_velocity();
-        
+
         self.speed = self.velocity.length();
 
         let mut total_force = Vec3::ZERO;
@@ -272,7 +269,8 @@ impl Vehicle {
         let drag = -self.velocity * self.velocity.length() * self.config.aerodynamic_drag;
         total_force += drag;
 
-        let rolling = -self.velocity.normalize() * self.config.rolling_resistance * self.config.mass * 9.81;
+        let rolling =
+            -self.velocity.normalize() * self.config.rolling_resistance * self.config.mass * 9.81;
         if rolling.is_finite() {
             total_force += rolling;
         }
@@ -307,7 +305,8 @@ impl Vehicle {
             total_force += lateral_force;
 
             if self.input.throttle > 0.0 {
-                let engine_force = self.input.throttle * self.config.max_engine_torque / wheel.radius;
+                let engine_force =
+                    self.input.throttle * self.config.max_engine_torque / wheel.radius;
                 total_force += wheel_forward * engine_force;
             }
 
@@ -355,13 +354,16 @@ impl Vehicle {
     }
 
     pub fn get_wheel_world_transforms(&self) -> Vec<(Vec3, Quat)> {
-        self.wheels.iter().map(|wheel| {
-            let world_pos = self.position + self.rotation * wheel.position
-                - Vec3::Y * wheel.suspension_compression;
-            let steering_rot = Quat::from_rotation_y(wheel.steering_angle);
-            let world_rot = self.rotation * steering_rot * wheel.rotation;
-            (world_pos, world_rot)
-        }).collect()
+        self.wheels
+            .iter()
+            .map(|wheel| {
+                let world_pos = self.position + self.rotation * wheel.position
+                    - Vec3::Y * wheel.suspension_compression;
+                let steering_rot = Quat::from_rotation_y(wheel.steering_angle);
+                let world_rot = self.rotation * steering_rot * wheel.rotation;
+                (world_pos, world_rot)
+            })
+            .collect()
     }
 }
 

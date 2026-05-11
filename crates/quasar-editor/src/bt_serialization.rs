@@ -13,12 +13,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::behavior_tree_graph::{
-    BtGraphState,
-    BtEditorNode,
-    BtEditorConnection,
-    BtEditorNodeType,
+    BtEditorConnection, BtEditorNode, BtEditorNodeType, BtGraphState, GraphConnectionId,
     GraphNodeId,
-    GraphConnectionId,
 };
 
 /// Version of the serialization format.
@@ -121,8 +117,7 @@ impl BtSerializer {
             root_node_id: graph.root_node.map(|id| id.0),
         };
 
-        serde_json::to_string_pretty(&serialized)
-            .map_err(|e| format!("Serialization error: {}", e))
+        serde_json::to_string_pretty(&serialized).map_err(|e| format!("Serialization error: {}", e))
     }
 
     /// Serialize with metadata.
@@ -165,8 +160,7 @@ impl BtSerializer {
             root_node_id: graph.root_node.map(|id| id.0),
         };
 
-        serde_json::to_string_pretty(&serialized)
-            .map_err(|e| format!("Serialization error: {}", e))
+        serde_json::to_string_pretty(&serialized).map_err(|e| format!("Serialization error: {}", e))
     }
 }
 
@@ -176,8 +170,8 @@ pub struct BtDeserializer;
 impl BtDeserializer {
     /// Deserialize a JSON string to a graph state.
     pub fn deserialize_tree(json: &str) -> Result<BtGraphState, String> {
-        let serialized: BtSerialized = serde_json::from_str(json)
-            .map_err(|e| format!("Deserialization error: {}", e))?;
+        let serialized: BtSerialized =
+            serde_json::from_str(json).map_err(|e| format!("Deserialization error: {}", e))?;
 
         // Check version compatibility
         if serialized.version != FORMAT_VERSION {
@@ -194,7 +188,12 @@ impl BtDeserializer {
 
         // Track max IDs
         let max_node_id = serialized.nodes.iter().map(|n| n.id).max().unwrap_or(0);
-        let max_conn_id = serialized.connections.iter().map(|c| c.id).max().unwrap_or(0);
+        let max_conn_id = serialized
+            .connections
+            .iter()
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(0);
         graph.next_node_id = max_node_id + 1;
         graph.next_connection_id = max_conn_id + 1;
 
@@ -281,8 +280,8 @@ impl BtDeserializer {
             root_node_id: Option<u64>,
         }
 
-        let old: OldFormat = serde_json::from_str(json)
-            .map_err(|e| format!("Failed to parse old format: {}", e))?;
+        let old: OldFormat =
+            serde_json::from_str(json).map_err(|e| format!("Failed to parse old format: {}", e))?;
 
         let new = BtSerialized {
             version: FORMAT_VERSION,
@@ -314,7 +313,10 @@ impl BtRuntimeConverter {
         Self::convert_node(graph, root_id)
     }
 
-    fn convert_node(graph: &BtGraphState, node_id: GraphNodeId) -> Option<quasar_ai::behavior_tree::BtNode> {
+    fn convert_node(
+        graph: &BtGraphState,
+        node_id: GraphNodeId,
+    ) -> Option<quasar_ai::behavior_tree::BtNode> {
         use quasar_ai::behavior_tree::BtNode as RuntimeNode;
         use quasar_ai::behavior_tree::ParallelPolicy;
         use quasar_ai::BlackboardValue;
@@ -330,11 +332,12 @@ impl BtRuntimeConverter {
             BtEditorNodeType::Selector => RuntimeNode::Selector { children },
             BtEditorNodeType::Sequence => RuntimeNode::Sequence { children },
             BtEditorNodeType::Parallel => {
-                let policy = if node.properties.get("policy").map(|s| s.as_str()) == Some("RequireOne") {
-                    ParallelPolicy::RequireOne
-                } else {
-                    ParallelPolicy::RequireAll
-                };
+                let policy =
+                    if node.properties.get("policy").map(|s| s.as_str()) == Some("RequireOne") {
+                        ParallelPolicy::RequireOne
+                    } else {
+                        ParallelPolicy::RequireAll
+                    };
                 RuntimeNode::Parallel { children, policy }
             }
             BtEditorNodeType::RandomSelector => RuntimeNode::Selector { children },
@@ -342,16 +345,23 @@ impl BtRuntimeConverter {
 
             BtEditorNodeType::Inverter => {
                 if let Some(child) = children.into_iter().next() {
-                    RuntimeNode::Inverter { child: Box::new(child) }
+                    RuntimeNode::Inverter {
+                        child: Box::new(child),
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
             }
             BtEditorNodeType::Repeater => {
                 if let Some(child) = children.into_iter().next() {
-                    let count = node.properties.get("count")
+                    let count = node
+                        .properties
+                        .get("count")
                         .and_then(|s| s.parse::<u32>().ok());
-                    RuntimeNode::Repeater { child: Box::new(child), count }
+                    RuntimeNode::Repeater {
+                        child: Box::new(child),
+                        count,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
@@ -360,10 +370,15 @@ impl BtRuntimeConverter {
             BtEditorNodeType::Failer => RuntimeNode::Fail,
             BtEditorNodeType::Timeout => {
                 if let Some(child) = children.into_iter().next() {
-                    let duration = node.properties.get("timeout")
+                    let duration = node
+                        .properties
+                        .get("timeout")
                         .and_then(|s| s.parse::<f32>().ok())
                         .unwrap_or(5.0);
-                    RuntimeNode::Timeout { child: Box::new(child), duration_secs: duration }
+                    RuntimeNode::Timeout {
+                        child: Box::new(child),
+                        duration_secs: duration,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
@@ -371,10 +386,15 @@ impl BtRuntimeConverter {
             BtEditorNodeType::Cooldown => RuntimeNode::Succeed,
             BtEditorNodeType::Retry => {
                 if let Some(child) = children.into_iter().next() {
-                    let max_tries = node.properties.get("max_retries")
+                    let max_tries = node
+                        .properties
+                        .get("max_retries")
                         .and_then(|s| s.parse::<u32>().ok())
                         .unwrap_or(3);
-                    RuntimeNode::Retry { child: Box::new(child), max_tries }
+                    RuntimeNode::Retry {
+                        child: Box::new(child),
+                        max_tries,
+                    }
                 } else {
                     RuntimeNode::Succeed
                 }
@@ -382,7 +402,9 @@ impl BtRuntimeConverter {
             BtEditorNodeType::AlwaysRunning => RuntimeNode::Running,
 
             BtEditorNodeType::Action => {
-                let action_name = node.properties.get("action_name")
+                let action_name = node
+                    .properties
+                    .get("action_name")
                     .cloned()
                     .unwrap_or_else(|| node.name.clone());
                 RuntimeNode::Action { name: action_name }
@@ -390,23 +412,34 @@ impl BtRuntimeConverter {
             BtEditorNodeType::Condition => {
                 let key = node.properties.get("key").cloned().unwrap_or_default();
                 let expected = Self::parse_blackboard_value(
-                    node.properties.get("expected").cloned().unwrap_or_else(|| "true".to_string())
+                    node.properties
+                        .get("expected")
+                        .cloned()
+                        .unwrap_or_else(|| "true".to_string()),
                 );
                 RuntimeNode::Condition { key, expected }
             }
             BtEditorNodeType::Wait => {
-                let duration = node.properties.get("duration")
+                let duration = node
+                    .properties
+                    .get("duration")
                     .and_then(|s| s.parse::<f32>().ok())
                     .unwrap_or(1.0);
-                RuntimeNode::Wait { duration_secs: duration }
+                RuntimeNode::Wait {
+                    duration_secs: duration,
+                }
             }
             BtEditorNodeType::SetBlackboard => {
                 let key = node.properties.get("key").cloned().unwrap_or_default();
-                RuntimeNode::Action { name: format!("SetBB({})", key) }
+                RuntimeNode::Action {
+                    name: format!("SetBB({})", key),
+                }
             }
             BtEditorNodeType::Log => {
                 let msg = node.properties.get("message").cloned().unwrap_or_default();
-                RuntimeNode::Action { name: format!("Log({})", msg) }
+                RuntimeNode::Action {
+                    name: format!("Log({})", msg),
+                }
             }
             BtEditorNodeType::Comment => RuntimeNode::Succeed,
         };
@@ -442,7 +475,11 @@ mod tests {
         let root = graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(100.0, 50.0));
         let seq = graph.add_node(BtEditorNodeType::Sequence, "Patrol", Pos2::new(50.0, 150.0));
         let action = graph.add_node(BtEditorNodeType::Action, "MoveToWP", Pos2::new(50.0, 250.0));
-        let cond = graph.add_node(BtEditorNodeType::Condition, "HasTarget?", Pos2::new(200.0, 150.0));
+        let cond = graph.add_node(
+            BtEditorNodeType::Condition,
+            "HasTarget?",
+            Pos2::new(200.0, 150.0),
+        );
 
         graph.add_connection(root, seq);
         graph.add_connection(root, cond);
@@ -559,7 +596,13 @@ mod tests {
 
         let parsed: serde_json::Value = serde_json::from_str(&json.unwrap()).expect("Invalid JSON");
         let meta = parsed.get("metadata").expect("Missing metadata");
-        assert_eq!(meta.get("description").and_then(|v| v.as_str()), Some("A patrol tree"));
-        assert_eq!(meta.get("tags").and_then(|v| v.as_array()).map(|a| a.len()), Some(2));
+        assert_eq!(
+            meta.get("description").and_then(|v| v.as_str()),
+            Some("A patrol tree")
+        );
+        assert_eq!(
+            meta.get("tags").and_then(|v| v.as_array()).map(|a| a.len()),
+            Some(2)
+        );
     }
 }

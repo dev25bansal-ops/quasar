@@ -95,8 +95,7 @@ fn test_spawn_multiple_renderable_entities() {
 
     for (i, shape) in shapes.into_iter().enumerate() {
         let entity = world.spawn();
-        let transform =
-            Transform::from_position(Vec3::new(i as f32 * 3.0, 0.0, 0.0));
+        let transform = Transform::from_position(Vec3::new(i as f32 * 3.0, 0.0, 0.0));
         world.insert(entity, transform);
         world.insert(entity, shape);
     }
@@ -181,7 +180,10 @@ fn test_filter_visible_entities() {
     // Spawn entities with different visibility states
     for i in 0..5 {
         let entity = world.spawn();
-        world.insert(entity, Transform::from_position(Vec3::new(i as f32, 0.0, 0.0)));
+        world.insert(
+            entity,
+            Transform::from_position(Vec3::new(i as f32, 0.0, 0.0)),
+        );
         world.insert(entity, Renderable);
         world.insert(entity, Visible(i % 2 == 0));
     }
@@ -268,10 +270,13 @@ fn test_archetype_migration_remove_mesh_shape() {
     // Spawn entity with Transform + MeshShape
     let entity = world.spawn();
     world.insert(entity, Transform::from_position(Vec3::new(1.0, 2.0, 3.0)));
-    world.insert(entity, MeshShape::Sphere {
-        sectors: 16,
-        stacks: 16,
-    });
+    world.insert(
+        entity,
+        MeshShape::Sphere {
+            sectors: 16,
+            stacks: 16,
+        },
+    );
 
     // Verify both components exist
     assert!(world.get::<Transform>(entity).is_some());
@@ -340,10 +345,13 @@ fn test_archetype_migration_preserves_entity_id() {
     // Add and remove components multiple times
     world.insert(entity, MeshShape::Cube);
     world.remove_component::<MeshShape>(entity);
-    world.insert(entity, MeshShape::Sphere {
-        sectors: 8,
-        stacks: 8,
-    });
+    world.insert(
+        entity,
+        MeshShape::Sphere {
+            sectors: 8,
+            stacks: 8,
+        },
+    );
     world.remove_component::<MeshShape>(entity);
     world.insert(entity, MeshShape::Plane);
 

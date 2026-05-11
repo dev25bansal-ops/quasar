@@ -270,9 +270,7 @@ impl GameSave {
 
         let header_bytes: [u8; BinaryHeader::SIZE] = data[..BinaryHeader::SIZE]
             .try_into()
-            .map_err(|_| {
-                SaveLoadError::Deserialization("Failed to parse binary header".into())
-            })?;
+            .map_err(|_| SaveLoadError::Deserialization("Failed to parse binary header".into()))?;
         let header = BinaryHeader::from_bytes(&header_bytes);
 
         if header.magic != *SAVE_MAGIC {
@@ -414,12 +412,8 @@ fn crc32(data: &[u8]) -> u32 {
 /// system clock (UTC, RFC-3339). Callers should set `meta.slot_name`.
 pub fn capture_game_save(world: &World) -> GameSave {
     // Use CachedArchetypeQueryState for zero-allocation iteration
-    let mut query: CachedArchetypeQueryState<&Transform, ()> =
-        CachedArchetypeQueryState::new();
-    let transforms: Vec<(Entity, Transform)> = query
-        .iter(world)
-        .map(|(e, t)| (e, *t))
-        .collect();
+    let mut query: CachedArchetypeQueryState<&Transform, ()> = CachedArchetypeQueryState::new();
+    let transforms: Vec<(Entity, Transform)> = query.iter(world).map(|(e, t)| (e, *t)).collect();
 
     let graph = world.resource::<SceneGraph>();
 
@@ -603,7 +597,7 @@ impl SaveSlotManager {
         }
 
         Err(SaveLoadError::Io(std::io::Error::new(
-            std::io::ErrorKind::StorageFull,
+            std::io::ErrorKind::Other,
             "No save slots available",
         )))
     }
@@ -613,7 +607,9 @@ impl SaveSlotManager {
 
         for (i, meta) in self.slots.iter().enumerate() {
             if let Some(m) = meta {
-                if oldest.is_none() || m.timestamp < *oldest.as_ref().map(|o| &o.1).unwrap_or(&String::new()) {
+                if oldest.is_none()
+                    || m.timestamp < *oldest.as_ref().map(|o| &o.1).unwrap_or(&String::new())
+                {
                     oldest = Some((i, m.timestamp.clone()));
                 }
             }
@@ -931,9 +927,8 @@ mod tests {
         let mut binary = save.to_binary().unwrap();
 
         // Corrupt the checksum in the header (offset 24-27)
-        let original_checksum = u32::from_le_bytes([
-            binary[24], binary[25], binary[26], binary[27],
-        ]);
+        let original_checksum =
+            u32::from_le_bytes([binary[24], binary[25], binary[26], binary[27]]);
         binary[24] = binary[24].wrapping_add(1); // Increment first byte
 
         let result = GameSave::from_binary(&binary);

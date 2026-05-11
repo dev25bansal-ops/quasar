@@ -14,10 +14,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod async_step;
-pub mod cloth;
-pub mod soft_body;
-pub mod vehicle;
 pub mod character_controller;
+pub mod cloth;
 pub mod collider;
 pub mod debug_draw;
 pub mod events;
@@ -26,14 +24,17 @@ pub mod joints;
 pub mod plugin;
 pub mod rigidbody;
 pub mod rollback;
+pub mod soft_body;
+pub mod vehicle;
 pub mod world;
 
 pub use async_step::{AsyncPhysicsStepper, InterpolationSnapshot, PhysicsCommand};
 pub use character_controller::{
     CharacterControllerComponent, CharacterControllerConfig, CharacterMovementResult,
 };
+pub use cloth::{ClothConfig, ClothMesh, ClothParticle, DistanceConstraint};
 pub use collider::{ColliderComponent, ColliderShape, PendingCollider};
-pub use debug_draw::{DebugDrawConfig, DebugDrawColors, DebugLine};
+pub use debug_draw::{DebugDrawColors, DebugDrawConfig, DebugLine};
 pub use events::{
     CollisionEvent, CollisionEventType, CollisionStartEvent, CollisionStopEvent, SensorEnterEvent,
     SensorExitEvent, TriggerEnterEvent, TriggerExitEvent, TriggerStayEvent, TriggerTracker,
@@ -49,9 +50,8 @@ pub use joints::{
 pub use plugin::{PhysicsPlugin, PhysicsResource};
 pub use rigidbody::{BodyType, RigidBodyComponent};
 pub use rollback::{ColliderState, JointState, PhysicsSnapshot, RigidBodyState, RollbackManager};
-pub use world::PhysicsWorld;
-pub use cloth::{ClothConfig, ClothMesh, ClothParticle, DistanceConstraint};
 pub use soft_body::{SoftBody, SoftBodyConfig, SoftBodyParticle, Spring, Tetrahedron};
-pub use vehicle::{Vehicle, VehicleConfig, VehicleInput, Wheel, SuspensionConfig, TireConfig};
+pub use vehicle::{SuspensionConfig, TireConfig, Vehicle, VehicleConfig, VehicleInput, Wheel};
+pub use world::PhysicsWorld;
 
 pub use rapier3d;

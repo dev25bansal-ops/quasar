@@ -85,11 +85,14 @@ fn bench_shader_compile(c: &mut Criterion) {
 
 #[cfg(feature = "clustered-lighting")]
 fn bench_cluster_cpu_assignment(c: &mut Criterion) {
-    use quasar_render::{LightClusterGrid, PointLight, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, TOTAL_CLUSTERS, MAX_LIGHTS_PER_CLUSTER};
     use quasar_math::Vec3;
+    use quasar_render::{
+        LightClusterGrid, PointLight, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, MAX_LIGHTS_PER_CLUSTER,
+        TOTAL_CLUSTERS,
+    };
 
     let mut group = c.benchmark_group("cluster_cpu_assignment");
-    
+
     // Test with different light counts
     for &num_lights in &[50, 100, 250, 500] {
         group.bench_with_input(
@@ -97,7 +100,7 @@ fn bench_cluster_cpu_assignment(c: &mut Criterion) {
             &num_lights,
             |b, &n| {
                 let mut grid = LightClusterGrid::new(0.1, 100.0, 1920, 1080);
-                
+
                 // Create test lights distributed across the view frustum
                 let lights: Vec<(PointLight, [f32; 3])> = (0..n)
                     .map(|i| {
@@ -133,7 +136,7 @@ fn bench_cluster_grid_operations(c: &mut Criterion) {
     use quasar_render::{LightClusterGrid, CLUSTER_X, CLUSTER_Y, CLUSTER_Z, TOTAL_CLUSTERS};
 
     let mut group = c.benchmark_group("cluster_grid_operations");
-    
+
     // Benchmark AABB rebuild
     group.bench_function("rebuild_aabbs_1080p", |b| {
         let mut grid = LightClusterGrid::new(0.1, 100.0, 1920, 1080);
@@ -168,7 +171,7 @@ fn bench_cluster_sphere_aabb(c: &mut Criterion) {
 
     // Benchmark the sphere-AABB intersection test (core building block)
     let mut group = c.benchmark_group("cluster_sphere_aabb");
-    
+
     let aabb = ClusterAabb {
         min: [-1.0, -1.0, -1.0],
         _pad0: 0.0,
@@ -215,33 +218,34 @@ fn bench_cluster_z_range(c: &mut Criterion) {
     let grid = LightClusterGrid::new(0.1, 100.0, 1920, 1080);
 
     for &depth in &[1.0, 5.0, 10.0, 25.0, 50.0] {
-        group.bench_with_input(
-            BenchmarkId::from_parameter(depth),
-            &depth,
-            |b, &d| {
-                b.iter(|| {
-                    let pos = [0.0_f32, 0.0, d];
-                    let radius = 5.0_f32;
-                    black_box(grid.z_range_for_sphere(&pos, radius));
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, &d| {
+            b.iter(|| {
+                let pos = [0.0_f32, 0.0, d];
+                let radius = 5.0_f32;
+                black_box(grid.z_range_for_sphere(&pos, radius));
+            });
+        });
     }
     group.finish();
 }
 
+#[cfg(feature = "clustered-lighting")]
 criterion_group!(
     benches,
     bench_radiance_inject,
     bench_radiance_sample,
     bench_shader_compile,
-    #[cfg(feature = "clustered-lighting")]
     bench_cluster_cpu_assignment,
-    #[cfg(feature = "clustered-lighting")]
     bench_cluster_grid_operations,
-    #[cfg(feature = "clustered-lighting")]
     bench_cluster_sphere_aabb,
-    #[cfg(feature = "clustered-lighting")]
     bench_cluster_z_range,
+);
+
+#[cfg(not(feature = "clustered-lighting"))]
+criterion_group!(
+    benches,
+    bench_radiance_inject,
+    bench_radiance_sample,
+    bench_shader_compile,
 );
 criterion_main!(benches);

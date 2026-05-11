@@ -58,8 +58,7 @@ struct MeshRenderer {
     color: [f32; 4],
 }
 
-#[derive(Clone, Copy, Debug)]
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default)]
 enum EnemyState {
     #[default]
     Idle,
@@ -68,7 +67,6 @@ enum EnemyState {
     Attack,
     Dead,
 }
-
 
 // ────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -236,9 +234,7 @@ impl System for ScoreSystem {
 
         for event in collision_events {
             let points = world.get::<Pickup>(event.entity_b).map(|p| p.points);
-            if let (Some(points), Some(game_state)) =
-                (points, world.resource_mut::<GameState>())
-            {
+            if let (Some(points), Some(game_state)) = (points, world.resource_mut::<GameState>()) {
                 game_state.score += points;
             }
         }
@@ -316,12 +312,18 @@ fn spawn_player(world: &mut World) {
     );
     world.insert(entity, Velocity { linear: Vec3::ZERO });
     world.insert(entity, Collider { radius: 0.5 });
-    
+
     // Add Transform and MeshShape for rendering
     let mut transform = Transform::IDENTITY;
     transform.position = Vec3::new(0.0, 1.0, 0.0);
     world.insert(entity, transform);
-    world.insert(entity, MeshShape::Sphere { sectors: 16, stacks: 8 });
+    world.insert(
+        entity,
+        MeshShape::Sphere {
+            sectors: 16,
+            stacks: 8,
+        },
+    );
 }
 
 fn spawn_enemies(world: &mut World, count: usize) {
@@ -337,7 +339,7 @@ fn spawn_enemies(world: &mut World, count: usize) {
         );
         world.insert(entity, Velocity { linear: Vec3::ZERO });
         world.insert(entity, Collider { radius: 0.4 });
-        
+
         // Add Transform and MeshShape for rendering
         let mut transform = Transform::IDENTITY;
         let angle = (i as f32) * std::f32::consts::TAU / count as f32;
@@ -352,13 +354,19 @@ fn spawn_pickups(world: &mut World, count: usize) {
         let entity = world.spawn();
         world.insert(entity, Pickup { points: 100 });
         world.insert(entity, Collider { radius: 0.3 });
-        
+
         // Add Transform and MeshShape for rendering
         let mut transform = Transform::IDENTITY;
         let angle = (i as f32) * std::f32::consts::TAU / count as f32 + 0.5;
         transform.position = Vec3::new(angle.cos() * 5.0, 0.5, angle.sin() * 5.0);
         world.insert(entity, transform);
-        world.insert(entity, MeshShape::Sphere { sectors: 8, stacks: 4 });
+        world.insert(
+            entity,
+            MeshShape::Sphere {
+                sectors: 8,
+                stacks: 4,
+            },
+        );
     }
 }
 

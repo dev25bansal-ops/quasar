@@ -237,19 +237,12 @@ impl Quest {
     }
 
     /// Check if all objectives are complete given progress data.
-    pub fn are_all_objectives_complete_with(
-        &self,
-        progress: &HashMap<String, u32>,
-    ) -> bool {
+    pub fn are_all_objectives_complete_with(&self, progress: &HashMap<String, u32>) -> bool {
         self.objectives.iter().all(|obj| {
             if obj.optional {
                 true
             } else {
-                progress
-                    .get(&obj.id)
-                    .copied()
-                    .unwrap_or(0)
-                    >= obj.required
+                progress.get(&obj.id).copied().unwrap_or(0) >= obj.required
             }
         })
     }
@@ -368,9 +361,7 @@ impl QuestObjective {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuestObjectiveType {
     /// Reach a location.
-    ReachLocation {
-        location_id: String,
-    },
+    ReachLocation { location_id: String },
     /// Talk to an NPC.
     TalkTo { npc_id: String },
     /// Collect items.
@@ -431,9 +422,7 @@ impl QuestPrerequisite {
 
     pub fn flag_set(flag: impl Into<String>) -> Self {
         Self {
-            prerequisite_type: QuestPrerequisiteType::FlagSet {
-                flag: flag.into(),
-            },
+            prerequisite_type: QuestPrerequisiteType::FlagSet { flag: flag.into() },
         }
     }
 
@@ -527,19 +516,35 @@ impl QuestReward {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QuestRewardType {
-    Experience { amount: u32 },
-    Gold { amount: u32 },
-    Item { item_id: String, count: u32 },
-    Reputation { faction: String, amount: i32 },
+    Experience {
+        amount: u32,
+    },
+    Gold {
+        amount: u32,
+    },
+    Item {
+        item_id: String,
+        count: u32,
+    },
+    Reputation {
+        faction: String,
+        amount: i32,
+    },
     Unlock {
         unlock_type: String,
         unlock_id: String,
     },
-    Achievement { achievement_id: String },
+    Achievement {
+        achievement_id: String,
+    },
     /// Unlock a new ability/skill.
-    Ability { ability_id: String },
+    Ability {
+        ability_id: String,
+    },
     /// Unlock a new area/zone.
-    AreaUnlock { area_id: String },
+    AreaUnlock {
+        area_id: String,
+    },
     Custom {
         id: String,
         params: HashMap<String, String>,
@@ -694,12 +699,9 @@ impl QuestInstance {
     pub fn are_all_objectives_complete(&self) -> bool {
         // This method is called without quest context, so we check all active objectives
         // Incomplete objectives that are still at 0 progress might be optional
-        self.objectives
-            .iter()
-            .all(|(_id, state)| {
-                *state == ObjectiveState::Completed
-                    || state == &ObjectiveState::Inactive
-            })
+        self.objectives.iter().all(|(_id, state)| {
+            *state == ObjectiveState::Completed || state == &ObjectiveState::Inactive
+        })
     }
 
     /// Check if all non-optional objectives are complete.
@@ -1062,9 +1064,7 @@ impl QuestSystem {
 
         // Check if already active
         if let Some(instance) = self.quest_instances.get(quest_id) {
-            if instance.state == QuestState::Active
-                || instance.state == QuestState::ReadyToTurnIn
-            {
+            if instance.state == QuestState::Active || instance.state == QuestState::ReadyToTurnIn {
                 return false;
             }
             if instance.state == QuestState::Completed && !quest.repeatable {
@@ -1083,9 +1083,7 @@ impl QuestSystem {
         let active_count = self
             .quest_instances
             .values()
-            .filter(|q| {
-                q.state == QuestState::Active || q.state == QuestState::ReadyToTurnIn
-            })
+            .filter(|q| q.state == QuestState::Active || q.state == QuestState::ReadyToTurnIn)
             .count();
         if active_count >= self.max_active_quests {
             return false;
@@ -1119,16 +1117,9 @@ impl QuestSystem {
                     .unwrap_or(0)
                     > 0
             }
-            QuestPrerequisiteType::Reputation {
-                faction,
-                min_rep,
-            } => {
+            QuestPrerequisiteType::Reputation { faction, min_rep } => {
                 let rep_key = format!("rep_{}", faction);
-                let current = self
-                    .counters
-                    .get(&rep_key)
-                    .map(|v| *v as i32)
-                    .unwrap_or(0);
+                let current = self.counters.get(&rep_key).map(|v| *v as i32).unwrap_or(0);
                 current >= *min_rep
             }
             QuestPrerequisiteType::Custom { .. } => true,
@@ -1163,9 +1154,7 @@ impl QuestSystem {
             // For optional objectives, mark as completed immediately (they don't block progress)
             let state = if objective.optional {
                 ObjectiveState::Completed
-            } else if objective.sequence_order == Some(0)
-                || objective.sequence_order.is_none()
-            {
+            } else if objective.sequence_order == Some(0) || objective.sequence_order.is_none() {
                 ObjectiveState::Active
             } else {
                 ObjectiveState::Inactive
@@ -1184,7 +1173,9 @@ impl QuestSystem {
             for obj in &quest.objectives {
                 // Optional objectives are already marked as Completed above
                 if !obj.optional {
-                    instance.objectives.insert(obj.id.clone(), ObjectiveState::Active);
+                    instance
+                        .objectives
+                        .insert(obj.id.clone(), ObjectiveState::Active);
                     instance.objective_required.insert(obj.id.clone(), true);
                 }
             }
@@ -1192,8 +1183,7 @@ impl QuestSystem {
         instance.time_remaining = quest.time_limit;
         instance.start();
 
-        self.quest_instances
-            .insert(quest_id.to_string(), instance);
+        self.quest_instances.insert(quest_id.to_string(), instance);
 
         self.emit_event(QuestEvent::QuestStarted {
             quest_id: quest_id.to_string(),
@@ -1208,9 +1198,7 @@ impl QuestSystem {
             None => return Vec::new(),
         };
 
-        if instance.state != QuestState::Active
-            && instance.state != QuestState::ReadyToTurnIn
-        {
+        if instance.state != QuestState::Active && instance.state != QuestState::ReadyToTurnIn {
             return Vec::new();
         }
 
@@ -1257,21 +1245,22 @@ impl QuestSystem {
     }
 
     /// Update an objective's progress.
-    pub fn update_objective(
-        &mut self,
-        quest_id: &str,
-        objective_id: &str,
-        progress: u32,
-    ) {
+    pub fn update_objective(&mut self, quest_id: &str, objective_id: &str, progress: u32) {
         let quest = match self.quests.get(quest_id) {
             Some(q) => q,
             None => return,
         };
 
-        let required = quest.objectives.iter().find(|o| o.id == objective_id).map(|o| o.required).unwrap_or(1);
+        let required = quest
+            .objectives
+            .iter()
+            .find(|o| o.id == objective_id)
+            .map(|o| o.required)
+            .unwrap_or(1);
 
         // Check completion before update
-        let was_complete = self.quest_instances
+        let was_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.is_objective_complete(objective_id))
             .unwrap_or(false);
@@ -1284,7 +1273,8 @@ impl QuestSystem {
             instance.set_objective_progress(objective_id, progress, required);
         }
 
-        let is_complete = self.quest_instances
+        let is_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.is_objective_complete(objective_id))
             .unwrap_or(false);
@@ -1308,7 +1298,8 @@ impl QuestSystem {
         }
 
         // Check if all objectives are complete
-        let all_complete = self.quest_instances
+        let all_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.are_all_objectives_complete())
             .unwrap_or(false);
@@ -1324,21 +1315,22 @@ impl QuestSystem {
     }
 
     /// Add to an objective's progress (incremental).
-    pub fn add_objective_progress(
-        &mut self,
-        quest_id: &str,
-        objective_id: &str,
-        amount: u32,
-    ) {
+    pub fn add_objective_progress(&mut self, quest_id: &str, objective_id: &str, amount: u32) {
         let quest = match self.quests.get(quest_id) {
             Some(q) => q,
             None => return,
         };
 
-        let required = quest.objectives.iter().find(|o| o.id == objective_id).map(|o| o.required).unwrap_or(1);
+        let required = quest
+            .objectives
+            .iter()
+            .find(|o| o.id == objective_id)
+            .map(|o| o.required)
+            .unwrap_or(1);
 
         // Check completion before update
-        let was_complete = self.quest_instances
+        let was_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.is_objective_complete(objective_id))
             .unwrap_or(false);
@@ -1351,12 +1343,14 @@ impl QuestSystem {
             instance.add_objective_progress(objective_id, amount, required);
         }
 
-        let is_complete = self.quest_instances
+        let is_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.is_objective_complete(objective_id))
             .unwrap_or(false);
 
-        let new_progress = self.quest_instances
+        let new_progress = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.get_objective_progress(objective_id))
             .unwrap_or(0);
@@ -1378,12 +1372,14 @@ impl QuestSystem {
             self.activate_next_sequential_objective_mut(quest_id);
         }
 
-        let all_complete = self.quest_instances
+        let all_complete = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.are_all_objectives_complete())
             .unwrap_or(false);
 
-        let is_active = self.quest_instances
+        let is_active = self
+            .quest_instances
             .get(quest_id)
             .map(|i| i.state == QuestState::Active)
             .unwrap_or(false);
@@ -1421,7 +1417,9 @@ impl QuestSystem {
             for obj in &quest.objectives {
                 if obj.sequence_order == Some(max_order + 1) {
                     if let Some(instance) = self.quest_instances.get_mut(quest_id) {
-                        instance.objectives.insert(obj.id.clone(), ObjectiveState::Active);
+                        instance
+                            .objectives
+                            .insert(obj.id.clone(), ObjectiveState::Active);
                         instance.progress.entry(obj.id.clone()).or_insert(0);
                     }
                 }
@@ -1446,7 +1444,7 @@ impl QuestSystem {
 
     fn check_achievements_for_counter(&mut self, counter: &str) {
         let achievement_ids: Vec<String> = self.achievements.keys().cloned().collect();
-        
+
         for achievement_id in achievement_ids {
             let achievement = self.achievements.get(&achievement_id).unwrap();
             let matches = match &achievement.progress_type {
@@ -1480,7 +1478,7 @@ impl QuestSystem {
 
     fn check_achievements_for_flag(&mut self, flag: &str) {
         let achievement_ids: Vec<String> = self.achievements.keys().cloned().collect();
-        
+
         for achievement_id in achievement_ids {
             let achievement = self.achievements.get(&achievement_id).unwrap();
             let matches = match &achievement.progress_type {
@@ -1518,9 +1516,7 @@ impl QuestSystem {
     pub fn get_active_quests(&self) -> Vec<&Quest> {
         self.quest_instances
             .iter()
-            .filter(|(_, i)| {
-                i.state == QuestState::Active || i.state == QuestState::ReadyToTurnIn
-            })
+            .filter(|(_, i)| i.state == QuestState::Active || i.state == QuestState::ReadyToTurnIn)
             .filter_map(|(id, _)| self.quests.get(id))
             .collect()
     }
@@ -1643,7 +1639,7 @@ impl QuestSystem {
     pub fn update(&mut self, dt: f32) {
         // Collect quest IDs to process to avoid borrow conflicts
         let quest_ids: Vec<String> = self.quest_instances.keys().cloned().collect();
-        
+
         for quest_id in quest_ids {
             let instance = self.quest_instances.get_mut(&quest_id).unwrap();
             if instance.state == QuestState::Active {
@@ -1670,7 +1666,8 @@ impl QuestSystem {
             };
 
             // Check if we should update this objective
-            let should_update = self.quest_instances
+            let should_update = self
+                .quest_instances
                 .get(&quest_id)
                 .map(|instance| {
                     if instance.state != QuestState::Active {
@@ -1761,11 +1758,7 @@ mod tests {
             .with_title("quest.test.title")
             .with_description("quest.test.desc")
             .with_category(QuestCategory::Side)
-            .add_objective(QuestObjective::new(
-                "obj1",
-                "quest.test.obj1",
-                5,
-            ));
+            .add_objective(QuestObjective::new("obj1", "quest.test.obj1", 5));
 
         assert_eq!(quest.id, "test_quest");
         assert_eq!(quest.title_key, "quest.test.title");
@@ -1790,16 +1783,18 @@ mod tests {
             .add_prerequisite(QuestPrerequisite::level(10))
             .add_prerequisite(QuestPrerequisite::quest_complete("prev_quest"))
             .add_objective(
-                QuestObjective::new("obj_collect", "quest.obj_collect", 10)
-                    .with_type(QuestObjectiveType::CollectItem {
+                QuestObjective::new("obj_collect", "quest.obj_collect", 10).with_type(
+                    QuestObjectiveType::CollectItem {
                         item_id: "herb".to_string(),
-                    }),
+                    },
+                ),
             )
             .add_objective(
-                QuestObjective::new("obj_kill", "quest.obj_kill", 3)
-                    .with_type(QuestObjectiveType::DefeatEnemy {
+                QuestObjective::new("obj_kill", "quest.obj_kill", 3).with_type(
+                    QuestObjectiveType::DefeatEnemy {
                         enemy_type: "wolf".to_string(),
-                    }),
+                    },
+                ),
             )
             .add_reward(QuestReward::experience(500))
             .add_reward(QuestReward::gold(200))
@@ -1814,7 +1809,10 @@ mod tests {
         assert_eq!(quest.prerequisites.len(), 2);
         assert_eq!(quest.objectives.len(), 2);
         assert_eq!(quest.rewards.len(), 3);
-        assert_eq!(quest.dialogue_tree_id, Some("dialog_elder_quest".to_string()));
+        assert_eq!(
+            quest.dialogue_tree_id,
+            Some("dialog_elder_quest".to_string())
+        );
     }
 
     #[test]
@@ -1935,14 +1933,10 @@ mod tests {
         assert!((instance.get_objective_progress_normalized("obj1", 10) - 0.0).abs() < 0.001);
 
         instance.set_objective_progress("obj1", 5, 10);
-        assert!(
-            (instance.get_objective_progress_normalized("obj1", 10) - 0.5).abs() < 0.001
-        );
+        assert!((instance.get_objective_progress_normalized("obj1", 10) - 0.5).abs() < 0.001);
 
         instance.set_objective_progress("obj1", 15, 10); // capped
-        assert!(
-            (instance.get_objective_progress_normalized("obj1", 10) - 1.0).abs() < 0.001
-        );
+        assert!((instance.get_objective_progress_normalized("obj1", 10) - 1.0).abs() < 0.001);
     }
 
     #[test]
@@ -2189,11 +2183,13 @@ mod tests {
         system.register_quest(create_test_quest("quest2"));
         system.start_quest("quest1");
 
-        let entries = system.get_journal_entries(QuestJournalFilter::Active, QuestJournalSort::ByState);
+        let entries =
+            system.get_journal_entries(QuestJournalFilter::Active, QuestJournalSort::ByState);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].quest_id, "quest1");
 
-        let all_entries = system.get_journal_entries(QuestJournalFilter::All, QuestJournalSort::Alphabetical);
+        let all_entries =
+            system.get_journal_entries(QuestJournalFilter::All, QuestJournalSort::Alphabetical);
         assert!(all_entries.len() >= 1);
     }
 
@@ -2201,12 +2197,14 @@ mod tests {
     fn quest_system_journal_filter_by_category() {
         let mut system = QuestSystem::new();
         system.register_quest(
-            Quest::new("main1").with_category(QuestCategory::Main)
-                .add_objective(QuestObjective::new("obj", "desc", 1))
+            Quest::new("main1")
+                .with_category(QuestCategory::Main)
+                .add_objective(QuestObjective::new("obj", "desc", 1)),
         );
         system.register_quest(
-            Quest::new("side1").with_category(QuestCategory::Side)
-                .add_objective(QuestObjective::new("obj", "desc", 1))
+            Quest::new("side1")
+                .with_category(QuestCategory::Side)
+                .add_objective(QuestObjective::new("obj", "desc", 1)),
         );
         system.start_quest("main1");
         system.start_quest("side1");
@@ -2223,26 +2221,31 @@ mod tests {
     fn quest_system_sequential_objectives() {
         let mut system = QuestSystem::new();
         let quest = Quest::new("sequential_quest")
-            .add_objective(
-                QuestObjective::new("obj1", "desc1", 1).with_sequence_order(0)
-            )
-            .add_objective(
-                QuestObjective::new("obj2", "desc2", 1).with_sequence_order(1)
-            );
+            .add_objective(QuestObjective::new("obj1", "desc1", 1).with_sequence_order(0))
+            .add_objective(QuestObjective::new("obj2", "desc2", 1).with_sequence_order(1));
         system.register_quest(quest);
         system.start_quest("sequential_quest");
 
         // Only obj1 should be active
         let instance = system.quest_instances.get("sequential_quest").unwrap();
-        assert_eq!(instance.objectives.get("obj1"), Some(&ObjectiveState::Active));
-        assert_eq!(instance.objectives.get("obj2"), Some(&ObjectiveState::Inactive));
+        assert_eq!(
+            instance.objectives.get("obj1"),
+            Some(&ObjectiveState::Active)
+        );
+        assert_eq!(
+            instance.objectives.get("obj2"),
+            Some(&ObjectiveState::Inactive)
+        );
 
         // Complete obj1
         system.add_objective_progress("sequential_quest", "obj1", 1);
 
         // Now obj2 should be active
         let instance = system.quest_instances.get("sequential_quest").unwrap();
-        assert_eq!(instance.objectives.get("obj2"), Some(&ObjectiveState::Active));
+        assert_eq!(
+            instance.objectives.get("obj2"),
+            Some(&ObjectiveState::Active)
+        );
     }
 
     #[test]
@@ -2250,23 +2253,33 @@ mod tests {
         let mut system = QuestSystem::new();
         let quest = Quest::new("optional_quest")
             .add_objective(QuestObjective::new("required", "desc1", 1))
-            .add_objective(
-                QuestObjective::new("optional", "desc2", 1).optional()
-            );
+            .add_objective(QuestObjective::new("optional", "desc2", 1).optional());
         system.register_quest(quest);
         system.start_quest("optional_quest");
 
         // Check initial state - optional should be Completed
         let instance = system.quest_instances.get("optional_quest").unwrap();
-        assert_eq!(instance.objectives.get("required"), Some(&ObjectiveState::Active));
-        assert_eq!(instance.objectives.get("optional"), Some(&ObjectiveState::Completed));
+        assert_eq!(
+            instance.objectives.get("required"),
+            Some(&ObjectiveState::Active)
+        );
+        assert_eq!(
+            instance.objectives.get("optional"),
+            Some(&ObjectiveState::Completed)
+        );
 
         // Only complete required objective
         system.add_objective_progress("optional_quest", "required", 1);
 
         // Should be ready to turn in (optional doesn't block)
         let instance = system.quest_instances.get("optional_quest").unwrap();
-        assert_eq!(instance.state, QuestState::ReadyToTurnIn, "Expected ReadyToTurnIn but got {:?}. Objectives: {:?}", instance.state, instance.objectives);
+        assert_eq!(
+            instance.state,
+            QuestState::ReadyToTurnIn,
+            "Expected ReadyToTurnIn but got {:?}. Objectives: {:?}",
+            instance.state,
+            instance.objectives
+        );
     }
 
     #[test]
@@ -2384,10 +2397,16 @@ mod tests {
     #[test]
     fn reward_creation() {
         let xp = QuestReward::experience(500);
-        assert!(matches!(xp.reward_type, QuestRewardType::Experience { amount: 500 }));
+        assert!(matches!(
+            xp.reward_type,
+            QuestRewardType::Experience { amount: 500 }
+        ));
 
         let gold = QuestReward::gold(100);
-        assert!(matches!(gold.reward_type, QuestRewardType::Gold { amount: 100 }));
+        assert!(matches!(
+            gold.reward_type,
+            QuestRewardType::Gold { amount: 100 }
+        ));
 
         let item = QuestReward::item("sword", 2);
         if let QuestRewardType::Item { item_id, count } = item.reward_type {

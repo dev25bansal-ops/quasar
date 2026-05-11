@@ -40,7 +40,12 @@ pub struct Spring {
 
 impl Spring {
     pub fn new(a: usize, b: usize, rest: f32, stiff: f32) -> Self {
-        Self { particle_a: a, particle_b: b, rest_length: rest, stiffness: stiff }
+        Self {
+            particle_a: a,
+            particle_b: b,
+            rest_length: rest,
+            stiffness: stiff,
+        }
     }
 }
 
@@ -53,7 +58,10 @@ pub struct Tetrahedron {
 
 impl Tetrahedron {
     pub fn new(particles: [usize; 4], rest_volume: f32) -> Self {
-        Self { particles, rest_volume }
+        Self {
+            particles,
+            rest_volume,
+        }
     }
 
     pub fn compute_volume(&self, positions: &[Vec3]) -> f32 {
@@ -132,7 +140,10 @@ impl SoftBody {
                 let y = radius * cos_theta;
                 let z = radius * sin_theta * sin_phi;
 
-                self.particles.push(SoftBodyParticle::new(center + Vec3::new(x, y, z), particle_mass));
+                self.particles.push(SoftBodyParticle::new(
+                    center + Vec3::new(x, y, z),
+                    particle_mass,
+                ));
             }
         }
 
@@ -151,12 +162,34 @@ impl SoftBody {
                 let p2 = self.particles[next_lat].position;
                 let p3 = self.particles[diag].position;
 
-                self.springs.push(Spring::new(current, next_lon, (p1 - p0).length(), stiffness));
-                self.springs.push(Spring::new(current, next_lat, (p2 - p0).length(), stiffness));
-                self.springs.push(Spring::new(next_lon, diag, (p3 - p1).length(), stiffness));
-                self.springs.push(Spring::new(next_lat, diag, (p3 - p2).length(), stiffness));
-                self.springs.push(Spring::new(current, diag, (p3 - p0).length(), stiffness * 0.5));
-                self.springs.push(Spring::new(next_lon, next_lat, (p2 - p1).length(), stiffness * 0.5));
+                self.springs.push(Spring::new(
+                    current,
+                    next_lon,
+                    (p1 - p0).length(),
+                    stiffness,
+                ));
+                self.springs.push(Spring::new(
+                    current,
+                    next_lat,
+                    (p2 - p0).length(),
+                    stiffness,
+                ));
+                self.springs
+                    .push(Spring::new(next_lon, diag, (p3 - p1).length(), stiffness));
+                self.springs
+                    .push(Spring::new(next_lat, diag, (p3 - p2).length(), stiffness));
+                self.springs.push(Spring::new(
+                    current,
+                    diag,
+                    (p3 - p0).length(),
+                    stiffness * 0.5,
+                ));
+                self.springs.push(Spring::new(
+                    next_lon,
+                    next_lat,
+                    (p2 - p1).length(),
+                    stiffness * 0.5,
+                ));
 
                 self.surface_triangles.push([current, next_lon, diag]);
                 self.surface_triangles.push([current, diag, next_lat]);
@@ -177,12 +210,14 @@ impl SoftBody {
             for iy in 0..=subdivisions {
                 for iz in 0..=subdivisions {
                     let t = |i: usize| i as f32 / subdivisions as f32;
-                    let pos = center + Vec3::new(
-                        (t(ix) - 0.5) * 2.0 * half_extents.x,
-                        (t(iy) - 0.5) * 2.0 * half_extents.y,
-                        (t(iz) - 0.5) * 2.0 * half_extents.z,
-                    );
-                    self.particles.push(SoftBodyParticle::new(pos, particle_mass));
+                    let pos = center
+                        + Vec3::new(
+                            (t(ix) - 0.5) * 2.0 * half_extents.x,
+                            (t(iy) - 0.5) * 2.0 * half_extents.y,
+                            (t(iz) - 0.5) * 2.0 * half_extents.z,
+                        );
+                    self.particles
+                        .push(SoftBodyParticle::new(pos, particle_mass));
                 }
             }
         }
@@ -198,18 +233,27 @@ impl SoftBody {
 
                     if ix < subdivisions {
                         let next = idx(ix + 1, iy, iz);
-                        let rest = (self.particles[next].position - self.particles[current].position).length();
-                        self.springs.push(Spring::new(current, next, rest, stiffness));
+                        let rest = (self.particles[next].position
+                            - self.particles[current].position)
+                            .length();
+                        self.springs
+                            .push(Spring::new(current, next, rest, stiffness));
                     }
                     if iy < subdivisions {
                         let next = idx(ix, iy + 1, iz);
-                        let rest = (self.particles[next].position - self.particles[current].position).length();
-                        self.springs.push(Spring::new(current, next, rest, stiffness));
+                        let rest = (self.particles[next].position
+                            - self.particles[current].position)
+                            .length();
+                        self.springs
+                            .push(Spring::new(current, next, rest, stiffness));
                     }
                     if iz < subdivisions {
                         let next = idx(ix, iy, iz + 1);
-                        let rest = (self.particles[next].position - self.particles[current].position).length();
-                        self.springs.push(Spring::new(current, next, rest, stiffness));
+                        let rest = (self.particles[next].position
+                            - self.particles[current].position)
+                            .length();
+                        self.springs
+                            .push(Spring::new(current, next, rest, stiffness));
                     }
                 }
             }
@@ -225,7 +269,7 @@ impl SoftBody {
             let vel = (p.position - p.prev_position) * damping;
             p.prev_position = p.position;
             p.position += vel + gravity * dt * dt;
-            
+
             // Ground collision
             if let Some(gy) = ground {
                 if p.position.y < gy {
@@ -259,7 +303,9 @@ impl SoftBody {
             let b = spring.particle_b;
             let delta = positions[b] - positions[a];
             let len = delta.length();
-            if len < 0.0001 { continue; }
+            if len < 0.0001 {
+                continue;
+            }
             let diff = (len - spring.rest_length) / len;
             let correction = delta * diff * 0.5 * spring.stiffness;
             corrections[a] += correction * inv_masses[a];
@@ -282,7 +328,9 @@ impl SoftBody {
         for tet in &self.tetrahedra {
             let current_volume = tet.compute_volume(&positions);
             let volume_diff = current_volume - tet.rest_volume;
-            if volume_diff.abs() < 0.0001 { continue; }
+            if volume_diff.abs() < 0.0001 {
+                continue;
+            }
             let correction = volume_diff * self.config.volume_stiffness * 0.25;
             let center: Vec3 = tet.particles.iter().map(|&i| positions[i]).sum::<Vec3>() / 4.0;
             for &idx in &tet.particles {
@@ -305,9 +353,11 @@ impl SoftBody {
             return Vec3::ZERO;
         }
 
-        self.particles.iter()
+        self.particles
+            .iter()
             .map(|p| p.position * p.mass)
-            .sum::<Vec3>() / total_mass
+            .sum::<Vec3>()
+            / total_mass
     }
 
     pub fn apply_impulse(&mut self, impulse: Vec3) {
@@ -349,7 +399,9 @@ mod tests {
         sb.create_sphere(Vec3::ZERO, 1.0, 4, 10.0);
         let initial_pos = sb.particles[0].position;
         sb.step(0.016);
-        assert!((sb.particles[0].position - initial_pos).length() > 0.0 || sb.config.gravity.y == 0.0);
+        assert!(
+            (sb.particles[0].position - initial_pos).length() > 0.0 || sb.config.gravity.y == 0.0
+        );
     }
 
     #[test]
@@ -388,12 +440,7 @@ mod tests {
     #[test]
     fn tetrahedron_compute_volume() {
         let tet = Tetrahedron::new([0, 1, 2, 3], 1.0);
-        let positions = vec![
-            Vec3::ZERO,
-            Vec3::X,
-            Vec3::Y,
-            Vec3::Z,
-        ];
+        let positions = vec![Vec3::ZERO, Vec3::X, Vec3::Y, Vec3::Z];
         let vol = tet.compute_volume(&positions);
         assert!((vol - (1.0 / 6.0)).abs() < 0.001);
     }

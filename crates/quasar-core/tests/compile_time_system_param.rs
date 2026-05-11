@@ -8,10 +8,8 @@
 //! 5. Resource parameter extraction
 //! 6. Backward compatibility with legacy SystemParam derive
 
-// use quasar_core::ecs::system_param::{
-    use quasar_core::prelude::{AccessKind, Read, SystemParam, Write};
-};
-use quasar_core::ecs::World;
+use quasar_core::ecs::{ParamSet, Res, World};
+use quasar_core::prelude::{Access, SystemParam};
 
 // ── Test components ─────────────────────────────────────────────
 
@@ -143,13 +141,21 @@ fn test_access_merge_combines_reads_and_writes() {
         .write_component::<Velocity>();
     let b = Access::new()
         .read_component::<Health>()
-        .write_component::<ScoreResource>();
+        .write_resource::<ScoreResource>();
     let merged = a.merge(&b);
 
-    assert!(merged.component_reads.contains(&std::any::TypeId::of::<Position>()));
-    assert!(merged.component_reads.contains(&std::any::TypeId::of::<Health>()));
-    assert!(merged.component_writes.contains(&std::any::TypeId::of::<Velocity>()));
-    assert!(merged.resource_writes.contains(&std::any::TypeId::of::<ScoreResource>()));
+    assert!(merged
+        .component_reads
+        .contains(&std::any::TypeId::of::<Position>()));
+    assert!(merged
+        .component_reads
+        .contains(&std::any::TypeId::of::<Health>()));
+    assert!(merged
+        .component_writes
+        .contains(&std::any::TypeId::of::<Velocity>()));
+    assert!(merged
+        .resource_writes
+        .contains(&std::any::TypeId::of::<ScoreResource>()));
 }
 
 // ── ParamSet mutual exclusion tests ────────────────────────────
@@ -171,9 +177,10 @@ fn test_param_set_allows_second_then_blocks_first() {
 #[test]
 fn test_param_set_neither_used_returns_none_after_check() {
     let mut set: ParamSet<&str, &str> = ParamSet::new("a", "b");
-    // Check p0, then p0 again should be blocked
+    // Repeated access to the same branch is allowed; the opposite branch is blocked.
     assert!(set.p0().is_some());
-    assert!(set.p0().is_none()); // Already used
+    assert!(set.p0().is_some());
+    assert!(set.p1().is_none());
 }
 
 // ── World resource tests ──────────────────────────────────────
@@ -229,7 +236,7 @@ fn test_system_state_creation() {
     // This test ensures the trait bounds are satisfiable.
     // Actual Query types are tested in the query module tests.
     fn assert_system_param<P: SystemParam>() {}
-    assert_system_param::<()>(); // Unit type as a trivial SystemParam
+    assert_system_param::<(Res<TimeResource>,)>();
 }
 
 // ── Compile-time borrow checking simulation ───────────────────
@@ -271,8 +278,12 @@ fn test_access_to_system_access_conversion() {
 
     let sys_access = access.to_system_access();
 
-    assert!(sys_access.reads.contains(&std::any::TypeId::of::<Position>()));
-    assert!(sys_access.writes.contains(&std::any::TypeId::of::<Velocity>()));
+    assert!(sys_access
+        .reads
+        .contains(&std::any::TypeId::of::<Position>()));
+    assert!(sys_access
+        .writes
+        .contains(&std::any::TypeId::of::<Velocity>()));
     assert!(sys_access
         .resources_read
         .contains(&std::any::TypeId::of::<TimeResource>()));
@@ -290,8 +301,8 @@ fn test_world_init_system_state_compiles() {
     let mut world = World::new();
 
     // Init system state — this compiles only if the trait bounds are met
-    let _state = world.init_system_state::<()>();
-    // The unit type () is a trivial SystemParam with no access requirements
+    let _state = world.init_system_state::<(Res<TimeResource>,)>();
+    // Resource access is enough to validate the SystemParam bounds at compile time.
 }
 
 #[test]
@@ -300,36 +311,12 @@ fn test_world_spawn_query_iterate() {
 
     // Spawn entities with Position and Velocity
     let e1 = world.spawn();
-    world.insert(
-        e1,
-        Position {
-            x: 0.0,
-            y: 0.0,
-        },
-    );
-    world.insert(
-        e1,
-        Velocity {
-            dx: 1.0,
-            dy: 0.0,
-        },
-    );
+    world.insert(e1, Position { x: 0.0, y: 0.0 });
+    world.insert(e1, Velocity { dx: 1.0, dy: 0.0 });
 
     let e2 = world.spawn();
-    world.insert(
-        e2,
-        Position {
-            x: 10.0,
-            y: 5.0,
-        },
-    );
-    world.insert(
-        e2,
-        Velocity {
-            dx: 0.0,
-            dy: 2.0,
-        },
-    );
+    world.insert(e2, Position { x: 10.0, y: 5.0 });
+    world.insert(e2, Velocity { dx: 0.0, dy: 2.0 });
 
     // Verify entities exist with both components
     assert!(world.get::<Position>(e1).is_some());

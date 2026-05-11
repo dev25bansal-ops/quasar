@@ -86,7 +86,7 @@ impl ColliderShape {
                         ncols
                     );
                 }
-                
+
                 let matrix = nalgebra::DMatrix::from_row_slice(*nrows, *ncols, heights);
                 SharedShape::heightfield(matrix, nalgebra::vector![scale[0], scale[1], scale[2]])
             }

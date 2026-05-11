@@ -59,6 +59,7 @@ blake3 = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
+pollster = { workspace = true }
 
 [[bench]]
 name = "render_bench"

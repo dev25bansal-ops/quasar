@@ -1,6 +1,6 @@
 //! Cloth physics simulation using mass-spring model.
 
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
 
 /// A particle in the cloth simulation.
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +48,12 @@ pub struct DistanceConstraint {
 
 impl DistanceConstraint {
     pub fn new(a: usize, b: usize, rest: f32, stiff: f32) -> Self {
-        Self { particle_a: a, particle_b: b, rest_length: rest, stiffness: stiff }
+        Self {
+            particle_a: a,
+            particle_b: b,
+            rest_length: rest,
+            stiffness: stiff,
+        }
     }
 }
 
@@ -118,7 +123,13 @@ impl ClothMesh {
             }
         }
 
-        Self { particles, constraints, triangles, width, height }
+        Self {
+            particles,
+            constraints,
+            triangles,
+            width,
+            height,
+        }
     }
 
     pub fn pin_row(&mut self, y: usize) {
@@ -141,11 +152,11 @@ impl ClothMesh {
             if !p.pinned {
                 let vel = (p.position - p.prev_position) * damping;
                 p.prev_position = p.position;
-                
+
                 // Add wind force and gravity
                 let force = gravity + wind;
                 p.position += vel + force * dt * dt;
-                
+
                 // Ground collision
                 if let Some(gy) = ground {
                     if p.position.y < gy {
@@ -164,11 +175,17 @@ impl ClothMesh {
                 let b = c.particle_b;
                 let delta = self.particles[b].position - self.particles[a].position;
                 let len = delta.length();
-                if len < 0.0001 { continue; }
+                if len < 0.0001 {
+                    continue;
+                }
                 let diff = (len - c.rest_length) / len;
                 let corr = delta * diff * 0.5 * c.stiffness;
-                if !self.particles[a].pinned { self.particles[a].position += corr; }
-                if !self.particles[b].pinned { self.particles[b].position -= corr; }
+                if !self.particles[a].pinned {
+                    self.particles[a].position += corr;
+                }
+                if !self.particles[b].pinned {
+                    self.particles[b].position -= corr;
+                }
             }
         }
 

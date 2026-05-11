@@ -51,7 +51,9 @@ use crate::ecs::{System, World};
 ///
 /// Implement this trait for your state enum to define behavior
 /// when entering, updating, and exiting each state.
-pub trait State: Default + Clone + Copy + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + Send + Sync + 'static {
+pub trait State:
+    Default + Clone + Copy + PartialEq + Eq + std::hash::Hash + std::fmt::Debug + Send + Sync + 'static
+{
     /// Called once when entering this state.
     ///
     /// Use this to initialize state-specific resources, spawn entities,
@@ -136,7 +138,11 @@ impl<S: State> StateManager<S> {
             return; // No transition needed
         }
 
-        log::info!("State transition requested: {:?} → {:?}", self.current, new_state);
+        log::info!(
+            "State transition requested: {:?} → {:?}",
+            self.current,
+            new_state
+        );
         self.pending_transitions.push(new_state);
     }
 
@@ -148,7 +154,11 @@ impl<S: State> StateManager<S> {
             return;
         }
 
-        log::info!("Immediate state transition: {:?} → {:?}", self.current, new_state);
+        log::info!(
+            "Immediate state transition: {:?} → {:?}",
+            self.current,
+            new_state
+        );
         self.pending_transitions.clear();
         self.pending_transitions.push(new_state);
         self.transitioning = true;
@@ -189,7 +199,11 @@ impl<S: State> StateManager<S> {
         // Clear transition event
         world.remove_resource::<StateTransition<S>>();
 
-        log::info!("State transition complete: {:?} → {:?}", old_state, new_state);
+        log::info!(
+            "State transition complete: {:?} → {:?}",
+            old_state,
+            new_state
+        );
     }
 
     /// Update the current state (called every frame).
@@ -253,7 +267,8 @@ impl<S: State> System for StateTransitionSystem<S> {
 
     fn run(&mut self, world: &mut World) {
         // Check if there are pending transitions
-        let has_pending = world.resource::<StateManager<S>>()
+        let has_pending = world
+            .resource::<StateManager<S>>()
             .map(|m| !m.pending_transitions.is_empty())
             .unwrap_or(false);
 
@@ -263,7 +278,9 @@ impl<S: State> System for StateTransitionSystem<S> {
 
         // Process transitions with separate mutable borrows
         let (old_state, new_state) = {
-            let manager = world.resource_mut::<StateManager<S>>().expect("StateManager should exist");
+            let manager = world
+                .resource_mut::<StateManager<S>>()
+                .expect("StateManager should exist");
             let new_state = manager.pending_transitions.remove(0);
             let old_state = manager.current;
             (old_state, new_state)
@@ -284,7 +301,9 @@ impl<S: State> System for StateTransitionSystem<S> {
 
         // Update state manager
         {
-            let manager = world.resource_mut::<StateManager<S>>().expect("StateManager should exist");
+            let manager = world
+                .resource_mut::<StateManager<S>>()
+                .expect("StateManager should exist");
             manager.previous = Some(old_state);
             manager.current = new_state;
         }
@@ -295,7 +314,11 @@ impl<S: State> System for StateTransitionSystem<S> {
         // Clear transition event
         world.remove_resource::<StateTransition<S>>();
 
-        log::info!("State transition complete: {:?} → {:?}", old_state, new_state);
+        log::info!(
+            "State transition complete: {:?} → {:?}",
+            old_state,
+            new_state
+        );
     }
 }
 

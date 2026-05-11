@@ -10,14 +10,16 @@
 
 #![allow(deprecated)]
 
-use egui::{Color32, RichText, ScrollArea, Sense, Stroke, Ui, Vec2, Pos2, Rect};
+use egui::{Color32, Pos2, Rect, RichText, ScrollArea, Sense, Stroke, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::behavior_tree_graph::{BtGraphState, BtEditorNodeType, BtEditorNode, BtEditorConnection};
-use quasar_core::SimulationState;
+use crate::behavior_tree_graph::{
+    BtEditorConnection, BtEditorNode, BtEditorNodeType, BtGraphState,
+};
+use crate::bt_serialization::{BtDeserializer, BtSerializer};
 use crate::bt_simulation::*;
-use crate::bt_serialization::{BtSerializer, BtDeserializer};
+use quasar_core::SimulationState;
 
 /// Represents a saved behavior tree in the editor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -302,12 +304,30 @@ impl AiBehaviorEditor {
 
         match template.name {
             "Patrol Route" => {
-                let root = graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(250.0, 30.0));
-                let patrol_seq = graph.add_node(BtEditorNodeType::Sequence, "Patrol", Pos2::new(100.0, 150.0));
-                let move_wp = graph.add_node(BtEditorNodeType::Action, "MoveToWaypoint", Pos2::new(50.0, 270.0));
-                let wait = graph.add_node(BtEditorNodeType::Wait, "WaitAtWP", Pos2::new(150.0, 270.0));
-                let check_alert = graph.add_node(BtEditorNodeType::Condition, "IsAlerted?", Pos2::new(300.0, 150.0));
-                let investigate = graph.add_node(BtEditorNodeType::Action, "Investigate", Pos2::new(400.0, 270.0));
+                let root =
+                    graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(250.0, 30.0));
+                let patrol_seq = graph.add_node(
+                    BtEditorNodeType::Sequence,
+                    "Patrol",
+                    Pos2::new(100.0, 150.0),
+                );
+                let move_wp = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "MoveToWaypoint",
+                    Pos2::new(50.0, 270.0),
+                );
+                let wait =
+                    graph.add_node(BtEditorNodeType::Wait, "WaitAtWP", Pos2::new(150.0, 270.0));
+                let check_alert = graph.add_node(
+                    BtEditorNodeType::Condition,
+                    "IsAlerted?",
+                    Pos2::new(300.0, 150.0),
+                );
+                let investigate = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "Investigate",
+                    Pos2::new(400.0, 270.0),
+                );
 
                 graph.add_connection(root, patrol_seq);
                 graph.add_connection(root, check_alert);
@@ -316,12 +336,30 @@ impl AiBehaviorEditor {
                 graph.add_connection(check_alert, investigate);
             }
             "Chase & Attack" => {
-                let root = graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(250.0, 30.0));
-                let in_range = graph.add_node(BtEditorNodeType::Sequence, "InRange", Pos2::new(100.0, 150.0));
-                let attack = graph.add_node(BtEditorNodeType::Action, "Attack", Pos2::new(50.0, 270.0));
-                let chase = graph.add_node(BtEditorNodeType::Action, "ChaseTarget", Pos2::new(250.0, 150.0));
-                let detect = graph.add_node(BtEditorNodeType::Condition, "HasTarget?", Pos2::new(400.0, 150.0));
-                let search = graph.add_node(BtEditorNodeType::Action, "SearchArea", Pos2::new(450.0, 270.0));
+                let root =
+                    graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(250.0, 30.0));
+                let in_range = graph.add_node(
+                    BtEditorNodeType::Sequence,
+                    "InRange",
+                    Pos2::new(100.0, 150.0),
+                );
+                let attack =
+                    graph.add_node(BtEditorNodeType::Action, "Attack", Pos2::new(50.0, 270.0));
+                let chase = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "ChaseTarget",
+                    Pos2::new(250.0, 150.0),
+                );
+                let detect = graph.add_node(
+                    BtEditorNodeType::Condition,
+                    "HasTarget?",
+                    Pos2::new(400.0, 150.0),
+                );
+                let search = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "SearchArea",
+                    Pos2::new(450.0, 270.0),
+                );
 
                 graph.add_connection(root, in_range);
                 graph.add_connection(root, chase);
@@ -330,10 +368,23 @@ impl AiBehaviorEditor {
                 graph.add_connection(detect, search);
             }
             "Flee Danger" => {
-                let root = graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(200.0, 30.0));
-                let check_danger = graph.add_node(BtEditorNodeType::Condition, "IsInDanger?", Pos2::new(100.0, 150.0));
-                let flee = graph.add_node(BtEditorNodeType::Action, "FleeToSafety", Pos2::new(50.0, 270.0));
-                let hide = graph.add_node(BtEditorNodeType::Action, "FindCover", Pos2::new(200.0, 270.0));
+                let root =
+                    graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(200.0, 30.0));
+                let check_danger = graph.add_node(
+                    BtEditorNodeType::Condition,
+                    "IsInDanger?",
+                    Pos2::new(100.0, 150.0),
+                );
+                let flee = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "FleeToSafety",
+                    Pos2::new(50.0, 270.0),
+                );
+                let hide = graph.add_node(
+                    BtEditorNodeType::Action,
+                    "FindCover",
+                    Pos2::new(200.0, 270.0),
+                );
 
                 graph.add_connection(root, check_danger);
                 graph.add_connection(check_danger, flee);
@@ -341,9 +392,15 @@ impl AiBehaviorEditor {
             }
             _ => {
                 // Generic default template
-                let root = graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(200.0, 30.0));
-                let seq = graph.add_node(BtEditorNodeType::Sequence, "Sequence", Pos2::new(100.0, 150.0));
-                let action = graph.add_node(BtEditorNodeType::Action, "DoAction", Pos2::new(50.0, 270.0));
+                let root =
+                    graph.add_node(BtEditorNodeType::Selector, "Root", Pos2::new(200.0, 30.0));
+                let seq = graph.add_node(
+                    BtEditorNodeType::Sequence,
+                    "Sequence",
+                    Pos2::new(100.0, 150.0),
+                );
+                let action =
+                    graph.add_node(BtEditorNodeType::Action, "DoAction", Pos2::new(50.0, 270.0));
                 graph.add_connection(root, seq);
                 graph.add_connection(root, action);
                 graph.add_connection(seq, action);
@@ -486,36 +543,34 @@ impl AiBehaviorEditor {
         });
         ui.separator();
 
-        ScrollArea::vertical()
-            .max_height(150.0)
-            .show(ui, |ui| {
-                let search_lower = self.tree_search.to_lowercase();
-                let mut select_idx: Option<usize> = None;
-                let mut delete_idx: Option<usize> = None;
-                for (idx, tree) in self.trees.iter().enumerate() {
-                    if !search_lower.is_empty() && !tree.name.to_lowercase().contains(&search_lower) {
-                        continue;
-                    }
-                    let selected = self.active_tree_idx == Some(idx);
-                    let label = if tree.is_dirty {
-                        format!("{} *", tree.name)
-                    } else {
-                        tree.name.clone()
-                    };
-                    if ui.selectable_label(selected, label).clicked() {
-                        select_idx = Some(idx);
-                    }
-                    if ui.ctx().input(|i| i.pointer.secondary_clicked()) {
-                        delete_idx = Some(idx);
-                    }
+        ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
+            let search_lower = self.tree_search.to_lowercase();
+            let mut select_idx: Option<usize> = None;
+            let mut delete_idx: Option<usize> = None;
+            for (idx, tree) in self.trees.iter().enumerate() {
+                if !search_lower.is_empty() && !tree.name.to_lowercase().contains(&search_lower) {
+                    continue;
                 }
-                if let Some(idx) = select_idx {
-                    self.active_tree_idx = Some(idx);
+                let selected = self.active_tree_idx == Some(idx);
+                let label = if tree.is_dirty {
+                    format!("{} *", tree.name)
+                } else {
+                    tree.name.clone()
+                };
+                if ui.selectable_label(selected, label).clicked() {
+                    select_idx = Some(idx);
                 }
-                if let Some(idx) = delete_idx {
-                    self.remove_tree(idx);
+                if ui.ctx().input(|i| i.pointer.secondary_clicked()) {
+                    delete_idx = Some(idx);
                 }
-            });
+            }
+            if let Some(idx) = select_idx {
+                self.active_tree_idx = Some(idx);
+            }
+            if let Some(idx) = delete_idx {
+                self.remove_tree(idx);
+            }
+        });
     }
 
     fn node_palette_panel(&mut self, ui: &mut Ui) {
@@ -525,31 +580,33 @@ impl AiBehaviorEditor {
         });
         ui.separator();
 
-        ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
-                let search_lower = self.node_search.to_lowercase();
-                for node_type in BtEditorNodeType::all_types() {
-                    let name = node_type.name();
-                    if !search_lower.is_empty() && !name.to_lowercase().contains(&search_lower) {
-                        continue;
-                    }
-                    let color = node_type.color();
-                    let btn = ui.horizontal(|ui| {
-                        ui.colored_label(color, format!("{}\u{2002}{}", node_type.icon(), name));
-                        ui.button("+").clicked()
-                    });
-                    if btn.response.clicked() {
-                        if let Some(idx) = self.active_tree_idx {
-                            let graph = &mut self.trees[idx].graph;
-                            let center = graph.viewport_center();
-                            graph.add_node(*node_type, &format!("{} {}", name, graph.next_node_id), Pos2::new(center.x, center.y + 100.0));
-                            self.save_undo_state();
-                            self.trees[idx].is_dirty = true;
-                        }
+        ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            let search_lower = self.node_search.to_lowercase();
+            for node_type in BtEditorNodeType::all_types() {
+                let name = node_type.name();
+                if !search_lower.is_empty() && !name.to_lowercase().contains(&search_lower) {
+                    continue;
+                }
+                let color = node_type.color();
+                let btn = ui.horizontal(|ui| {
+                    ui.colored_label(color, format!("{}\u{2002}{}", node_type.icon(), name));
+                    ui.button("+").clicked()
+                });
+                if btn.response.clicked() {
+                    if let Some(idx) = self.active_tree_idx {
+                        let graph = &mut self.trees[idx].graph;
+                        let center = graph.viewport_center();
+                        graph.add_node(
+                            *node_type,
+                            &format!("{} {}", name, graph.next_node_id),
+                            Pos2::new(center.x, center.y + 100.0),
+                        );
+                        self.save_undo_state();
+                        self.trees[idx].is_dirty = true;
                     }
                 }
-            });
+            }
+        });
     }
 
     fn graph_editor_panel(&mut self, ui: &mut Ui) {
@@ -601,9 +658,8 @@ impl AiBehaviorEditor {
 
         if let Some(idx) = self.active_tree_idx {
             let selected_node = self.trees[idx].graph.selected_node;
-            let node_data = selected_node.and_then(|id| {
-                self.trees[idx].graph.nodes.get(&id).cloned()
-            });
+            let node_data =
+                selected_node.and_then(|id| self.trees[idx].graph.nodes.get(&id).cloned());
 
             if let Some(selected) = selected_node {
                 if let Some(node) = node_data {
@@ -679,16 +735,32 @@ impl AiBehaviorEditor {
                         }
                         BtEditorNodeType::Parallel => {
                             ui.horizontal(|ui| {
-ui.label("Policy:");
-                                let current_policy = node.properties.get("policy").cloned().unwrap_or_else(|| "RequireAll".to_string());
+                                ui.label("Policy:");
+                                let current_policy = node
+                                    .properties
+                                    .get("policy")
+                                    .cloned()
+                                    .unwrap_or_else(|| "RequireAll".to_string());
                                 let mut new_policy: Option<String> = None;
                                 egui::ComboBox::from_id_salt("parallel_policy")
                                     .selected_text(&current_policy)
                                     .show_ui(ui, |ui| {
-                                        if ui.selectable_label(current_policy == "RequireAll", "Require All").clicked() {
+                                        if ui
+                                            .selectable_label(
+                                                current_policy == "RequireAll",
+                                                "Require All",
+                                            )
+                                            .clicked()
+                                        {
                                             new_policy = Some("RequireAll".to_string());
                                         }
-                                        if ui.selectable_label(current_policy == "RequireOne", "Require One").clicked() {
+                                        if ui
+                                            .selectable_label(
+                                                current_policy == "RequireOne",
+                                                "Require One",
+                                            )
+                                            .clicked()
+                                        {
                                             new_policy = Some("RequireOne".to_string());
                                         }
                                     });
@@ -713,7 +785,9 @@ ui.label("Policy:");
                         self.trees[idx].is_dirty = true;
                     }
                     for (key, value) in pending_props {
-                        self.trees[idx].graph.update_node_property(selected, key, value);
+                        self.trees[idx]
+                            .graph
+                            .update_node_property(selected, key, value);
                         self.save_undo_state();
                         self.trees[idx].is_dirty = true;
                     }
@@ -753,8 +827,18 @@ ui.label("Policy:");
     }
 
     fn simulation_panel(&mut self, ui: &mut Ui) {
-        let trace_data: Vec<_> = self.simulation.trace().iter().map(|e| (e.tick, e.node_name.clone(), e.status.clone())).collect();
-        let bb_snapshot: Vec<_> = self.simulation.blackboard_snapshot().into_iter().map(|(k, _v)| (k.to_string(), String::from("value"))).collect();
+        let trace_data: Vec<_> = self
+            .simulation
+            .trace()
+            .iter()
+            .map(|e| (e.tick, e.node_name.clone(), e.status.clone()))
+            .collect();
+        let bb_snapshot: Vec<_> = self
+            .simulation
+            .blackboard_snapshot()
+            .into_iter()
+            .map(|(k, _v)| (k.to_string(), String::from("value")))
+            .collect();
         let stats = self.simulation.stats();
         let is_running = self.simulation.is_running();
         let is_paused = self.simulation.is_paused();
@@ -834,13 +918,11 @@ ui.label("Policy:");
                 self.notifications.clear();
             }
         });
-        ScrollArea::vertical()
-            .max_height(60.0)
-            .show(ui, |ui| {
-                for (i, msg) in self.notifications.iter().rev().take(5).enumerate() {
-                    ui.small(msg);
-                }
-            });
+        ScrollArea::vertical().max_height(60.0).show(ui, |ui| {
+            for (i, msg) in self.notifications.iter().rev().take(5).enumerate() {
+                ui.small(msg);
+            }
+        });
     }
 
     fn template_browser_window(&mut self, ctx: &egui::Context) {
@@ -872,7 +954,11 @@ ui.label("Policy:");
                                 TemplateCategory::Chase,
                                 TemplateCategory::Search,
                             ] {
-                                ui.selectable_value(&mut self.template_category_filter, Some(*cat), format!("{:?}", cat));
+                                ui.selectable_value(
+                                    &mut self.template_category_filter,
+                                    Some(*cat),
+                                    format!("{:?}", cat),
+                                );
                             }
                         });
                 });

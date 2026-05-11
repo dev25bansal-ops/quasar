@@ -4106,6 +4106,7 @@ dependencies = [
  "gltf",
  "image",
  "log",
+ "pollster",
  "quasar-core",
  "quasar-math",
  "rand 0.8.5",

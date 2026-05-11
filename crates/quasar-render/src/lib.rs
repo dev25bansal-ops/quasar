@@ -53,9 +53,9 @@ pub mod lod;
 pub mod material;
 pub mod mesh;
 #[cfg(feature = "meshlet")]
-pub mod meshlet;
-#[cfg(feature = "meshlet")]
 pub mod mesh_shader;
+#[cfg(feature = "meshlet")]
+pub mod meshlet;
 pub mod motion_vector_pass;
 #[cfg(feature = "gpu-culling")]
 pub mod occlusion;
@@ -91,10 +91,10 @@ pub mod taa;
 pub mod terrain;
 pub mod texture;
 pub mod vertex;
+pub mod vfx_graph;
 pub mod virtual_shadow;
 #[cfg(feature = "volumetric")]
 pub mod volumetric;
-pub mod vfx_graph;
 
 pub use asset_loader::{AssetLoader, GpuMaterial, GpuMesh, GpuTexture, RenderAssetManager};
 pub use bindless::{
@@ -107,7 +107,7 @@ pub use cascade_shadow::{
     Cascade, CascadeShadowMap, CascadeUniform, CASCADE_COUNT, SHADOW_MAP_SIZE,
 };
 pub use components::TextureHandle;
-pub use culling::{Aabb, Frustum, Plane, RenderStats, cull_objects_slice, sort_by_mesh};
+pub use culling::{cull_objects_slice, sort_by_mesh, Aabb, Frustum, Plane, RenderStats};
 pub use environment::{EnvironmentMap, EnvironmentMapLoader, IBL_MIP_LEVELS};
 pub use gltf_loader::{
     load_gltf, load_gltf_animations, load_gltf_morph_targets, sample_quat, sample_vec3,
@@ -126,20 +126,20 @@ pub use lod::{
     bayer_threshold, LodCrossFade, LodGroup, LodLevel, LodSystem, BAYER_4X4, LOD_CROSSFADE_BAND,
     LOD_CROSSFADE_WGSL,
 };
-#[cfg(feature = "meshlet")]
-pub use meshlet::{
-    build_lod_meshlets, LodConfig, LodMeshletData, LodMeshletGpuBuffers, LodMeshletMesh,
-    MeshletBounds, MeshletData, MeshletGpuBuffers, MeshletMesh, VisibilityEntry,
-    MAX_LOD_LEVELS, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES, MAX_MESHLETS,
-    MESH_WORKGROUP_SIZE, TASK_WORKGROUP_SIZE,
-};
+pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
+pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
 #[cfg(feature = "meshlet")]
 pub use mesh_shader::{
     MeshShaderCapabilities, MeshShaderFallback, MeshShaderPipeline, MeshShaderUniforms,
     MeshShaderVertexBuffers, TaskShaderUniforms,
 };
-pub use material::{LightUniform, Material, MaterialOverride, MaterialUniform};
-pub use mesh::{Mesh, MeshCache, MeshData, MeshShape};
+#[cfg(feature = "meshlet")]
+pub use meshlet::{
+    build_lod_meshlets, LodConfig, LodMeshletData, LodMeshletGpuBuffers, LodMeshletMesh,
+    MeshletBounds, MeshletData, MeshletGpuBuffers, MeshletMesh, VisibilityEntry, MAX_LOD_LEVELS,
+    MAX_MESHLETS, MAX_MESHLET_TRIANGLES, MAX_MESHLET_VERTICES, MESH_WORKGROUP_SIZE,
+    TASK_WORKGROUP_SIZE,
+};
 pub use motion_vector_pass::{MotionVectorPass, MotionVectorUniforms};
 pub use pipeline_cache::PipelineCache;
 pub use radiance_cache::{RadianceCache, RadianceCacheSettings, RadianceProbe, SH_COEFF_COUNT};
@@ -200,11 +200,11 @@ pub use occlusion::{
 };
 #[cfg(feature = "particles")]
 pub use particle::{
-    AlignmentDef, BlendModeDef, ColorKeyframe, CollisionDef, CollisionType, CpuParticleSimulator,
-    CurveKeyframe, EmitterDef, EmitterShape, ForceDef, ForceType, GpuParticleSystem, ModifierDef,
-    ModifierType, ParticleData, ParticleEmitter, ParticleEmitterConfig, ParticleRendererDef,
-    ParticleSystemDef, SimParticle, SimulationSpace, SortingDef, evaluate_color_gradient,
-    evaluate_curve, MAX_PARTICLES,
+    evaluate_color_gradient, evaluate_curve, AlignmentDef, BlendModeDef, CollisionDef,
+    CollisionType, ColorKeyframe, CpuParticleSimulator, CurveKeyframe, EmitterDef, EmitterShape,
+    ForceDef, ForceType, GpuParticleSystem, ModifierDef, ModifierType, ParticleData,
+    ParticleEmitter, ParticleEmitterConfig, ParticleRendererDef, ParticleSystemDef, SimParticle,
+    SimulationSpace, SortingDef, MAX_PARTICLES,
 };
 #[cfg(feature = "post-process")]
 pub use post_process::{PostProcessPass, PostProcessSettings, SSAO_KERNEL_SIZE, SSAO_NOISE_SIZE};

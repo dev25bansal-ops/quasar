@@ -35,10 +35,7 @@ fn create_test_scene_graph(world: &mut World) -> Vec<quasar_core::ecs::Entity> {
     // Create children
     for i in 0..3 {
         let child = world.spawn();
-        world.insert(
-            child,
-            create_test_transform(i as f32 * 2.0, 1.0, 0.0),
-        );
+        world.insert(child, create_test_transform(i as f32 * 2.0, 1.0, 0.0));
         graph.set_name(child, format!("Child_{}", i));
         graph.set_parent(child, root);
         entities.push(child);
@@ -47,10 +44,7 @@ fn create_test_scene_graph(world: &mut World) -> Vec<quasar_core::ecs::Entity> {
     // Create grandchildren
     for i in 0..2 {
         let grandchild = world.spawn();
-        world.insert(
-            grandchild,
-            create_test_transform(i as f32, 2.0, 0.0),
-        );
+        world.insert(grandchild, create_test_transform(i as f32, 2.0, 0.0));
         graph.set_name(grandchild, format!("Grandchild_{}", i));
         graph.set_parent(grandchild, entities[1]); // Parent is first child
         entities.push(grandchild);
@@ -105,9 +99,7 @@ fn test_scene_graph_named_entities() {
 
     // Find entities by name
     let root = graph.find_by_name("Root").expect("Root should exist");
-    let child_1 = graph
-        .find_by_name("Child_1")
-        .expect("Child_1 should exist");
+    let child_1 = graph.find_by_name("Child_1").expect("Child_1 should exist");
     let grandchild_0 = graph
         .find_by_name("Grandchild_0")
         .expect("Grandchild_0 should exist");
@@ -376,7 +368,9 @@ fn test_load_game_save_spawns_entities() {
 
     // Verify entities have transforms
     for (entity, saved) in &spawned {
-        let transform = world.get::<Transform>(*entity).expect("Should have Transform");
+        let transform = world
+            .get::<Transform>(*entity)
+            .expect("Should have Transform");
         assert_eq!(transform.position, saved.transform.position);
     }
 
@@ -518,10 +512,7 @@ fn test_roundtrip_with_transform_overrides() {
                 children: vec![1],
                 custom_data: {
                     let mut map = HashMap::new();
-                    map.insert(
-                        "is_static".to_string(),
-                        serde_json::json!(true),
-                    );
+                    map.insert("is_static".to_string(), serde_json::json!(true));
                     map
                 },
             },
@@ -543,8 +534,7 @@ fn test_roundtrip_with_transform_overrides() {
     };
 
     // Simulate modifying before save
-    save.entities[1].transform =
-        create_test_transform(10.0, 6.0, 4.0); // Override position
+    save.entities[1].transform = create_test_transform(10.0, 6.0, 4.0); // Override position
 
     let json = save.to_json().unwrap();
     let loaded = GameSave::from_json(&json).unwrap();
@@ -556,9 +546,7 @@ fn test_roundtrip_with_transform_overrides() {
     );
 
     // Verify custom data still intact
-    assert!(loaded.entities[1]
-        .custom_data
-        .contains_key("velocity"));
+    assert!(loaded.entities[1].custom_data.contains_key("velocity"));
 
     let _ = save;
 }

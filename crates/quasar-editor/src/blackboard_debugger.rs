@@ -89,7 +89,7 @@ impl BlackboardDebugger {
                     continue;
                 }
 
-if let Some(value) = blackboard.get(&key) {
+                if let Some(value) = blackboard.get(&key) {
                     ui.push_id(&key, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(

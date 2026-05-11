@@ -7,10 +7,10 @@
 //! 4. Results are correct regardless of parallel vs sequential execution
 
 use quasar_core::ecs::parallel::{
-    system_node, system_node_with_access, ComponentAccess, ParallelSchedule, ReadWriteSet,
-    SystemAccess, SystemGraph, SystemNode,
+    system_node, system_node_with_access, ComponentAccess, ParallelSchedule, SystemAccess,
+    SystemGraph, SystemNode,
 };
-use quasar_core::ecs::{Schedule, System, SystemStage, World};
+use quasar_core::ecs::{FnSystem, Schedule, System, SystemStage, World};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ use std::sync::Arc;
 
 fn make_counter_system(name: &str, counter: Arc<AtomicUsize>) -> Box<dyn System> {
     let counter_clone = counter.clone();
-    Box::new(quasar_core::prelude::FnSystem::new(name, move |_| {
+    Box::new(FnSystem::new(name, move |_| {
         counter_clone.fetch_add(1, Ordering::SeqCst);
     }))
 }
@@ -225,8 +225,14 @@ fn test_schedule_with_access_parallel() {
     }
     #[cfg(not(feature = "parallel"))]
     {
-        schedule.add_system(SystemStage::Update, make_counter_system("sys_a", counter_a.clone()));
-        schedule.add_system(SystemStage::Update, make_counter_system("sys_b", counter_b.clone()));
+        schedule.add_system(
+            SystemStage::Update,
+            make_counter_system("sys_a", counter_a.clone()),
+        );
+        schedule.add_system(
+            SystemStage::Update,
+            make_counter_system("sys_b", counter_b.clone()),
+        );
     }
 
     let mut world = World::new();
@@ -258,8 +264,14 @@ fn test_schedule_with_access_conflicting() {
     }
     #[cfg(not(feature = "parallel"))]
     {
-        schedule.add_system(SystemStage::Update, make_counter_system("writer", counter_a.clone()));
-        schedule.add_system(SystemStage::Update, make_counter_system("reader", counter_b.clone()));
+        schedule.add_system(
+            SystemStage::Update,
+            make_counter_system("writer", counter_a.clone()),
+        );
+        schedule.add_system(
+            SystemStage::Update,
+            make_counter_system("reader", counter_b.clone()),
+        );
     }
 
     let mut world = World::new();
@@ -284,7 +296,17 @@ fn test_schedule_mixed_access_and_non_access() {
             SystemAccess::new().read::<i32>(),
         );
     }
-    schedule.add_system(SystemStage::Update, make_counter_system("without_access", counter_b.clone()));
+    #[cfg(not(feature = "parallel"))]
+    {
+        schedule.add_system(
+            SystemStage::Update,
+            make_counter_system("with_access", counter_a.clone()),
+        );
+    }
+    schedule.add_system(
+        SystemStage::Update,
+        make_counter_system("without_access", counter_b.clone()),
+    );
 
     let mut world = World::new();
     schedule.run(&mut world);
@@ -305,10 +327,10 @@ fn test_explicit_ordering_preserved() {
     let order_a = order.clone();
     let order_b = order.clone();
 
-    let sys_a = quasar_core::prelude::FnSystem::new("first", move |_| {
+    let sys_a = FnSystem::new("first", move |_| {
         order_a.lock().unwrap().push("first");
     });
-    let sys_b = quasar_core::prelude::FnSystem::new("second", move |_| {
+    let sys_b = FnSystem::new("second", move |_| {
         order_b.lock().unwrap().push("second");
     });
 
@@ -380,7 +402,6 @@ fn test_empty_parallel_schedule_runs_without_panic() {
 #[test]
 fn test_empty_graph_runs_without_panic() {
     let graph = SystemGraph::new(SystemStage::Update);
-    let mut world = World::new();
     // Can't run an empty graph directly, but verify no panic in construction
     assert!(graph.is_empty());
     assert_eq!(graph.len(), 0);
@@ -392,7 +413,7 @@ fn test_empty_graph_runs_without_panic() {
 
 #[test]
 fn test_system_node_builder() {
-    let node = system_node(quasar_core::prelude::FnSystem::new("test", |_| {}))
+    let node = system_node(FnSystem::new("test", |_| {}))
         .with_component_access(ComponentAccess::read::<i32>())
         .with_component_access(ComponentAccess::write::<f32>())
         .with_resource_access(ComponentAccess::read::<String>())
@@ -400,21 +421,29 @@ fn test_system_node_builder() {
         .before("dependent");
 
     assert_eq!(node.system.name(), "test");
-    assert!(node.component_reads.contains(&std::any::TypeId::of::<i32>()));
-    assert!(node.component_writes.contains(&std::any::TypeId::of::<f32>()));
-    assert!(node.resource_reads.contains(&std::any::TypeId::of::<String>()));
+    assert!(node
+        .component_reads
+        .contains(&std::any::TypeId::of::<i32>()));
+    assert!(node
+        .component_writes
+        .contains(&std::any::TypeId::of::<f32>()));
+    assert!(node
+        .resource_reads
+        .contains(&std::any::TypeId::of::<String>()));
     assert_eq!(node.after, vec!["dependency"]);
     assert_eq!(node.before, vec!["dependent"]);
 }
 
 #[test]
 fn test_system_node_with_access_macro() {
-    let node = system_node_with_access::<_, (i32,), (f32,)>(
-        quasar_core::prelude::FnSystem::new("typed", |_| {}),
-    );
+    let node = system_node_with_access::<_, (i32,), (f32,)>(FnSystem::new("typed", |_| {}));
 
-    assert!(node.component_reads.contains(&std::any::TypeId::of::<i32>()));
-    assert!(node.component_writes.contains(&std::any::TypeId::of::<f32>()));
+    assert!(node
+        .component_reads
+        .contains(&std::any::TypeId::of::<i32>()));
+    assert!(node
+        .component_writes
+        .contains(&std::any::TypeId::of::<f32>()));
 }
 
 // ---------------------------------------------------------------------------

@@ -349,12 +349,14 @@ impl ApplicationHandler for QuasarRunner {
 
                 // Insert simulation state so physics/audio/scripting systems
                 // know whether to run this frame.
-                self.app.world.insert_resource(quasar_core::SimulationState {
-                    #[cfg(feature = "editor")]
-                    should_tick: state.editor.state.should_tick(),
-                    #[cfg(not(feature = "editor"))]
-                    should_tick: true,
-                });
+                self.app
+                    .world
+                    .insert_resource(quasar_core::SimulationState {
+                        #[cfg(feature = "editor")]
+                        should_tick: state.editor.state.should_tick(),
+                        #[cfg(not(feature = "editor"))]
+                        should_tick: true,
+                    });
 
                 // Run one full ECS frame (updates time, runs all systems).
                 state.profiler.begin_scope("ecs_tick");

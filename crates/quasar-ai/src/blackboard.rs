@@ -27,8 +27,7 @@ impl BlackboardKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum BlackboardValue {
     Bool(bool),
     Int(i64),
@@ -41,7 +40,6 @@ pub enum BlackboardValue {
     #[default]
     Null,
 }
-
 
 impl BlackboardValue {
     pub fn as_bool(&self) -> Option<bool> {

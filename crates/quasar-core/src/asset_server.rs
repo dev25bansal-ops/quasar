@@ -163,7 +163,10 @@ impl AssetReloadedEvent {
             Some("json" | "anim") => {
                 // Check if it's an animation file by examining the path or filename pattern
                 let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-                if file_stem.contains("anim") || file_stem.contains("clip") || path.to_string_lossy().contains("animation") {
+                if file_stem.contains("anim")
+                    || file_stem.contains("clip")
+                    || path.to_string_lossy().contains("animation")
+                {
                     ReloadKind::Animation
                 } else {
                     ReloadKind::Other
@@ -512,7 +515,7 @@ impl AssetServer {
         let type_id = TypeId::of::<T>();
         let asset_storage = self.asset_storage.clone();
         let asset_handles = self.asset_handles.clone();
-        
+
         // Clone the Arc for use in the thread
         let loader_arc = loader.clone();
 
@@ -524,19 +527,21 @@ impl AssetServer {
                         Ok(asset) => {
                             // Store the asset in the asset storage
                             {
-                                let mut storage = asset_storage.write().unwrap_or_else(|e| e.into_inner());
+                                let mut storage =
+                                    asset_storage.write().unwrap_or_else(|e| e.into_inner());
                                 let type_storage = storage.entry(type_id).or_default();
                                 type_storage.insert(id, Arc::new(asset));
                             }
-                            
+
                             // Update the asset handles to mark it as loaded
                             {
-                                let mut handles = asset_handles.write().unwrap_or_else(|e| e.into_inner());
+                                let mut handles =
+                                    asset_handles.write().unwrap_or_else(|e| e.into_inner());
                                 if let Some(meta) = handles.get_mut(&id) {
                                     meta.loaded = true;
                                 }
                             }
-                            
+
                             let _ = sender.send(AssetEvent::Loaded { handle, path: fp });
                         }
                         Err(e) => {
@@ -975,7 +980,10 @@ impl crate::ecs::System for HotReloadHandlerSystem {
                 ReloadKind::Animation => {
                     // Animation hot-reload is handled by the AnimationHotReloadSystem
                     // which tracks file changes and preserves animation state.
-                    log::info!("[hot-reload] animation clip reload detected: {:?}", event.path);
+                    log::info!(
+                        "[hot-reload] animation clip reload detected: {:?}",
+                        event.path
+                    );
                     // Mark dirty for tracking, actual reload handled by animation system
                     if let Some(server) = world.resource_mut::<AssetServer>() {
                         server.mark_dirty(&event.path);

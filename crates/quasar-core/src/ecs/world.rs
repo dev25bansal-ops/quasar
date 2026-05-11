@@ -1962,7 +1962,10 @@ impl World {
                             let ptr = col.raw_ptr();
                             let mut bytes = vec![0u8; elem_size];
                             // Bounds check: ensure src_row is within column length
-                            debug_assert!(src_row < col.len(), "src_row out of bounds in clone_entity");
+                            debug_assert!(
+                                src_row < col.len(),
+                                "src_row out of bounds in clone_entity"
+                            );
                             if src_row < col.len() {
                                 unsafe {
                                     std::ptr::copy_nonoverlapping(

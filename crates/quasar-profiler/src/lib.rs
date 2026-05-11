@@ -19,6 +19,7 @@ pub mod gpu;
 
 pub mod export;
 
+pub use export::*;
 pub use stats::*;
 
 #[cfg(feature = "cpu")]

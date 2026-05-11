@@ -480,8 +480,11 @@ impl BehaviorTree {
                 if let Some(f) = function {
                     f(blackboard, world, entity)
                 } else {
-                    if blackboard
-                        .get_bool(name) { NodeResult::Success } else { NodeResult::Failure }
+                    if blackboard.get_bool(name) {
+                        NodeResult::Success
+                    } else {
+                        NodeResult::Failure
+                    }
                 }
             }
 
@@ -674,10 +677,8 @@ impl System for BehaviorTreeSystem {
         let delta = 1.0 / 60.0;
 
         let mut query = crate::ecs::CachedArchetypeQueryState::<&BehaviorTreeRunner>::new();
-        let entities: Vec<(Entity, BehaviorTreeRunner)> = query
-            .iter(world)
-            .map(|(e, r)| (e, r.clone()))
-            .collect();
+        let entities: Vec<(Entity, BehaviorTreeRunner)> =
+            query.iter(world).map(|(e, r)| (e, r.clone())).collect();
 
         for (entity, mut runner) in entities {
             runner.time_since_tick += delta;

@@ -109,9 +109,7 @@ fn bench_lod_generation(c: &mut Criterion) {
             BenchmarkId::new("sphere_triangles", tri_count),
             &(&positions, &indices),
             |b, (positions, indices)| {
-                b.iter(|| {
-                    build_lod_meshlets(black_box(positions), black_box(indices), config)
-                })
+                b.iter(|| build_lod_meshlets(black_box(positions), black_box(indices), config))
             },
         );
     }
@@ -139,9 +137,7 @@ fn bench_lod_configurations(c: &mut Criterion) {
                 BenchmarkId::from_parameter(format!("L{}_{:.1}", levels, ratio)),
                 &(&positions, &indices),
                 |b, (positions, indices)| {
-                    b.iter(|| {
-                        build_lod_meshlets(black_box(positions), black_box(indices), config)
-                    })
+                    b.iter(|| build_lod_meshlets(black_box(positions), black_box(indices), config))
                 },
             );
         }
@@ -211,10 +207,7 @@ fn bench_large_mesh_nannite_style(c: &mut Criterion) {
             },
         );
 
-        println!(
-            "Mesh: {} vertices, {} triangles",
-            vert_count, tri_count
-        );
+        println!("Mesh: {} vertices, {} triangles", vert_count, tri_count);
     }
 
     group.finish();

@@ -339,8 +339,7 @@ impl ConflictGraph {
         let group_set: FxHashSet<usize> = group.iter().copied().collect();
         candidates
             .filter(|&&c| {
-                !group.iter().any(|&g| self.has_conflict(g, c))
-                    && !group_set.contains(&c)
+                !group.iter().any(|&g| self.has_conflict(g, c)) && !group_set.contains(&c)
             })
             .copied()
             .collect()
@@ -1037,8 +1036,7 @@ mod tests {
 
         let group = vec![0];
         let candidates: Vec<usize> = (0..5).filter(|&x| x != 0).collect();
-        let non_conflicting: Vec<usize> =
-            cg.non_conflicting_with(&group, candidates.iter());
+        let non_conflicting: Vec<usize> = cg.non_conflicting_with(&group, candidates.iter());
 
         // 3 and 4 don't conflict with 0; 1 and 2 do
         assert!(non_conflicting.contains(&3));
@@ -1263,18 +1261,9 @@ mod tests {
     #[test]
     fn parallel_schedule_total_systems() {
         let mut schedule = ParallelSchedule::new();
-        schedule.add_system(
-            SystemStage::Update,
-            SystemNode::new(make_named_system("a")),
-        );
-        schedule.add_system(
-            SystemStage::Update,
-            SystemNode::new(make_named_system("b")),
-        );
-        schedule.add_system(
-            SystemStage::Render,
-            SystemNode::new(make_named_system("c")),
-        );
+        schedule.add_system(SystemStage::Update, SystemNode::new(make_named_system("a")));
+        schedule.add_system(SystemStage::Update, SystemNode::new(make_named_system("b")));
+        schedule.add_system(SystemStage::Render, SystemNode::new(make_named_system("c")));
 
         assert_eq!(schedule.total_systems(), 3);
     }
@@ -1299,12 +1288,10 @@ mod tests {
 
         let mut graph = SystemGraph::new(SystemStage::Update);
         graph.add_system(
-            SystemNode::new(Box::new(sys_a))
-                .with_component_access(ComponentAccess::read::<i32>()),
+            SystemNode::new(Box::new(sys_a)).with_component_access(ComponentAccess::read::<i32>()),
         );
         graph.add_system(
-            SystemNode::new(Box::new(sys_b))
-                .with_component_access(ComponentAccess::read::<f32>()),
+            SystemNode::new(Box::new(sys_b)).with_component_access(ComponentAccess::read::<f32>()),
         );
 
         let mut world = World::new();
@@ -1330,12 +1317,10 @@ mod tests {
 
         let mut graph = SystemGraph::new(SystemStage::Update);
         let idx_a = graph.add_system(
-            SystemNode::new(Box::new(sys_a))
-                .with_component_access(ComponentAccess::read::<i32>()),
+            SystemNode::new(Box::new(sys_a)).with_component_access(ComponentAccess::read::<i32>()),
         );
         let _idx_b = graph.add_system(
-            SystemNode::new(Box::new(sys_b))
-                .with_component_access(ComponentAccess::write::<i32>()),
+            SystemNode::new(Box::new(sys_b)).with_component_access(ComponentAccess::write::<i32>()),
         );
 
         // Manually add dependency: b depends on a (since they conflict,

@@ -6,9 +6,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
+#[cfg(feature = "parallel")]
+use quasar_core::ecs::parallel::SystemAccess;
 use quasar_core::ecs::parallel::{ComponentAccess, SystemGraph, SystemNode};
 use quasar_core::ecs::{Schedule, SystemStage, World};
-use quasar_core::ecs::parallel::SystemAccess;
 
 /// Create a CPU-heavy system that does some dummy computation.
 fn make_heavy_system(name: &str, work: Arc<AtomicU64>) -> Box<dyn quasar_core::ecs::System> {
@@ -16,7 +17,7 @@ fn make_heavy_system(name: &str, work: Arc<AtomicU64>) -> Box<dyn quasar_core::e
     Box::new(quasar_core::ecs::FnSystem::new(name, move |_| {
         // Simulate heavy work
         let mut sum: u64 = 0;
-        for i in 0..10_000 {
+        for i in 0u64..10_000 {
             sum = sum.wrapping_add(i.wrapping_mul(7).wrapping_rem(13));
         }
         work_clone.fetch_add(sum, Ordering::Relaxed);
@@ -93,26 +94,48 @@ fn bench_schedule_parallel_access(c: &mut Criterion) {
 
         b.iter(|| {
             let mut schedule = Schedule::new();
-            schedule.add_system_with_access(
-                SystemStage::Update,
-                make_light_system("read_a", counters[0].clone()),
-                SystemAccess::new().read::<i32>(),
-            );
-            schedule.add_system_with_access(
-                SystemStage::Update,
-                make_light_system("read_b", counters[1].clone()),
-                SystemAccess::new().read::<f32>(),
-            );
-            schedule.add_system_with_access(
-                SystemStage::Update,
-                make_light_system("read_c", counters[2].clone()),
-                SystemAccess::new().read::<String>(),
-            );
-            schedule.add_system_with_access(
-                SystemStage::Update,
-                make_light_system("read_d", counters[3].clone()),
-                SystemAccess::new().read::<u64>(),
-            );
+            #[cfg(feature = "parallel")]
+            {
+                schedule.add_system_with_access(
+                    SystemStage::Update,
+                    make_light_system("read_a", counters[0].clone()),
+                    SystemAccess::new().read::<i32>(),
+                );
+                schedule.add_system_with_access(
+                    SystemStage::Update,
+                    make_light_system("read_b", counters[1].clone()),
+                    SystemAccess::new().read::<f32>(),
+                );
+                schedule.add_system_with_access(
+                    SystemStage::Update,
+                    make_light_system("read_c", counters[2].clone()),
+                    SystemAccess::new().read::<String>(),
+                );
+                schedule.add_system_with_access(
+                    SystemStage::Update,
+                    make_light_system("read_d", counters[3].clone()),
+                    SystemAccess::new().read::<u64>(),
+                );
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                schedule.add_system(
+                    SystemStage::Update,
+                    make_light_system("read_a", counters[0].clone()),
+                );
+                schedule.add_system(
+                    SystemStage::Update,
+                    make_light_system("read_b", counters[1].clone()),
+                );
+                schedule.add_system(
+                    SystemStage::Update,
+                    make_light_system("read_c", counters[2].clone()),
+                );
+                schedule.add_system(
+                    SystemStage::Update,
+                    make_light_system("read_d", counters[3].clone()),
+                );
+            }
 
             let mut world = World::new();
             schedule.run(&mut world);
@@ -144,7 +167,6 @@ fn bench_conflict_graph(c: &mut Criterion) {
                 graph.add_system(node);
             }
 
-            let mut world = World::new();
             graph.build_dependencies();
             let _batches = graph.topological_groups();
         });

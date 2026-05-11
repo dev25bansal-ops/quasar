@@ -581,7 +581,11 @@ mod tests {
         for field in TransformField::ALL {
             let path = field.path();
             let parsed = TransformField::from_path(path);
-            assert_eq!(parsed, Some(*field), "from_path('{path}') should return the original field");
+            assert_eq!(
+                parsed,
+                Some(*field),
+                "from_path('{path}') should return the original field"
+            );
         }
     }
 

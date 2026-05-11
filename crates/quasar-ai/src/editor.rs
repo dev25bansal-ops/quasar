@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::behavior_tree::{BehaviorTree, BtNode, BtContext, BtState, BtStatus};
+use crate::behavior_tree::{BehaviorTree, BtContext, BtNode, BtState, BtStatus};
 use crate::blackboard::Blackboard;
 
 /// Configuration for an AI agent in the editor.
@@ -156,14 +156,11 @@ impl AiAgentRegistry {
     // --- Tick Execution ---
 
     /// Tick all active agents' behavior trees.
-    pub fn tick_agents(
-        &mut self,
-        delta_time: f32,
-        elapsed_time: f32,
-    ) -> HashMap<u64, BtStatus> {
+    pub fn tick_agents(&mut self, delta_time: f32, elapsed_time: f32) -> HashMap<u64, BtStatus> {
         let mut results = HashMap::new();
 
-        let active_agents: Vec<_> = self.agents
+        let active_agents: Vec<_> = self
+            .agents
             .iter()
             .filter(|(_, agent)| agent.is_active && agent.behavior_tree_id.is_some())
             .map(|(id, agent)| (*id, agent.behavior_tree_id.unwrap()))
@@ -237,9 +234,9 @@ impl EditorBehaviorTree {
 
     /// Compile the editor tree into a runtime behavior tree.
     pub fn compile(&self) -> Option<BehaviorTree> {
-        self.runtime_tree.clone().map(|root| {
-            BehaviorTree::new(&self.name, root)
-        })
+        self.runtime_tree
+            .clone()
+            .map(|root| BehaviorTree::new(&self.name, root))
     }
 }
 
@@ -469,7 +466,9 @@ mod tests {
     #[test]
     fn test_validate_tree_valid() {
         let root = BtNode::Sequence {
-            children: vec![BtNode::Action { name: "DoThing".to_string() }],
+            children: vec![BtNode::Action {
+                name: "DoThing".to_string(),
+            }],
         };
         let errors = AiEditorManager::validate_tree(&root);
         assert!(errors.is_empty());
@@ -478,7 +477,9 @@ mod tests {
     #[test]
     fn test_validate_tree_empty_action() {
         let root = BtNode::Sequence {
-            children: vec![BtNode::Action { name: "".to_string() }],
+            children: vec![BtNode::Action {
+                name: "".to_string(),
+            }],
         };
         let errors = AiEditorManager::validate_tree(&root);
         assert!(!errors.is_empty());

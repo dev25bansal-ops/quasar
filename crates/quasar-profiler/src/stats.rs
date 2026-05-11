@@ -140,7 +140,7 @@ pub struct TimingRecord {
 
 impl TimingRecord {
     pub fn duration(&self) -> Duration {
-        Duration::from_nanos(self.end_ns - self.start_ns)
+        Duration::from_nanos(self.end_ns.saturating_sub(self.start_ns))
     }
 }
 

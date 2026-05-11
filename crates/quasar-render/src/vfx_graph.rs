@@ -73,7 +73,10 @@ impl VfxNode {
 
     pub fn add_input(&mut self, name: &str, data_type: VfxDataType) {
         self.inputs.push(Pin {
-            id: PinId { node: self.id, index: self.inputs.len() as u32 },
+            id: PinId {
+                node: self.id,
+                index: self.inputs.len() as u32,
+            },
             name: name.to_string(),
             data_type,
         });
@@ -81,7 +84,10 @@ impl VfxNode {
 
     pub fn add_output(&mut self, name: &str, data_type: VfxDataType) {
         self.outputs.push(Pin {
-            id: PinId { node: self.id, index: self.outputs.len() as u32 },
+            id: PinId {
+                node: self.id,
+                index: self.outputs.len() as u32,
+            },
             name: name.to_string(),
             data_type,
         });
@@ -132,7 +138,7 @@ pub enum VfxNodeType {
     BoxEmitter,
     SphereEmitter,
     ConeEmitter,
-    
+
     // Forces
     Gravity,
     Wind,
@@ -140,7 +146,7 @@ pub enum VfxNodeType {
     Vortex,
     Attractor,
     Repeller,
-    
+
     // Modifiers
     ColorOverLifetime,
     SizeOverLifetime,
@@ -148,12 +154,12 @@ pub enum VfxNodeType {
     RotationOverLifetime,
     LimitVelocity,
     ClampSize,
-    
+
     // Collisions
     CollisionWithGeometry,
     CollisionWithPlane,
     SubEmitter,
-    
+
     // Output
     RenderParticle,
 }
@@ -291,18 +297,27 @@ impl VfxGraph {
 
     pub fn validate(&self) -> Result<(), String> {
         for conn in &self.connections {
-            let from_node = self.get_node(conn.from.node)
+            let from_node = self
+                .get_node(conn.from.node)
                 .ok_or("Connection from invalid node")?;
-            let to_node = self.get_node(conn.to.node)
+            let to_node = self
+                .get_node(conn.to.node)
                 .ok_or("Connection to invalid node")?;
 
-            let from_pin = from_node.outputs.get(conn.from.index as usize)
+            let from_pin = from_node
+                .outputs
+                .get(conn.from.index as usize)
                 .ok_or("Invalid from pin")?;
-            let to_pin = to_node.inputs.get(conn.to.index as usize)
+            let to_pin = to_node
+                .inputs
+                .get(conn.to.index as usize)
                 .ok_or("Invalid to pin")?;
 
             if from_pin.data_type != to_pin.data_type {
-                return Err(format!("Type mismatch: {:?} != {:?}", from_pin.data_type, to_pin.data_type));
+                return Err(format!(
+                    "Type mismatch: {:?} != {:?}",
+                    from_pin.data_type, to_pin.data_type
+                ));
             }
         }
         Ok(())
@@ -389,8 +404,14 @@ mod tests {
         let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
         let modifier = graph.create_modifier(VfxNodeType::Gravity);
 
-        let from = PinId { node: emitter, index: 0 };
-        let to = PinId { node: modifier, index: 0 };
+        let from = PinId {
+            node: emitter,
+            index: 0,
+        };
+        let to = PinId {
+            node: modifier,
+            index: 0,
+        };
         graph.connect(from, to);
 
         assert_eq!(graph.connections.len(), 1);
@@ -402,8 +423,14 @@ mod tests {
         let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
         let modifier = graph.create_modifier(VfxNodeType::Gravity);
 
-        let from = PinId { node: emitter, index: 0 };
-        let to = PinId { node: modifier, index: 0 };
+        let from = PinId {
+            node: emitter,
+            index: 0,
+        };
+        let to = PinId {
+            node: modifier,
+            index: 0,
+        };
         graph.connect(from, to);
         graph.disconnect(from, to);
 
@@ -437,8 +464,14 @@ mod tests {
         let emitter = graph.create_emitter(VfxNodeType::PointEmitter);
         let modifier = graph.create_modifier(VfxNodeType::Gravity);
 
-        let from = PinId { node: emitter, index: 0 };
-        let to = PinId { node: modifier, index: 0 };
+        let from = PinId {
+            node: emitter,
+            index: 0,
+        };
+        let to = PinId {
+            node: modifier,
+            index: 0,
+        };
         graph.connect(from, to);
 
         assert!(graph.validate().is_ok());
@@ -446,8 +479,14 @@ mod tests {
 
     #[test]
     fn pin_id_equality() {
-        let p1 = PinId { node: VfxNodeId(1), index: 0 };
-        let p2 = PinId { node: VfxNodeId(1), index: 0 };
+        let p1 = PinId {
+            node: VfxNodeId(1),
+            index: 0,
+        };
+        let p2 = PinId {
+            node: VfxNodeId(1),
+            index: 0,
+        };
         assert_eq!(p1, p2);
     }
 
@@ -455,7 +494,10 @@ mod tests {
     fn vfx_node_type_display_name() {
         assert_eq!(VfxNodeType::PointEmitter.display_name(), "Point Emitter");
         assert_eq!(VfxNodeType::Gravity.display_name(), "Gravity");
-        assert_eq!(VfxNodeType::RenderParticle.display_name(), "Render Particle");
+        assert_eq!(
+            VfxNodeType::RenderParticle.display_name(),
+            "Render Particle"
+        );
     }
 
     #[test]

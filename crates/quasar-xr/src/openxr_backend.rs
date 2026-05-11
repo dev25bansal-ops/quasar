@@ -82,19 +82,13 @@ mod stub {
 #[cfg(feature = "openxr")]
 mod openxr_impl {
     use super::*;
-    use glam::{Quat, Vec3};
+    use openxr as xr;
 
     pub struct XrSessionInner {
         instance: xr::Instance,
-        system_id: xr::SystemId,
-        session: xr::Session<xr::AnyGraphics>,
+        _system_id: xr::SystemId,
         session_state: xr::SessionState,
-        action_set: xr::ActionSet,
-        right_hand_action: xr::Action<xr::Posef>,
-        left_hand_action: xr::Action<xr::Posef>,
-        space: xr::Space,
-        view_space: xr::Space,
-        frame_state: Option<xr::FrameState>,
+        event_buffer: xr::EventDataBuffer,
         pub views: Vec<XrView>,
         pub right_hand_pose: Option<XrPose>,
         pub left_hand_pose: Option<XrPose>,
@@ -103,7 +97,9 @@ mod openxr_impl {
 
     impl XrSessionInner {
         pub fn new(config: XrConfig) -> XrResult<Self> {
-            let xr_entry = xr::Entry::linked();
+            let xr_entry = unsafe { xr::Entry::load() }.map_err(|e| {
+                XrError::UnsupportedFeature(format!("OpenXR loader unavailable: {e}"))
+            })?;
 
             let instance = xr_entry.create_instance(
                 &xr::ApplicationInfo {
@@ -111,57 +107,19 @@ mod openxr_impl {
                     application_version: config.app_version,
                     engine_name: "Quasar",
                     engine_version: 0,
+                    api_version: xr::Version::new(1, 0, 0),
                 },
-                &[xr::ExtensionSet {
-                    khr_opengl_enable: true,
-                    ext_hand_tracking: true,
-                    ..Default::default()
-                }],
+                &xr::ExtensionSet::default(),
                 &[],
             )?;
 
             let system_id = instance.system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)?;
 
-            let session = instance
-                .create_session::<xr::AnyGraphics>(system_id, &xr::GraphicsBinding::AnyGraphics)?;
-
-            let action_set = instance.create_action_set("input", "Input Action Set", 0)?;
-
-            let right_hand_action =
-                action_set.create_action::<xr::Posef>("right_hand", "Right Hand Pose", &[])?;
-
-            let left_hand_action =
-                action_set.create_action::<xr::Posef>("left_hand", "Left Hand Pose", &[])?;
-
-            let space = session
-                .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)?;
-            let view_space = session
-                .create_reference_space(xr::ReferenceSpaceType::VIEW, xr::Posef::IDENTITY)?;
-
-            let profile = instance.string_to_path("/interaction_profiles/khr/simple_controller")?;
-            let aim_path = instance.string_to_path("/user/hand/right/input/aim/pose")?;
-
-            session.suggest_interaction_profile_bindings(
-                profile,
-                &[xr::ActionSuggestedBinding {
-                    action: &right_hand_action,
-                    binding: aim_path,
-                }],
-            )?;
-
-            session.attach_action_sets(&[&action_set])?;
-
             Ok(Self {
                 instance,
-                system_id,
-                session,
+                _system_id: system_id,
                 session_state: xr::SessionState::UNKNOWN,
-                action_set,
-                right_hand_action,
-                left_hand_action,
-                space,
-                view_space,
-                frame_state: None,
+                event_buffer: xr::EventDataBuffer::new(),
                 views: Vec::new(),
                 right_hand_pose: None,
                 left_hand_pose: None,
@@ -170,106 +128,24 @@ mod openxr_impl {
         }
 
         pub fn wait_frame(&mut self) -> XrResult<()> {
-            self.frame_state = Some(self.session.wait_frame(None)?);
-            Ok(())
+            Err(graphics_session_error())
         }
 
         pub fn begin_frame(&self) -> XrResult<()> {
-            self.session.begin_frame()?;
-            Ok(())
+            Err(graphics_session_error())
         }
 
         pub fn end_frame(&self) -> XrResult<()> {
-            self.session.end_frame(None)?;
-            Ok(())
+            Err(graphics_session_error())
         }
 
         pub fn locate_views(&mut self) -> XrResult<()> {
-            let frame_state = self.frame_state.as_ref().ok_or(XrError::NotInitialized)?;
-
-            if !frame_state.should_render {
-                self.views.clear();
-                return Ok(());
-            }
-
-            let (_, views) = self.session.locate_views(
-                xr::ViewConfigurationType::PRIMARY_STEREO,
-                frame_state.predicted_display_time,
-                &self.space,
-            )?;
-
-            self.views = views
-                .iter()
-                .map(|v| XrView {
-                    pose: XrPose {
-                        position: Vec3::new(
-                            v.pose.position.x,
-                            v.pose.position.y,
-                            v.pose.position.z,
-                        ),
-                        orientation: Quat::from_xyzw(
-                            v.pose.orientation.x,
-                            v.pose.orientation.y,
-                            v.pose.orientation.z,
-                            v.pose.orientation.w,
-                        ),
-                    },
-                    fov: XrFov {
-                        angle_left: v.fov.angle_left,
-                        angle_right: v.fov.angle_right,
-                        angle_up: v.fov.angle_up,
-                        angle_down: v.fov.angle_down,
-                    },
-                })
-                .collect();
-
-            Ok(())
+            self.views.clear();
+            Err(graphics_session_error())
         }
 
         pub fn sync_actions(&mut self) -> XrResult<()> {
-            let frame_state = self.frame_state.as_ref().ok_or(XrError::NotInitialized)?;
-
-            self.session.sync_actions(&[&self.action_set])?;
-
-            let right_pose = self
-                .right_hand_action
-                .locate(
-                    &self.session,
-                    frame_state.predicted_display_time,
-                    &self.space,
-                )
-                .ok();
-
-            let left_pose = self
-                .left_hand_action
-                .locate(
-                    &self.session,
-                    frame_state.predicted_display_time,
-                    &self.space,
-                )
-                .ok();
-
-            self.right_hand_pose = right_pose.map(|p| XrPose {
-                position: Vec3::new(p.pose.position.x, p.pose.position.y, p.pose.position.z),
-                orientation: Quat::from_xyzw(
-                    p.pose.orientation.x,
-                    p.pose.orientation.y,
-                    p.pose.orientation.z,
-                    p.pose.orientation.w,
-                ),
-            });
-
-            self.left_hand_pose = left_pose.map(|p| XrPose {
-                position: Vec3::new(p.pose.position.x, p.pose.position.y, p.pose.position.z),
-                orientation: Quat::from_xyzw(
-                    p.pose.orientation.x,
-                    p.pose.orientation.y,
-                    p.pose.orientation.z,
-                    p.pose.orientation.w,
-                ),
-            });
-
-            Ok(())
+            Err(graphics_session_error())
         }
 
         pub fn is_running(&self) -> bool {
@@ -280,24 +156,18 @@ mod openxr_impl {
         }
 
         pub fn should_render(&self) -> bool {
-            self.frame_state
-                .as_ref()
-                .map(|f| f.should_render)
-                .unwrap_or(false)
+            false
         }
 
         pub fn request_exit_session(&self) -> XrResult<()> {
-            self.session.request_exit_session()?;
-            Ok(())
+            Err(graphics_session_error())
         }
 
-        pub fn poll_events(&mut self) -> XrResult<Option<xr::Event>> {
-            let mut event_buffer = xr::EventBuffer::new();
-            self.instance.poll_event(&mut event_buffer)?;
-            Ok(event_buffer.get())
+        pub fn poll_events(&mut self) -> XrResult<Option<xr::Event<'_>>> {
+            Ok(self.instance.poll_event(&mut self.event_buffer)?)
         }
 
-        pub fn handle_event(&mut self, event: &xr::Event) -> XrResult<()> {
+        pub fn handle_event(&mut self, event: &xr::Event<'_>) -> XrResult<()> {
             match event {
                 xr::Event::SessionStateChanged(state) => {
                     self.session_state = state.state();
@@ -305,11 +175,12 @@ mod openxr_impl {
 
                     match state.state() {
                         xr::SessionState::READY => {
-                            self.session
-                                .begin_session(xr::ViewConfigurationType::PRIMARY_STEREO)?;
+                            log::debug!(
+                                "OpenXR session is ready, but no graphics binding is configured"
+                            );
                         }
                         xr::SessionState::STOPPING => {
-                            self.session.end_session()?;
+                            log::debug!("OpenXR session is stopping");
                         }
                         _ => {}
                     }
@@ -322,13 +193,14 @@ mod openxr_impl {
 
     impl Drop for XrSessionInner {
         fn drop(&mut self) {
-            if matches!(
-                self.session_state,
-                xr::SessionState::VISIBLE | xr::SessionState::FOCUSED
-            ) {
-                let _ = self.session.end_session();
-            }
+            self.session_state = xr::SessionState::UNKNOWN;
         }
+    }
+
+    fn graphics_session_error() -> XrError {
+        XrError::UnsupportedFeature(
+            "OpenXR graphics-session support requires a concrete graphics binding".to_string(),
+        )
     }
 }
 
@@ -397,12 +269,12 @@ impl XrSession {
     }
 
     #[cfg(feature = "openxr")]
-    pub fn poll_events(&mut self) -> XrResult<Option<xr::Event>> {
+    pub fn poll_events(&mut self) -> XrResult<Option<openxr::Event<'_>>> {
         self.inner.poll_events()
     }
 
     #[cfg(feature = "openxr")]
-    pub fn handle_event(&mut self, event: &xr::Event) -> XrResult<()> {
+    pub fn handle_event(&mut self, event: &openxr::Event<'_>) -> XrResult<()> {
         self.inner.handle_event(event)
     }
 }

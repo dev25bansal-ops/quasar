@@ -406,7 +406,11 @@ impl ConvolutionReverb {
         self.tail.resize(ir_len, 0.0);
         for (i, t) in self.tail.iter_mut().enumerate() {
             let idx = n + i;
-            *t = if idx < self.wet_buffer.len() { self.wet_buffer[idx] } else { 0.0 };
+            *t = if idx < self.wet_buffer.len() {
+                self.wet_buffer[idx]
+            } else {
+                0.0
+            };
         }
     }
 
@@ -735,7 +739,11 @@ impl EarConvolver {
         }
         for (i, t) in self.tail.iter_mut().enumerate() {
             let idx = n + i;
-            *t = if idx < self.wet_buffer.len() { self.wet_buffer[idx] } else { 0.0 };
+            *t = if idx < self.wet_buffer.len() {
+                self.wet_buffer[idx]
+            } else {
+                0.0
+            };
         }
     }
 

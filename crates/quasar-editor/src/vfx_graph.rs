@@ -10,8 +10,10 @@
 
 use egui::{Color32, Pos2, Rect, Sense, Vec2};
 use quasar_render::{
-    vfx_graph::{Pin, PinId, PropertyValue, VfxConnection, VfxGraph, VfxNodeId, VfxNodeType, VfxNode},
     particle::{ColorKeyframe, CurveKeyframe},
+    vfx_graph::{
+        Pin, PinId, PropertyValue, VfxConnection, VfxGraph, VfxNode, VfxNodeId, VfxNodeType,
+    },
 };
 use std::collections::HashMap;
 
@@ -133,7 +135,9 @@ impl VfxGraphEditorState {
     /// Delete the selected node and its connections.
     pub fn delete_selected_node(&mut self) {
         if let Some(id) = self.selected_node.take() {
-            self.graph.connections.retain(|c| c.from.node != id && c.to.node != id);
+            self.graph
+                .connections
+                .retain(|c| c.from.node != id && c.to.node != id);
             self.graph.nodes.retain(|n| n.id != id);
             self.node_sizes.remove(&id);
         }
@@ -144,25 +148,30 @@ impl VfxGraphEditorState {
         let size = Vec2::new(180.0, 100.0);
         self.graph.nodes.iter().rev().find(|node| {
             let node_pos = Pos2::new(node.position.x, node.position.y);
-            let rect = Rect::from_min_size(node_pos, Vec2::new(size.x, self.estimate_node_height(node)));
+            let rect =
+                Rect::from_min_size(node_pos, Vec2::new(size.x, self.estimate_node_height(node)));
             rect.contains(graph_pos)
         })
     }
 
     /// Get a mutable reference to the node at a given position.
-    pub fn node_at_mut(&mut self, graph_pos: Pos2) -> Option<&mut quasar_render::vfx_graph::VfxNode> {
+    pub fn node_at_mut(
+        &mut self,
+        graph_pos: Pos2,
+    ) -> Option<&mut quasar_render::vfx_graph::VfxNode> {
         let size = Vec2::new(180.0, 100.0);
-        
+
         let mut target_id = None;
         for node in self.graph.nodes.iter().rev() {
             let node_pos = Pos2::new(node.position.x, node.position.y);
-            let rect = Rect::from_min_size(node_pos, Vec2::new(size.x, self.estimate_node_height(node)));
+            let rect =
+                Rect::from_min_size(node_pos, Vec2::new(size.x, self.estimate_node_height(node)));
             if rect.contains(graph_pos) {
                 target_id = Some(node.id);
                 break;
             }
         }
-        
+
         if let Some(id) = target_id {
             self.graph.nodes.iter_mut().find(|n| n.id == id)
         } else {
@@ -179,25 +188,43 @@ impl VfxGraphEditorState {
     }
 
     /// Find a pin at a given screen position.
-    pub fn pin_at(&self, graph_pos: Pos2, node: &quasar_render::vfx_graph::VfxNode) -> Option<(PinId, bool)> {
+    pub fn pin_at(
+        &self,
+        graph_pos: Pos2,
+        node: &quasar_render::vfx_graph::VfxNode,
+    ) -> Option<(PinId, bool)> {
         let node_pos = Pos2::new(node.position.x, node.position.y);
         let pin_radius = 6.0;
 
         // Check input pins (left side)
         for (i, pin) in node.inputs.iter().enumerate() {
             let pin_pos = Pos2::new(node_pos.x, node_pos.y + 30.0 + i as f32 * 20.0);
-            let dist = ((graph_pos.x - pin_pos.x).powi(2) + (graph_pos.y - pin_pos.y).powi(2)).sqrt();
+            let dist =
+                ((graph_pos.x - pin_pos.x).powi(2) + (graph_pos.y - pin_pos.y).powi(2)).sqrt();
             if dist < pin_radius + 4.0 {
-                return Some((PinId { node: node.id, index: i as u32 }, true));
+                return Some((
+                    PinId {
+                        node: node.id,
+                        index: i as u32,
+                    },
+                    true,
+                ));
             }
         }
 
         // Check output pins (right side)
         for (i, pin) in node.outputs.iter().enumerate() {
             let pin_pos = Pos2::new(node_pos.x + 180.0, node_pos.y + 30.0 + i as f32 * 20.0);
-            let dist = ((graph_pos.x - pin_pos.x).powi(2) + (graph_pos.y - pin_pos.y).powi(2)).sqrt();
+            let dist =
+                ((graph_pos.x - pin_pos.x).powi(2) + (graph_pos.y - pin_pos.y).powi(2)).sqrt();
             if dist < pin_radius + 4.0 {
-                return Some((PinId { node: node.id, index: i as u32 }, false));
+                return Some((
+                    PinId {
+                        node: node.id,
+                        index: i as u32,
+                    },
+                    false,
+                ));
             }
         }
 
@@ -263,7 +290,7 @@ impl VfxGraphEditorState {
                     let canvas_size = ui.available_size();
                     let graph_width = canvas_size.x * 0.75;
                     self.render_graph_canvas(ui, egui::vec2(graph_width, canvas_size.y), ctx);
-                    
+
                     // Property panel is rendered below
                 });
             });
@@ -304,7 +331,12 @@ impl VfxGraphEditorState {
         });
     }
 
-    fn render_graph_canvas(&mut self, ui: &mut egui::Ui, desired_size: egui::Vec2, ctx: &egui::Context) {
+    fn render_graph_canvas(
+        &mut self,
+        ui: &mut egui::Ui,
+        desired_size: egui::Vec2,
+        ctx: &egui::Context,
+    ) {
         let (response, painter) = ui.allocate_painter(desired_size, Sense::click_and_drag());
         let rect = response.rect;
 
@@ -382,7 +414,12 @@ impl VfxGraphEditorState {
         painter.add(shape);
     }
 
-    fn draw_node(&self, painter: &egui::Painter, rect: Rect, node: &quasar_render::vfx_graph::VfxNode) {
+    fn draw_node(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        node: &quasar_render::vfx_graph::VfxNode,
+    ) {
         let node_pos = egui::pos2(
             node.position.x + self.pan_offset.x,
             node.position.y + self.pan_offset.y,
@@ -427,25 +464,22 @@ impl VfxGraphEditorState {
 
         // Input pins (left side)
         for (i, pin) in node.inputs.iter().enumerate() {
-            let pin_pos = egui::pos2(
-                node_rect.min.x,
-                node_rect.min.y + 30.0 + i as f32 * 20.0,
-            );
+            let pin_pos = egui::pos2(node_rect.min.x, node_rect.min.y + 30.0 + i as f32 * 20.0);
             self.draw_pin(painter, pin_pos, pin, true);
         }
 
         // Output pins (right side)
         for (i, pin) in node.outputs.iter().enumerate() {
-            let pin_pos = egui::pos2(
-                node_rect.max.x,
-                node_rect.min.y + 30.0 + i as f32 * 20.0,
-            );
+            let pin_pos = egui::pos2(node_rect.max.x, node_rect.min.y + 30.0 + i as f32 * 20.0);
             self.draw_pin(painter, pin_pos, pin, false);
         }
 
         // Properties
         for (i, prop) in node.properties.iter().enumerate() {
-            let y = node_rect.min.y + 30.0 + (node.inputs.len() + node.outputs.len()) as f32 * 20.0 + i as f32 * 25.0;
+            let y = node_rect.min.y
+                + 30.0
+                + (node.inputs.len() + node.outputs.len()) as f32 * 20.0
+                + i as f32 * 25.0;
             painter.text(
                 egui::pos2(node_rect.min.x + 8.0, y),
                 egui::Align2::LEFT_TOP,
@@ -580,7 +614,9 @@ impl VfxGraphEditorState {
                         for node_type in self.get_node_types_in_category(category) {
                             let display_name = node_type.display_name();
                             if !self.node_search.is_empty()
-                                && !display_name.to_lowercase().contains(&self.node_search.to_lowercase())
+                                && !display_name
+                                    .to_lowercase()
+                                    .contains(&self.node_search.to_lowercase())
                             {
                                 continue;
                             }
@@ -660,7 +696,9 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
             VfxNodeType::BoxEmitter => {
                 def.emitters.push(EmitterDef {
                     name: node.name.clone(),
-                    shape: EmitterShape::Box { size: [1.0, 1.0, 1.0] },
+                    shape: EmitterShape::Box {
+                        size: [1.0, 1.0, 1.0],
+                    },
                     ..Default::default()
                 });
             }
@@ -674,7 +712,10 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
             VfxNodeType::ConeEmitter => {
                 def.emitters.push(EmitterDef {
                     name: node.name.clone(),
-                    shape: EmitterShape::Cone { angle: 30.0, length: 2.0 },
+                    shape: EmitterShape::Cone {
+                        angle: 30.0,
+                        length: 2.0,
+                    },
                     ..Default::default()
                 });
             }
@@ -748,8 +789,14 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
                     name: node.name.clone(),
                     modifier_type: ModifierType::ColorOverLifetime {
                         gradient: vec![
-                            ColorKeyframe { time: 0.0, color: [1.0, 1.0, 1.0, 1.0] },
-                            ColorKeyframe { time: 1.0, color: [1.0, 1.0, 1.0, 0.0] },
+                            ColorKeyframe {
+                                time: 0.0,
+                                color: [1.0, 1.0, 1.0, 1.0],
+                            },
+                            ColorKeyframe {
+                                time: 1.0,
+                                color: [1.0, 1.0, 1.0, 0.0],
+                            },
                         ],
                     },
                     enabled: true,
@@ -760,8 +807,18 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
                     name: node.name.clone(),
                     modifier_type: ModifierType::SizeOverLifetime {
                         curve: vec![
-                            CurveKeyframe { time: 0.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
-                            CurveKeyframe { time: 1.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                            CurveKeyframe {
+                                time: 0.0,
+                                value: 1.0,
+                                in_tangent: 0.0,
+                                out_tangent: 0.0,
+                            },
+                            CurveKeyframe {
+                                time: 1.0,
+                                value: 1.0,
+                                in_tangent: 0.0,
+                                out_tangent: 0.0,
+                            },
                         ],
                     },
                     enabled: true,
@@ -772,8 +829,18 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
                     name: node.name.clone(),
                     modifier_type: ModifierType::SizeOverLifetime {
                         curve: vec![
-                            CurveKeyframe { time: 0.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
-                            CurveKeyframe { time: 1.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                            CurveKeyframe {
+                                time: 0.0,
+                                value: 1.0,
+                                in_tangent: 0.0,
+                                out_tangent: 0.0,
+                            },
+                            CurveKeyframe {
+                                time: 1.0,
+                                value: 1.0,
+                                in_tangent: 0.0,
+                                out_tangent: 0.0,
+                            },
                         ],
                     },
                     enabled: true,
@@ -799,7 +866,10 @@ pub fn graph_to_particle_system(graph: &VfxGraph) -> quasar_render::particle::Pa
             VfxNodeType::ClampSize => {
                 def.modifiers.push(ModifierDef {
                     name: node.name.clone(),
-                    modifier_type: ModifierType::ClampSize { min: 0.01, max: 10.0 },
+                    modifier_type: ModifierType::ClampSize {
+                        min: 0.01,
+                        max: 10.0,
+                    },
                     enabled: true,
                 });
             }

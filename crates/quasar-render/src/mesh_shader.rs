@@ -22,8 +22,7 @@
 use bytemuck::{Pod, Zeroable};
 
 use crate::meshlet::{
-    LodMeshletGpuBuffers, LodMeshletMesh, VisibilityEntry, MESH_WORKGROUP_SIZE,
-    TASK_WORKGROUP_SIZE,
+    LodMeshletGpuBuffers, LodMeshletMesh, VisibilityEntry, MESH_WORKGROUP_SIZE, TASK_WORKGROUP_SIZE,
 };
 
 // â”€â”€ WGSL Shader Sources â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -48,7 +47,7 @@ pub struct TaskShaderUniforms {
     pub screen_height: f32,
     pub _pad0: [f32; 1],
     pub lod_thresholds: [f32; 4],
-    pub _pad: [f32; 10],
+    pub _pad: [f32; 4],
 }
 
 /// Uniforms for the mesh shader (triangle generation pass).
@@ -107,9 +106,9 @@ impl MeshShaderCapabilities {
         let bindless_supported = adapter
             .features()
             .contains(wgpu::Features::TEXTURE_BINDING_ARRAY)
-            && adapter
-                .features()
-                .contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
+            && adapter.features().contains(
+                wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+            );
 
         Self {
             mesh_shader_supported,
@@ -243,10 +242,8 @@ impl MeshShaderPipeline {
         log::info!("Initializing mesh shader pipeline");
 
         // Create bind group layouts
-        let task_bind_group_layout =
-            Self::create_task_bind_group_layout(device);
-        let mesh_bind_group_layout =
-            Self::create_mesh_bind_group_layout(device);
+        let task_bind_group_layout = Self::create_task_bind_group_layout(device);
+        let mesh_bind_group_layout = Self::create_mesh_bind_group_layout(device);
 
         // Create uniform buffers
         let task_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -264,17 +261,11 @@ impl MeshShaderPipeline {
         });
 
         // Create task shader pipeline
-        let task_pipeline = Self::create_task_pipeline(
-            device,
-            &task_bind_group_layout,
-        );
+        let task_pipeline = Self::create_task_pipeline(device, &task_bind_group_layout);
 
         // Create mesh shader pipeline
-        let mesh_pipeline = Self::create_mesh_pipeline(
-            device,
-            &mesh_bind_group_layout,
-            surface_format,
-        );
+        let mesh_pipeline =
+            Self::create_mesh_pipeline(device, &mesh_bind_group_layout, surface_format);
 
         Some(Self {
             task_pipeline,
@@ -374,9 +365,10 @@ impl MeshShaderPipeline {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: std::num::NonZeroU64::new(
-                            std::mem::size_of::<MeshShaderUniforms>() as u64,
-                        ),
+                        min_binding_size: std::num::NonZeroU64::new(std::mem::size_of::<
+                            MeshShaderUniforms,
+                        >()
+                            as u64),
                     },
                     count: None,
                 },
@@ -542,11 +534,7 @@ impl MeshShaderPipeline {
     }
 
     /// Update mesh shader uniforms.
-    pub fn update_mesh_uniforms(
-        &self,
-        queue: &wgpu::Queue,
-        uniforms: &MeshShaderUniforms,
-    ) {
+    pub fn update_mesh_uniforms(&self, queue: &wgpu::Queue, uniforms: &MeshShaderUniforms) {
         queue.write_buffer(
             &self.mesh_uniform_buffer,
             0,
@@ -750,7 +738,7 @@ impl MeshShaderPipeline {
     }
 }
 
-// â”€â”€ Fallback Pipeline Manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€    
+// â”€â”€ Fallback Pipeline Manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// Manages fallback to traditional rendering when mesh shaders are unavailable.
 pub struct MeshShaderFallback {
@@ -805,8 +793,9 @@ mod tests {
             lod_count: 4,
             screen_width: 1920.0,
             screen_height: 1080.0,
+            _pad0: [0.0; 1],
             lod_thresholds: [1000.0, 500.0, 250.0, 100.0],
-            _pad: [0.0; 2],
+            _pad: [0.0; 4],
         };
         let bytes = bytemuck::bytes_of(&uniforms);
         assert_eq!(bytes.len(), std::mem::size_of::<TaskShaderUniforms>());

@@ -53,13 +53,21 @@ impl std::fmt::Display for SafeDeserializeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SafeDeserializeError::TooLarge(size) => {
-                write!(f, "Request size {} bytes exceeds maximum {}", size, MAX_REQUEST_SIZE)
+                write!(
+                    f,
+                    "Request size {} bytes exceeds maximum {}",
+                    size, MAX_REQUEST_SIZE
+                )
             }
             SafeDeserializeError::TooDeep(depth) => {
                 write!(f, "JSON depth {} exceeds maximum {}", depth, MAX_JSON_DEPTH)
             }
             SafeDeserializeError::StringTooLong(len) => {
-                write!(f, "String length {} exceeds maximum {}", len, MAX_STRING_LENGTH)
+                write!(
+                    f,
+                    "String length {} exceeds maximum {}",
+                    len, MAX_STRING_LENGTH
+                )
             }
             SafeDeserializeError::Parse(e) => {
                 write!(f, "JSON parse error: {}", e)
@@ -528,7 +536,15 @@ async fn route_request(
     let body_str = String::from_utf8_lossy(body);
 
     if method == "POST" && path == "/api/sessions" {
-        return create_session(&body_str, sessions, next_session_id, config, secret_key, event_tx).await;
+        return create_session(
+            &body_str,
+            sessions,
+            next_session_id,
+            config,
+            secret_key,
+            event_tx,
+        )
+        .await;
     }
 
     if method == "GET" && path.starts_with("/api/sessions/") {
@@ -870,7 +886,10 @@ async fn update_session_state(
             return (400, json_error("Invalid request body"));
         }
         Err(e) => {
-            log::warn!("Unexpected deserialization error in update_session_state: {}", e);
+            log::warn!(
+                "Unexpected deserialization error in update_session_state: {}",
+                e
+            );
             return (400, json_error("Invalid request body"));
         }
     };
@@ -1020,7 +1039,9 @@ where
 }
 
 /// Deserializes a HashMap<String, String> with length validation on both keys and values.
-fn deserialize_limited_string_map<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+fn deserialize_limited_string_map<'de, D>(
+    deserializer: D,
+) -> Result<HashMap<String, String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {

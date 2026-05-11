@@ -54,7 +54,10 @@ impl RpcMethodWhitelist {
         if method.is_empty() {
             return Err(NetworkError("RPC method name is empty".to_string()));
         }
-        if !method.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+        if !method
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        {
             return Err(NetworkError(format!(
                 "RPC method name contains invalid characters: {}",
                 method

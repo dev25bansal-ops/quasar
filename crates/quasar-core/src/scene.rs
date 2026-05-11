@@ -153,10 +153,7 @@ impl SceneGraph {
     pub fn propagate_transforms(&self, world: &mut World) {
         // Collect all entities that have a Transform (with correct generations).
         let mut query = crate::ecs::CachedArchetypeQueryState::<&Transform>::new();
-        let entities_with_transform: Vec<Entity> = query
-            .iter(world)
-            .map(|(e, _)| e)
-            .collect();
+        let entities_with_transform: Vec<Entity> = query.iter(world).map(|(e, _)| e).collect();
 
         for entity in entities_with_transform {
             let global_mat = self.compute_global_matrix(entity, world);

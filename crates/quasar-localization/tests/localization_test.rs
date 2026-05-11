@@ -1,303 +1,165 @@
-//! Tests for quasar-localization crate
+//! Public API tests for quasar-localization.
 
-use quasar_localization::prelude::*;
+use fluent::FluentValue;
+use quasar_localization::formatter::plural_category_for_locale;
+use quasar_localization::{
+    AssetLoader, LoadError, Locale, LocaleDetector, LocaleFallback, Localization,
+    LocalizationConfig, LocalizationError, MessageFormatter, PluralCategory, StringTable,
+    TranslationSource,
+};
+use std::collections::HashMap;
 
 #[test]
-fn test_locale_creation() {
-    let locale = Locale::new("en-US");
+fn locale_creation_parse_and_fallback_chain() {
+    let locale = Locale::new("en", Some("US"));
     assert_eq!(locale.to_string(), "en-US");
+    assert_eq!(locale.language(), "en");
+    assert_eq!(locale.region(), Some("US"));
+
+    let parsed = Locale::parse("es-MX").expect("valid locale");
+    assert_eq!(parsed, Locale::new("es", Some("MX")));
+
+    let fallback = LocaleFallback::new(locale);
+    assert_eq!(
+        fallback.chain(),
+        &[
+            Locale::new("en", Some("US")),
+            Locale::new("en", None),
+            Locale::en_us()
+        ]
+    );
 }
 
 #[test]
-fn test_locale_from_str() {
-    let locale = Locale::parse("en-US").unwrap();
-    assert_eq!(locale.to_string(), "en-US");
-}
+fn string_table_stores_values_for_a_locale() {
+    let mut table = StringTable::new(Locale::en_us());
 
-#[test]
-fn test_locale_fallback() {
-    let locale = Locale::new("en-US");
-    let fallback = locale.fallback();
-    
-    // en-US should fallback to en
-    assert_eq!(fallback.to_string(), "en");
-}
-
-#[test]
-fn test_string_table_creation() {
-    let mut table = StringTable::new(Locale::new("en-US"));
-    
     table.insert("hello", "Hello, World!");
     table.insert("goodbye", "Goodbye!");
-    
+
+    assert_eq!(table.locale(), &Locale::en_us());
     assert_eq!(table.get("hello"), Some("Hello, World!"));
-    assert_eq!(table.get("goodbye"), Some("Goodbye!"));
     assert_eq!(table.get("missing"), None);
-}
-
-#[test]
-fn test_string_table_locale() {
-    let table = StringTable::new(Locale::new("en-US"));
-    assert_eq!(table.locale().to_string(), "en-US");
-}
-
-#[test]
-fn test_localization_config() {
-    let config = LocalizationConfig::new()
-        .with_default_locale(Locale::new("en-US"))
-        .with_fallback_enabled(true);
-    
-    assert_eq!(config.default_locale().to_string(), "en-US");
-    assert!(config.fallback_enabled());
-}
-
-#[test]
-fn test_localization_creation() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    assert_eq!( localization.current_locale().to_string(), "en-US");
-}
-
-#[test]
-fn test_localization_set_locale() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    localization.set_locale(Locale::new("es-ES")).unwrap();
-    assert_eq!(localization.current_locale().to_string(), "es-ES");
-}
-
-#[test]
-fn test_message_formatter() {
-    let formatter = MessageFormatter::new();
-    
-    let message = formatter.format("Hello, {name}!", &[("name", "World")]);
-    assert_eq!(message, "Hello, World!");
-}
-
-#[test]
-fn test_plural_category() {
-    assert_eq!(PluralCategory::from_count(0), PluralCategory::Other);
-    assert_eq!(PluralCategory::from_count(1), PluralCategory::One);
-    assert_eq!(PluralCategory::from_count(2), PluralCategory::Other);
-}
-
-#[test]
-fn test_asset_loader_creation() {
-    let loader = AssetLoader::new();
-    assert!(loader.is_some());
-}
-
-#[test]
-fn test_translation_source_file() {
-    let path = std::path::PathBuf::from("test.ftl");
-    let source = TranslationSource::File(path);
-    
-    match source {
-        TranslationSource::File(p) => assert_eq!(p, std::path::PathBuf::from("test.ftl")),
-        _ => panic!("Expected File variant"),
-    }
-}
-
-#[test]
-fn test_translation_source_memory() {
-    let content = "test content".to_string();
-    let source = TranslationSource::Memory(content.clone());
-    
-    match source {
-        TranslationSource::Memory(c) => assert_eq!(c, content),
-        _ => panic!("Expected Memory variant"),
-    }
-}
-
-#[test]
-fn test_translation_source_json() {
-    let json = r#"{"key": "value"}"#.to_string();
-    let source = TranslationSource::Json(json);
-    
-    match source {
-        TranslationSource::Json(j) => assert_eq!(j, json),
-        _ => panic!("Expected Json variant"),
-    }
-}
-
-#[test]
-fn test_translation_source_toml() {
-    let toml = r#"key = "value""#.to_string();
-    let source = TranslationSource::Toml(toml);
-    
-    match source {
-        TranslationSource::Toml(t) => assert_eq!(t, toml),
-        _ => panic!("Expected Toml variant"),
-    }
-}
-
-#[test]
-fn test_localization_error_load_failed() {
-    let error = LocalizationError::LoadFailed(LoadError::Io(
-        std::io::Error::new(std::io::ErrorKind::NotFound, "test")
-    ));
-    
-    assert!(error.to_string().contains("Failed to load translation"));
-}
-
-#[test]
-fn test_localization_error_locale_not_found() {
-    let error = LocalizationError::LocaleNotFound("test-locale".to_string());
-    assert_eq!(error.to_string(), "Locale not found: test-locale");
-}
-
-#[test]
-fn test_localization_error_message_not_found() {
-    let error = LocalizationError::MessageNotFound {
-        key: "test_key".to_string(),
-        locale: "en-US".to_string(),
-    };
-    
-    assert!(error.to_string().contains("test_key"));
-    assert!(error.to_string().contains("en-US"));
-}
-
-#[test]
-fn test_string_table_update() {
-    let mut table = StringTable::new(Locale::new("en-US"));
-    
-    table.insert("key1", "value1");
-    table.insert("key1", "value2"); // Update
-    
-    assert_eq!(table.get("key1"), Some("value2"));
-}
-
-#[test]
-fn test_string_table_remove() {
-    let mut table = StringTable::new(Locale::new("en-US"));
-    
-    table.insert("temp_key", "temp_value");
-    assert_eq!(table.get("temp_key"), Some("temp_value"));
-    
-    table.remove("temp_key");
-    assert_eq!(table.get("temp_key"), None);
-}
-
-#[test]
-fn test_string_table_keys() {
-    let mut table = StringTable::new(Locale::new("en-US"));
-    
-    table.insert("key1", "value1");
-    table.insert("key2", "value2");
-    
-    let keys: Vec<_> = table.keys().collect();
-    assert_eq!(keys.len(), 2);
-    assert!(keys.contains(&"key1"));
-    assert!(keys.contains(&"key2"));
-}
-
-#[test]
-fn test_string_table_len() {
-    let mut table = StringTable::new(Locale::new("en-US"));
-    
-    assert_eq!(table.len(), 0);
-    
-    table.insert("key1", "value1");
-    assert_eq!(table.len(), 1);
-    
-    table.insert("key2", "value2");
     assert_eq!(table.len(), 2);
-}
-
-#[test]
-fn test_string_table_is_empty() {
-    let table = StringTable::new(Locale::new("en-US"));
-    assert!(table.is_empty());
-    
-    let mut table = StringTable::new(Locale::new("en-US"));
-    table.insert("key", "value");
     assert!(!table.is_empty());
 }
 
 #[test]
-fn test_locale_detector() {
-    let detector = LocaleDetector::new();
-    
-    // Test that detector can be created
-    assert!(detector.is_some());
+fn formatter_interpolates_fluent_values_and_plural_categories() {
+    let formatter = MessageFormatter::new();
+    let mut args = HashMap::new();
+    args.insert("name".to_string(), FluentValue::String("World".into()));
+
+    assert_eq!(formatter.format("Hello, {name}!", &args), "Hello, World!");
+    assert_eq!(PluralCategory::from_str("one"), Some(PluralCategory::One));
+    assert_eq!(PluralCategory::One.as_str(), "one");
+    assert_eq!(plural_category_for_locale("en-US", 1), PluralCategory::One);
+    assert_eq!(
+        plural_category_for_locale("en-US", 2),
+        PluralCategory::Other
+    );
 }
 
 #[test]
-fn test_locale_detector_from_system() {
-    let detector = LocaleDetector::new();
-    let system_locale = detector.and_then(|d| d.detect_from_system());
-    
-    // System locale should be detected (or return None if not available)
-    // Either way, the detector should work
-    assert!(detector.is_some());
+fn asset_loader_loads_json_string_tables() {
+    let loader = AssetLoader::new();
+    let locale = Locale::en_us();
+    let source = TranslationSource::Json(r#"{"hello":"Hello"}"#.to_string());
+
+    let table = loader
+        .load_string_table(&locale, source)
+        .expect("json should parse")
+        .expect("json source should produce a string table");
+
+    assert_eq!(table.get("hello"), Some("Hello"));
 }
 
 #[test]
-fn test_localization_add_string_table() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    let mut table = StringTable::new(Locale::new("en-US"));
-    table.insert("test_key", "test_value");
-    
-    localization.add_string_table(table).unwrap();
-    
-    // The table should be added
-    assert!(localization.has_locale(&Locale::new("en-US")));
+fn localization_loads_translations_and_switches_locale() {
+    let localization = Localization::new(LocalizationConfig::default());
+    localization
+        .load_locale(
+            Locale::en_us(),
+            TranslationSource::Memory("greeting = Hello, {$name}!".to_string()),
+        )
+        .expect("locale should load");
+
+    let mut args = HashMap::new();
+    args.insert("name".to_string(), FluentValue::String("World".into()));
+
+    assert_eq!(
+        strip_fluent_isolates(&localization.tr_with_args("greeting", &args)),
+        "Hello, World!"
+    );
+    assert_eq!(localization.tr("missing"), "{missing}");
+
+    localization
+        .load_locale(
+            Locale::es(),
+            TranslationSource::Json(r#"{"hello":"Hola"}"#.to_string()),
+        )
+        .expect("locale should load");
+    localization
+        .set_locale(Locale::es())
+        .expect("locale exists");
+
+    assert_eq!(localization.tr("hello"), "Hola");
+    assert!(localization.available_locales().contains(&Locale::es()));
 }
 
 #[test]
-fn test_localization_has_locale() {
-    let localization = Localization::new(LocalizationConfig::new());
-    
-    assert!(localization.has_locale(&Locale::new("en-US")));
-    assert!(!localization.has_locale(&Locale::new("xx-XX")));
+fn localization_plural_passes_count_argument() {
+    let localization = Localization::new(LocalizationConfig::default());
+    localization
+        .load_locale(
+            Locale::en_us(),
+            TranslationSource::Memory("item-count = You have {$count} items".to_string()),
+        )
+        .expect("locale should load");
+
+    assert_eq!(
+        strip_fluent_isolates(&localization.tr_plural("item-count", 5)),
+        "You have 5 items"
+    );
 }
 
 #[test]
-fn test_localization_available_locales() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    let mut table = StringTable::new(Locale::new("es-ES"));
-    table.insert("key", "value");
-    localization.add_string_table(table).unwrap();
-    
-    let locales = localization.available_locales();
-    assert!(locales.contains(&Locale::new("en-US")));
-    assert!(locales.contains(&Locale::new("es-ES")));
+fn locale_detector_constructs_and_detects_fallback() {
+    let _detector = LocaleDetector::new();
+    let detected = LocaleDetector::detect();
+
+    assert!(!detected.language().is_empty());
 }
 
 #[test]
-fn test_localization_get() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    let mut table = StringTable::new(Locale::new("en-US"));
-    table.insert("test_key", "test_value");
-    localization.add_string_table(table).unwrap();
-    
-    assert_eq!(localization.get("test_key"), Some("test_value"));
-    assert_eq!(localization.get("missing_key"), None);
+fn translation_source_variants_keep_their_payloads() {
+    let path = std::path::PathBuf::from("test.ftl");
+    let source = TranslationSource::File(path.clone());
+    assert!(matches!(source, TranslationSource::File(p) if p == path));
+
+    let source = TranslationSource::Toml(r#"hello = "world""#.to_string());
+    assert!(matches!(source, TranslationSource::Toml(t) if t.contains("hello")));
 }
 
 #[test]
-fn test_localization_get_with_args() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    let mut table = StringTable::new(Locale::new("en-US"));
-    table.insert("greeting", "Hello, {name}!");
-    localization.add_string_table(table).unwrap();
-    
-    let result = localization.get_with_args("greeting", &[("name", "World")]);
-    assert_eq!(result, Some("Hello, World!".to_string()));
+fn localization_errors_format_useful_messages() {
+    let error = LocalizationError::LoadFailed(LoadError::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        "test",
+    )));
+    assert!(error.to_string().contains("Failed to load translation"));
+
+    let error = LocalizationError::MessageNotFound {
+        key: "test_key".to_string(),
+        locale: "en-US".to_string(),
+    };
+    assert!(error.to_string().contains("test_key"));
+    assert!(error.to_string().contains("en-US"));
 }
 
-#[test]
-fn test_localization_get_plural() {
-    let mut localization = Localization::new(LocalizationConfig::new());
-    
-    let mut table = StringTable::new(Locale::new("en-US"));
-    table.insert("item_count", "You have {count} item(s)");
-    localization.add_string_table(table).unwrap();
-    
-    let result = localization.get_plural("item_count", 5, &[("count", "5")]);
-    assert!(result.is_some());
+fn strip_fluent_isolates(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+        .collect()
 }

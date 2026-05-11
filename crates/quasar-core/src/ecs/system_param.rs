@@ -142,9 +142,7 @@ impl Access {
     pub fn conflicts_with(&self, other: &Access) -> bool {
         // Write vs anything on same component
         for &tid in &self.component_writes {
-            if other.component_reads.contains(&tid)
-                || other.component_writes.contains(&tid)
-            {
+            if other.component_reads.contains(&tid) || other.component_writes.contains(&tid) {
                 return true;
             }
         }
@@ -156,9 +154,7 @@ impl Access {
         }
         // Same for resources
         for &tid in &self.resource_writes {
-            if other.resource_reads.contains(&tid)
-                || other.resource_writes.contains(&tid)
-            {
+            if other.resource_reads.contains(&tid) || other.resource_writes.contains(&tid) {
                 return true;
             }
         }
@@ -243,10 +239,7 @@ pub trait SystemParam: 'static {
     /// conflicting borrows exist. The world is passed as a raw pointer to
     /// allow multiple parameters to access different parts of the world
     /// simultaneously without violating Rust's aliasing rules.
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's>;
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's>;
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +339,11 @@ where
 ///     // ...
 /// });
 /// ```
-pub fn system_fn<P, F>(name: impl Into<String>, world: &mut World, func: F) -> FnSystemWithParams<P, F>
+pub fn system_fn<P, F>(
+    name: impl Into<String>,
+    world: &mut World,
+    func: F,
+) -> FnSystemWithParams<P, F>
 where
     P: SystemParam + Send + Sync,
     F: for<'w, 's> FnMut(P::Item<'w, 's>) + Send + Sync + 'static,
@@ -437,10 +434,7 @@ impl<P0: SystemParam> SystemParam for (P0,) {
         P0::access()
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         P0::get_param(state, world)
     }
 }
@@ -458,11 +452,11 @@ impl<P0: SystemParam, P1: SystemParam> SystemParam for (P0, P1) {
         P0::access().merge(&P1::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
-        (P0::get_param(&state.0, world), P1::get_param(&state.1, world))
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
+        (
+            P0::get_param(&state.0, world),
+            P1::get_param(&state.1, world),
+        )
     }
 }
 
@@ -480,15 +474,10 @@ impl<P0: SystemParam, P1: SystemParam, P2: SystemParam> SystemParam for (P0, P1,
     }
 
     fn access() -> Access {
-        P0::access()
-            .merge(&P1::access())
-            .merge(&P2::access())
+        P0::access().merge(&P1::access()).merge(&P2::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -502,7 +491,12 @@ impl<P0: SystemParam, P1: SystemParam, P2: SystemParam, P3: SystemParam> SystemP
     for (P0, P1, P2, P3)
 {
     type State = (P0::State, P1::State, P2::State, P3::State);
-    type Item<'w, 's> = (P0::Item<'w, 's>, P1::Item<'w, 's>, P2::Item<'w, 's>, P3::Item<'w, 's>);
+    type Item<'w, 's> = (
+        P0::Item<'w, 's>,
+        P1::Item<'w, 's>,
+        P2::Item<'w, 's>,
+        P3::Item<'w, 's>,
+    );
 
     fn init_state(world: &mut World) -> Self::State {
         (
@@ -520,10 +514,7 @@ impl<P0: SystemParam, P1: SystemParam, P2: SystemParam, P3: SystemParam> SystemP
             .merge(&P3::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -569,10 +560,7 @@ where
             .merge(&P4::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -593,7 +581,14 @@ where
     P4: SystemParam,
     P5: SystemParam,
 {
-    type State = (P0::State, P1::State, P2::State, P3::State, P4::State, P5::State);
+    type State = (
+        P0::State,
+        P1::State,
+        P2::State,
+        P3::State,
+        P4::State,
+        P5::State,
+    );
     type Item<'w, 's> = (
         P0::Item<'w, 's>,
         P1::Item<'w, 's>,
@@ -623,10 +618,7 @@ where
             .merge(&P5::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -690,10 +682,7 @@ where
             .merge(&P6::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -763,10 +752,7 @@ where
             .merge(&P7::access())
     }
 
-    unsafe fn get_param<'w, 's>(
-        state: &'s Self::State,
-        world: *mut World,
-    ) -> Self::Item<'w, 's> {
+    unsafe fn get_param<'w, 's>(state: &'s Self::State, world: *mut World) -> Self::Item<'w, 's> {
         (
             P0::get_param(&state.0, world),
             P1::get_param(&state.1, world),
@@ -819,8 +805,12 @@ mod tests {
 
     #[test]
     fn access_merge() {
-        let a = Access::new().read_component::<i32>().write_component::<f32>();
-        let b = Access::new().read_component::<String>().write_component::<bool>();
+        let a = Access::new()
+            .read_component::<i32>()
+            .write_component::<f32>();
+        let b = Access::new()
+            .read_component::<String>()
+            .write_component::<bool>();
         let merged = a.merge(&b);
 
         assert!(merged.component_reads.contains(&TypeId::of::<i32>()));

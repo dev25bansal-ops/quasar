@@ -58,10 +58,10 @@ impl BindlessCapabilities {
     /// Detect bindless capabilities from a wgpu adapter.
     pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
         let features = adapter.features();
-        let texture_binding_array =
-            features.contains(wgpu::Features::TEXTURE_BINDING_ARRAY);
-        let non_uniform_indexing = features
-            .contains(wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING);
+        let texture_binding_array = features.contains(wgpu::Features::TEXTURE_BINDING_ARRAY);
+        let non_uniform_indexing = features.contains(
+            wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+        );
         let storage_binding_array =
             features.contains(wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY);
         // Check for bindless sampling (available via TEXTURE_BINDING_ARRAY on most platforms)
@@ -84,7 +84,8 @@ impl BindlessCapabilities {
             features |= wgpu::Features::TEXTURE_BINDING_ARRAY;
         }
         if self.non_uniform_indexing {
-            features |= wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
+            features |=
+                wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING;
         }
         if self.storage_binding_array {
             features |= wgpu::Features::STORAGE_RESOURCE_BINDING_ARRAY;
@@ -352,10 +353,7 @@ impl SamplerPool {
     }
 
     /// Register multiple samplers in batch.
-    pub fn register_batch(
-        &mut self,
-        samplers: &[(u64, wgpu::Sampler)],
-    ) -> Vec<(u64, Option<u32>)> {
+    pub fn register_batch(&mut self, samplers: &[(u64, wgpu::Sampler)]) -> Vec<(u64, Option<u32>)> {
         let mut results = Vec::with_capacity(samplers.len());
         for &(handle, ref sampler) in samplers {
             let idx = self.register(handle, sampler.clone());
@@ -1160,7 +1158,13 @@ impl ResourceLifetimeManager {
     /// Check if a texture is safe to remove (no active references).
     pub fn is_texture_in_use(&self, texture_id: u64) -> bool {
         // Check active references
-        if self.texture_ref_counts.get(&texture_id).copied().unwrap_or(0) > 0 {
+        if self
+            .texture_ref_counts
+            .get(&texture_id)
+            .copied()
+            .unwrap_or(0)
+            > 0
+        {
             return true;
         }
         // Check pending removals
@@ -1171,7 +1175,13 @@ impl ResourceLifetimeManager {
 
     /// Check if a sampler is safe to remove (no active references).
     pub fn is_sampler_in_use(&self, sampler_handle: u64) -> bool {
-        if self.sampler_ref_counts.get(&sampler_handle).copied().unwrap_or(0) > 0 {
+        if self
+            .sampler_ref_counts
+            .get(&sampler_handle)
+            .copied()
+            .unwrap_or(0)
+            > 0
+        {
             return true;
         }
         self.pending_sampler_removals

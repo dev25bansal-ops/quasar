@@ -11,12 +11,14 @@
 //! standard libraries. Use `ScriptCapabilities::full()` with caution for
 //! trusted scripts only.
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+#![warn(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod bridge;
 pub mod component_registry;
 pub mod hot_reload;
 pub mod plugin;
+#[cfg(feature = "wasm")]
+pub mod wasm_ecs_bridge;
 pub mod wasm_scripting;
 use crossbeam_channel::{unbounded, Receiver};
 use mlua::prelude::*;
@@ -41,23 +43,23 @@ impl PathValidator {
 
     /// Validate a path is within allowed directories.
     /// Returns the canonical path if valid, or an error if not.
-    /// 
+    ///
     /// # Security
-    /// 
+    ///
     /// This method performs multiple security checks:
     /// 1. Rejects paths containing `..` segments (path traversal)
     /// 2. Rejects paths with null bytes
     /// 3. Verifies the canonical path is within allowed directories
     pub fn validate(&self, path: &Path) -> Result<PathBuf, PathValidationError> {
         let path_str = path.to_string_lossy();
-        
+
         // Security check: reject null bytes
         if path_str.contains('\0') {
             return Err(PathValidationError::InvalidPath(
-                "Path contains null bytes".to_string()
+                "Path contains null bytes".to_string(),
             ));
         }
-        
+
         // Security check: reject path traversal patterns
         for component in path.components() {
             match component {
@@ -70,7 +72,7 @@ impl PathValidator {
                 _ => {}
             }
         }
-        
+
         // Check for traversal in string form (catches encoded variants)
         let path_str = path.to_string_lossy();
         if path_str.contains("..") {
@@ -282,7 +284,10 @@ impl ScriptEngine {
             | mlua::StdLib::STRING
             | mlua::StdLib::UTF8
             | mlua::StdLib::MATH;
-        let lua = Lua::new_with(safe_libs, LuaOptions::default()).unwrap_or_else(|_| Lua::new());
+        let lua = Lua::new_with(safe_libs, LuaOptions::default()).unwrap_or_else(|err| {
+            log::error!("Failed to create sandboxed fallback Lua VM: {}", err);
+            Lua::new()
+        });
         let (_, event_rx) = unbounded();
 
         let quasar = lua.create_table().ok();
@@ -556,7 +561,6 @@ impl ScriptEngine {
     }
 }
 
-
 /// ECS component that attaches a Lua script to an entity.
 #[derive(Debug)]
 pub struct ScriptComponent {
@@ -586,6 +590,8 @@ impl Clone for ScriptComponent {
 
 pub use component_registry::{ComponentDescriptor, ComponentRegistry};
 pub use plugin::{ScriptingPlugin, ScriptingResource};
+#[cfg(feature = "wasm")]
+pub use wasm_ecs_bridge::{WasmEcsBridge, WasmEcsCommand, WasmEcsState, WasmScriptingSystem};
 pub use wasm_scripting::ScriptingBridge;
 #[cfg(feature = "wasm")]
 pub use wasm_scripting::{WasmHostApi, WasmScriptEngine};

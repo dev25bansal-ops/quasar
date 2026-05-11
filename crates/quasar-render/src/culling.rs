@@ -143,9 +143,21 @@ impl Frustum {
     /// normal.  If that corner is behind the plane, the entire AABB is outside.
     pub fn intersects_aabb(&self, aabb: &Aabb) -> bool {
         for plane in &self.planes {
-            let px = if plane.x >= 0.0 { aabb.max.x } else { aabb.min.x };
-            let py = if plane.y >= 0.0 { aabb.max.y } else { aabb.min.y };
-            let pz = if plane.z >= 0.0 { aabb.max.z } else { aabb.min.z };
+            let px = if plane.x >= 0.0 {
+                aabb.max.x
+            } else {
+                aabb.min.x
+            };
+            let py = if plane.y >= 0.0 {
+                aabb.max.y
+            } else {
+                aabb.min.y
+            };
+            let pz = if plane.z >= 0.0 {
+                aabb.max.z
+            } else {
+                aabb.min.z
+            };
 
             if plane.x * px + plane.y * py + plane.z * pz + plane.w < 0.0 {
                 return false;
@@ -190,10 +202,7 @@ impl RenderStats {
 /// and which were culled (`false`).
 ///
 /// Each object is represented as a `(local_aabb, model_matrix)` tuple.
-pub fn cull_objects_slice(
-    frustum: &Frustum,
-    objects: &[(Aabb, Mat4)],
-) -> (RenderStats, Vec<bool>) {
+pub fn cull_objects_slice(frustum: &Frustum, objects: &[(Aabb, Mat4)]) -> (RenderStats, Vec<bool>) {
     let total = objects.len() as u32;
     let mut culled_count = 0u32;
     let mut visibility = Vec::with_capacity(objects.len());
@@ -272,10 +281,19 @@ mod tests {
         let objects: [(Aabb, Mat4); 4] = [
             // Visible -- at origin
             (Aabb::UNIT_CUBE, Mat4::IDENTITY),
-            (Aabb::UNIT_CUBE, Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0))),
+            (
+                Aabb::UNIT_CUBE,
+                Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+            ),
             // Culled -- 500 units away
-            (Aabb::UNIT_CUBE, Mat4::from_translation(Vec3::new(500.0, 0.0, 0.0))),
-            (Aabb::UNIT_CUBE, Mat4::from_translation(Vec3::new(-500.0, 0.0, 0.0))),
+            (
+                Aabb::UNIT_CUBE,
+                Mat4::from_translation(Vec3::new(500.0, 0.0, 0.0)),
+            ),
+            (
+                Aabb::UNIT_CUBE,
+                Mat4::from_translation(Vec3::new(-500.0, 0.0, 0.0)),
+            ),
         ];
         let slice: Vec<_> = objects.iter().copied().collect();
         let (stats, visibility) = cull_objects_slice(&frustum, &slice);

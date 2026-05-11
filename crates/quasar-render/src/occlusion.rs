@@ -766,7 +766,12 @@ impl IndirectDrawManager {
         let cols = view_proj.to_cols_array_2d();
         let uniforms = GpuCullUniforms {
             view_proj: cols,
-            params: [screen_width, screen_height, self.draws.len() as f32, hiz_mip_levels],
+            params: [
+                screen_width,
+                screen_height,
+                self.draws.len() as f32,
+                hiz_mip_levels,
+            ],
         };
         queue.write_buffer(&cull.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -1219,19 +1224,23 @@ impl GpuHiZBuilder {
             };
             queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&params));
 
-            let src_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("HiZ Build Src View"),
-                base_mip_level: mip - 1,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
+            let src_view = hiz_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("HiZ Build Src View"),
+                    base_mip_level: mip - 1,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                });
 
-            let dst_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("HiZ Build Dst View"),
-                base_mip_level: mip,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
+            let dst_view = hiz_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("HiZ Build Dst View"),
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    ..Default::default()
+                });
 
             let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("HiZ Build BG"),
@@ -1465,12 +1474,14 @@ impl HiZCopyPass {
         width: u32,
         height: u32,
     ) {
-        let dst_view = hiz_texture.texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("HiZ Mip 0 View"),
-            base_mip_level: 0,
-            mip_level_count: Some(1),
-            ..Default::default()
-        });
+        let dst_view = hiz_texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                label: Some("HiZ Mip 0 View"),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                ..Default::default()
+            });
 
         let params: [u32; 4] = [width, height, 0, 0];
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&params));

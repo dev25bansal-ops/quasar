@@ -11,8 +11,8 @@
 
 use quasar_render::bindless::{
     BindlessCapabilities, FallbackBindGroupBuilder, GpuMaterialData, MaterialDataBuffer,
-    ResourceLifetimeManager, SamplerPool, TextureAtlas, MAX_BINDLESS_TEXTURES, MAX_MATERIALS,
-    GPU_MATERIAL_SIZE,
+    ResourceLifetimeManager, SamplerPool, TextureAtlas, GPU_MATERIAL_SIZE, MAX_BINDLESS_TEXTURES,
+    MAX_MATERIALS,
 };
 use quasar_render::DrawCallUniform;
 
@@ -49,9 +49,8 @@ fn texture_atlas_duplicate_registration() {
 fn texture_atlas_batch_registration() {
     let mut atlas = TextureAtlas::new();
 
-    let textures: Vec<(u64, wgpu::TextureView)> = (0..10)
-        .map(|i| (i, create_test_texture_view()))
-        .collect();
+    let textures: Vec<(u64, wgpu::TextureView)> =
+        (0..10).map(|i| (i, create_test_texture_view())).collect();
 
     let results = atlas.register_batch(&textures);
 
@@ -155,9 +154,7 @@ fn sampler_pool_registration() {
 fn sampler_pool_batch_registration() {
     let mut pool = SamplerPool::new();
 
-    let samplers: Vec<(u64, wgpu::Sampler)> = (0..5)
-        .map(|i| (i, create_test_sampler()))
-        .collect();
+    let samplers: Vec<(u64, wgpu::Sampler)> = (0..5).map(|i| (i, create_test_sampler())).collect();
 
     let results = pool.register_batch(&samplers);
 
@@ -306,7 +303,10 @@ fn material_buffer_dirty_tracking() {
     buffer.upload_dirty(&queue);
 
     // Update should mark dirty
-    buffer.update(0, GpuMaterialData::from_color([1.0, 0.0, 0.0, 1.0], 0.5, 0.0));
+    buffer.update(
+        0,
+        GpuMaterialData::from_color([1.0, 0.0, 0.0, 1.0], 0.5, 0.0),
+    );
 
     // Upload dirty should succeed
     buffer.upload_dirty(&queue);
@@ -531,7 +531,10 @@ fn bindless_capabilities_support_level() {
         bindless_sampling: true,
         full_bindless: true,
     };
-    assert!(partial_caps.support_level().contains("PARTIAL") || partial_caps.support_level().contains("FULL"));
+    assert!(
+        partial_caps.support_level().contains("PARTIAL")
+            || partial_caps.support_level().contains("FULL")
+    );
 
     let no_caps = BindlessCapabilities::default();
     assert!(no_caps.support_level().contains("NONE"));

@@ -262,7 +262,11 @@ impl PhysicsWorld {
 
     /// Step the physics simulation by one tick.
     pub fn step(&mut self) {
-        let event_handler = self.collision_event_handler.as_ref().map(|h| h.as_ref() as &dyn EventHandler).unwrap_or(&() as &dyn EventHandler);
+        let event_handler = self
+            .collision_event_handler
+            .as_ref()
+            .map(|h| h.as_ref() as &dyn EventHandler)
+            .unwrap_or(&() as &dyn EventHandler);
         self.pipeline.step(
             &self.gravity,
             &self.integration_parameters,

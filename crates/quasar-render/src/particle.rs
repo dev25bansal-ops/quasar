@@ -569,7 +569,8 @@ impl ParticleSystemDef {
     /// Load from JSON file.
     pub fn load_from_file(path: &std::path::Path) -> Result<Self, std::io::Error> {
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        serde_json::from_str(&json)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Save to JSON string.
@@ -624,12 +625,28 @@ impl Default for EmitterDef {
             color_start: [1.0, 1.0, 1.0, 1.0],
             color_end: [1.0, 1.0, 1.0, 0.0],
             size_over_lifetime: vec![
-                CurveKeyframe { time: 0.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
-                CurveKeyframe { time: 1.0, value: 1.0, in_tangent: 0.0, out_tangent: 0.0 },
+                CurveKeyframe {
+                    time: 0.0,
+                    value: 1.0,
+                    in_tangent: 0.0,
+                    out_tangent: 0.0,
+                },
+                CurveKeyframe {
+                    time: 1.0,
+                    value: 1.0,
+                    in_tangent: 0.0,
+                    out_tangent: 0.0,
+                },
             ],
             color_over_lifetime: vec![
-                ColorKeyframe { time: 0.0, color: [1.0, 1.0, 1.0, 1.0] },
-                ColorKeyframe { time: 1.0, color: [1.0, 1.0, 1.0, 0.0] },
+                ColorKeyframe {
+                    time: 0.0,
+                    color: [1.0, 1.0, 1.0, 1.0],
+                },
+                ColorKeyframe {
+                    time: 1.0,
+                    color: [1.0, 1.0, 1.0, 0.0],
+                },
             ],
             max_particles: 1000,
             simulation_space: SimulationSpace::Local,
@@ -744,7 +761,10 @@ pub fn evaluate_color_gradient(gradient: &[ColorKeyframe], time: f32) -> [f32; 4
         }
     }
 
-    gradient.last().map(|k| k.color).unwrap_or([1.0, 1.0, 1.0, 1.0])
+    gradient
+        .last()
+        .map(|k| k.color)
+        .unwrap_or([1.0, 1.0, 1.0, 1.0])
 }
 
 /// Force field definition.
@@ -763,13 +783,31 @@ pub enum ForceType {
     /// Wind force in a direction.
     Wind { direction: [f32; 3], strength: f32 },
     /// Perlin/simplex turbulence.
-    Turbulence { strength: f32, frequency: f32, speed: f32, seed: u32 },
+    Turbulence {
+        strength: f32,
+        frequency: f32,
+        speed: f32,
+        seed: u32,
+    },
     /// Vortex/spiral force.
-    Vortex { center: [f32; 3], axis: [f32; 3], strength: f32, radius: f32 },
+    Vortex {
+        center: [f32; 3],
+        axis: [f32; 3],
+        strength: f32,
+        radius: f32,
+    },
     /// Point attractor.
-    Attractor { position: [f32; 3], strength: f32, range: f32 },
+    Attractor {
+        position: [f32; 3],
+        strength: f32,
+        range: f32,
+    },
     /// Point repeller.
-    Repeller { position: [f32; 3], strength: f32, range: f32 },
+    Repeller {
+        position: [f32; 3],
+        strength: f32,
+        range: f32,
+    },
     /// Drag/air resistance.
     Drag { coefficient: f32 },
     /// Noise-based random force.
@@ -785,11 +823,19 @@ impl ForceDef {
 
         match &self.force_type {
             ForceType::Gravity { strength } => [0.0, -strength, 0.0],
-            ForceType::Wind { direction, strength } => {
+            ForceType::Wind {
+                direction,
+                strength,
+            } => {
                 let d = glam::Vec3::from_array(*direction).normalize_or_zero();
                 (d * strength).to_array()
             }
-            ForceType::Turbulence { strength, frequency, speed, seed } => {
+            ForceType::Turbulence {
+                strength,
+                frequency,
+                speed,
+                seed,
+            } => {
                 // Simple pseudo-noise turbulence using sine waves
                 let t = *speed * dt;
                 let x = (position[0] * frequency + t).sin() * (*strength);
@@ -797,7 +843,12 @@ impl ForceDef {
                 let z = (position[2] * frequency + t + 2.0).sin() * (*strength);
                 [x, y, z]
             }
-            ForceType::Vortex { center, axis, strength, radius } => {
+            ForceType::Vortex {
+                center,
+                axis,
+                strength,
+                radius,
+            } => {
                 let pos = glam::Vec3::from_array(position) - glam::Vec3::from_array(*center);
                 let axis = glam::Vec3::from_array(*axis).normalize_or_zero();
                 let radial = pos - axis * pos.dot(axis);
@@ -809,16 +860,26 @@ impl ForceDef {
                 let inward = -radial.normalize_or_zero() * (*strength * 0.3);
                 (tangent + inward).to_array()
             }
-            ForceType::Attractor { position, strength, range } => {
-                let to_attractor = glam::Vec3::from_array(*position) - glam::Vec3::from_array(*position);
+            ForceType::Attractor {
+                position,
+                strength,
+                range,
+            } => {
+                let to_attractor =
+                    glam::Vec3::from_array(*position) - glam::Vec3::from_array(*position);
                 let dist = to_attractor.length();
                 if dist > *range || dist < 0.001 {
                     return [0.0, 0.0, 0.0];
                 }
                 (to_attractor.normalize() * (*strength / dist.max(0.1))).into()
             }
-            ForceType::Repeller { position, strength, range } => {
-                let from_repeller = glam::Vec3::from_array(*position) - glam::Vec3::from_array(*position);
+            ForceType::Repeller {
+                position,
+                strength,
+                range,
+            } => {
+                let from_repeller =
+                    glam::Vec3::from_array(*position) - glam::Vec3::from_array(*position);
                 let dist = from_repeller.length();
                 if dist > *range || dist < 0.001 {
                     return [0.0, 0.0, 0.0];
@@ -888,7 +949,11 @@ pub enum CollisionType {
     /// Sphere.
     Sphere { center: [f32; 3], radius: f32 },
     /// Capsule.
-    Capsule { start: [f32; 3], end: [f32; 3], radius: f32 },
+    Capsule {
+        start: [f32; 3],
+        end: [f32; 3],
+        radius: f32,
+    },
     /// Heightmap terrain.
     Heightmap {
         /// Height values as a flat 2D grid (row-major).
@@ -928,20 +993,35 @@ impl CollisionType {
                     let to_max = max - pos;
                     let min_axis = to_min.min(to_max);
                     if min_axis.x <= min_axis.y && min_axis.x <= min_axis.z {
-                        let dir = if to_min.x < to_max.x { Vec3::X } else { -Vec3::X };
+                        let dir = if to_min.x < to_max.x {
+                            Vec3::X
+                        } else {
+                            -Vec3::X
+                        };
                         Some((dir.to_array(), radius + min_axis.x))
                     } else if min_axis.y <= min_axis.x && min_axis.y <= min_axis.z {
-                        let dir = if to_min.y < to_max.y { Vec3::Y } else { -Vec3::Y };
+                        let dir = if to_min.y < to_max.y {
+                            Vec3::Y
+                        } else {
+                            -Vec3::Y
+                        };
                         Some((dir.to_array(), radius + min_axis.y))
                     } else {
-                        let dir = if to_min.z < to_max.z { Vec3::Z } else { -Vec3::Z };
+                        let dir = if to_min.z < to_max.z {
+                            Vec3::Z
+                        } else {
+                            -Vec3::Z
+                        };
                         Some((dir.to_array(), radius + min_axis.z))
                     }
                 } else {
                     None
                 }
             }
-            CollisionType::Sphere { center, radius: sphere_radius } => {
+            CollisionType::Sphere {
+                center,
+                radius: sphere_radius,
+            } => {
                 let to_center = glam::Vec3::from_array(*center) - glam::Vec3::from_array(position);
                 let dist = to_center.length();
                 let total_radius = sphere_radius + radius;
@@ -951,7 +1031,11 @@ impl CollisionType {
                     None
                 }
             }
-            CollisionType::Capsule { start, end, radius: capsule_radius } => {
+            CollisionType::Capsule {
+                start,
+                end,
+                radius: capsule_radius,
+            } => {
                 let p = glam::Vec3::from_array(position);
                 let a = glam::Vec3::from_array(*start);
                 let b = glam::Vec3::from_array(*end);
@@ -968,7 +1052,13 @@ impl CollisionType {
                     None
                 }
             }
-            CollisionType::Heightmap { heights, width, height: h, scale, offset } => {
+            CollisionType::Heightmap {
+                heights,
+                width,
+                height: h,
+                scale,
+                offset,
+            } => {
                 // Simple heightmap collision: find grid cell and interpolate
                 let local_pos = glam::Vec3::from_array(position) - glam::Vec3::from_array(*offset);
                 let gx = (local_pos.x / scale[0]).floor() as usize;
@@ -1103,7 +1193,10 @@ impl CpuParticleSimulator {
     }
 
     fn rand(&mut self) -> f32 {
-        self.rng_state = self.rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.rng_state = self
+            .rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.rng_state >> 33) as f32) / (u32::MAX as f32)
     }
 
@@ -1117,7 +1210,9 @@ impl CpuParticleSimulator {
 
         let mut rng_state = self.rng_state;
         let mut rand_f32 = || -> f32 {
-            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((rng_state >> 33) as f32) / (u32::MAX as f32)
         };
 
@@ -1155,9 +1250,24 @@ impl CpuParticleSimulator {
         self.rng_state = rng_state;
 
         // Update existing particles
-        let forces: Vec<&ForceDef> = self.system_def.forces.iter().filter(|f| f.enabled).collect();
-        let modifiers: Vec<&ModifierDef> = self.system_def.modifiers.iter().filter(|m| m.enabled).collect();
-        let collisions: Vec<&CollisionDef> = self.system_def.collisions.iter().filter(|c| c.enabled).collect();
+        let forces: Vec<&ForceDef> = self
+            .system_def
+            .forces
+            .iter()
+            .filter(|f| f.enabled)
+            .collect();
+        let modifiers: Vec<&ModifierDef> = self
+            .system_def
+            .modifiers
+            .iter()
+            .filter(|m| m.enabled)
+            .collect();
+        let collisions: Vec<&CollisionDef> = self
+            .system_def
+            .collisions
+            .iter()
+            .filter(|c| c.enabled)
+            .collect();
 
         for particle in &mut self.particles {
             if !particle.alive {
@@ -1185,15 +1295,19 @@ impl CpuParticleSimulator {
 
             // Apply collisions
             for collision in &collisions {
-                if let Some((normal, _penetration)) =
-                    collision.collision_type.collide(particle.position, particle.scale * 0.5)
+                if let Some((normal, _penetration)) = collision
+                    .collision_type
+                    .collide(particle.position, particle.scale * 0.5)
                 {
                     if collision.kill_on_collision {
                         particle.alive = false;
                         break;
                     } else {
-                        particle.velocity =
-                            CollisionType::reflect(particle.velocity, normal, collision.bounce_factor);
+                        particle.velocity = CollisionType::reflect(
+                            particle.velocity,
+                            normal,
+                            collision.bounce_factor,
+                        );
                     }
                 }
             }
@@ -1236,7 +1350,7 @@ impl CpuParticleSimulator {
 
             // Update color and size from emitter curves
             let emitters = self.system_def.emitters.clone();
-        for emitter in &emitters {
+            for emitter in &emitters {
                 if !emitter.enabled {
                     continue;
                 }
@@ -1252,9 +1366,15 @@ impl CpuParticleSimulator {
         }
 
         // Remove dead particles
-        self.particles.retain(|p| p.alive || p.age < p.lifetime + 1.0);
+        self.particles
+            .retain(|p| p.alive || p.age < p.lifetime + 1.0);
         // Cap total particles
-        let max_total: u32 = self.system_def.emitters.iter().map(|e| e.max_particles).sum();
+        let max_total: u32 = self
+            .system_def
+            .emitters
+            .iter()
+            .map(|e| e.max_particles)
+            .sum();
         if self.particles.len() > max_total as usize {
             self.particles.truncate(max_total as usize);
         }
@@ -1286,13 +1406,11 @@ impl CpuParticleSimulator {
         let base = glam::Vec3::from_array(emitter.position);
         let offset = match &emitter.shape {
             EmitterShape::Point => glam::Vec3::ZERO,
-            EmitterShape::Box { size } => {
-                glam::Vec3::new(
-                    (rand() - 0.5) * size[0],
-                    (rand() - 0.5) * size[1],
-                    (rand() - 0.5) * size[2],
-                )
-            }
+            EmitterShape::Box { size } => glam::Vec3::new(
+                (rand() - 0.5) * size[0],
+                (rand() - 0.5) * size[1],
+                (rand() - 0.5) * size[2],
+            ),
             EmitterShape::Sphere { radius } => {
                 let theta = rand() * 2.0 * std::f32::consts::PI;
                 let phi = (rand() * 2.0 - 1.0).acos();

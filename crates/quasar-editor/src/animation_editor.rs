@@ -8,8 +8,8 @@
 //! - Integration with existing AnimationClip and AnimationPlayer systems
 
 use quasar_core::animation::{
-    AnimationClip, AnimationPlayer, AnimationResource, AnimationState,
-    KeyframeInterpolation, TransformKeyframe,
+    AnimationClip, AnimationPlayer, AnimationResource, AnimationState, KeyframeInterpolation,
+    TransformKeyframe,
 };
 use quasar_math::{Quat, Transform, Vec3};
 use serde::{Deserialize, Serialize};
@@ -128,7 +128,9 @@ impl AnimationEditorPanel {
 
     /// Get the currently selected clip.
     pub fn get_selected_clip(&self) -> Option<&EditorAnimationClip> {
-        self.clips.iter().find(|c| Some(c.id) == self.selected_clip_id)
+        self.clips
+            .iter()
+            .find(|c| Some(c.id) == self.selected_clip_id)
     }
 
     /// Get the currently selected clip mutably.
@@ -210,10 +212,7 @@ impl AnimationEditorPanel {
                 interpolation: KeyframeInterpolation::Linear,
             };
             clip.clip = clip.clip.clone().add_keyframe(keyframe);
-            self.success_message = Some(format!(
-                "Added keyframe at {:.2}s",
-                time
-            ));
+            self.success_message = Some(format!("Added keyframe at {:.2}s", time));
         }
     }
 
@@ -256,7 +255,7 @@ impl AnimationEditorPanel {
         if let Some(clip) = self.get_selected_clip() {
             let filename = format!("{}.json", clip.clip.name);
             let path = self.animations_dir.join(&filename);
-            
+
             // Ensure directory exists
             if let Err(e) = std::fs::create_dir_all(&self.animations_dir) {
                 self.error_message = Some(format!("Failed to create directory: {}", e));
@@ -377,7 +376,7 @@ impl AnimationEditorPanel {
 
     fn render_clip_list(&mut self, ui: &mut egui::Ui) {
         ui.label("📁 Animation Clips");
-        
+
         // New clip creation
         ui.horizontal(|ui| {
             ui.add(
@@ -441,7 +440,7 @@ impl AnimationEditorPanel {
 
         if let Some(clip) = self.get_selected_clip_mut() {
             ui.label("📝 Clip Properties");
-            
+
             ui.horizontal(|ui| {
                 ui.label("Name:");
                 ui.add(egui::TextEdit::singleline(&mut clip.clip.name).desired_width(150.0));
@@ -465,7 +464,14 @@ impl AnimationEditorPanel {
             ui.separator();
             ui.label("▶ Preview");
             ui.horizontal(|ui| {
-                if ui.button(if preview_playing { "⏸ Pause" } else { "▶ Play" }).clicked() {
+                if ui
+                    .button(if preview_playing {
+                        "⏸ Pause"
+                    } else {
+                        "▶ Play"
+                    })
+                    .clicked()
+                {
                     preview_playing = !preview_playing;
                 }
                 if ui.button("⏹ Stop").clicked() {
@@ -493,10 +499,14 @@ impl AnimationEditorPanel {
             // Sample preview
             if let Some(transform) = clip.clip.sample(preview_time) {
                 ui.label("Preview Transform:");
-                ui.label(format!("  Position: ({:.2}, {:.2}, {:.2})", 
-                    transform.position.x, transform.position.y, transform.position.z));
-                ui.label(format!("  Scale: ({:.2}, {:.2}, {:.2})",
-                    transform.scale.x, transform.scale.y, transform.scale.z));
+                ui.label(format!(
+                    "  Position: ({:.2}, {:.2}, {:.2})",
+                    transform.position.x, transform.position.y, transform.position.z
+                ));
+                ui.label(format!(
+                    "  Scale: ({:.2}, {:.2}, {:.2})",
+                    transform.scale.x, transform.scale.y, transform.scale.z
+                ));
             }
         } else {
             ui.label("No clip selected");
@@ -529,7 +539,7 @@ impl AnimationEditorPanel {
                 .show(ui, |ui| {
                     for (idx, kf) in clip.clip.keyframes.iter().enumerate() {
                         let is_selected = Some(idx) == selected_keyframe_index;
-                        
+
                         egui::Frame::dark_canvas(ui.style())
                             .fill(if is_selected {
                                 egui::Color32::DARK_BLUE
@@ -539,15 +549,12 @@ impl AnimationEditorPanel {
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
                                     if ui.button(format!("K{}", idx)).clicked() {
-                                        selected_keyframe_index = if is_selected {
-                                            None
-                                        } else {
-                                            Some(idx)
-                                        };
+                                        selected_keyframe_index =
+                                            if is_selected { None } else { Some(idx) };
                                         show_keyframe_editor = !is_selected;
                                     }
                                     ui.label(format!("{:.2}s", kf.time));
-                                    
+
                                     // Interpolation indicator
                                     let interp_icon = match kf.interpolation {
                                         KeyframeInterpolation::Step => "▪",
@@ -564,7 +571,10 @@ impl AnimationEditorPanel {
             ui.horizontal(|ui| {
                 if ui.button("➕ Add at Current").clicked() {
                     if let Some(clip) = self.get_selected_clip_mut() {
-                        let transform = clip.clip.sample(preview_time).unwrap_or(Transform::IDENTITY);
+                        let transform = clip
+                            .clip
+                            .sample(preview_time)
+                            .unwrap_or(Transform::IDENTITY);
                         let keyframe = TransformKeyframe {
                             time: preview_time,
                             position: transform.position,
@@ -588,9 +598,9 @@ impl AnimationEditorPanel {
 
         if self.show_keyframe_editor {
             if let Some(index) = self.selected_keyframe_index {
-                let kf_data = self.get_selected_clip().and_then(|clip| {
-                    clip.clip.keyframes.get(index).copied()
-                });
+                let kf_data = self
+                    .get_selected_clip()
+                    .and_then(|clip| clip.clip.keyframes.get(index).copied());
                 if let Some(kf) = kf_data {
                     self.render_keyframe_editor_from_data(ui, kf, index);
                 }
@@ -637,9 +647,15 @@ impl AnimationEditorPanel {
             ui.horizontal(|ui| {
                 ui.label("Position:");
                 let mut pos = kf.position.to_array();
-                if ui.add(egui::DragValue::new(&mut pos[0]).speed(0.1)).changed()
-                    || ui.add(egui::DragValue::new(&mut pos[1]).speed(0.1)).changed()
-                    || ui.add(egui::DragValue::new(&mut pos[2]).speed(0.1)).changed()
+                if ui
+                    .add(egui::DragValue::new(&mut pos[0]).speed(0.1))
+                    .changed()
+                    || ui
+                        .add(egui::DragValue::new(&mut pos[1]).speed(0.1))
+                        .changed()
+                    || ui
+                        .add(egui::DragValue::new(&mut pos[2]).speed(0.1))
+                        .changed()
                 {
                     let mut new_kf = kf;
                     new_kf.position = Vec3::new(pos[0], pos[1], pos[2]);
@@ -650,9 +666,15 @@ impl AnimationEditorPanel {
             ui.horizontal(|ui| {
                 ui.label("Scale:");
                 let mut scale = kf.scale.to_array();
-                if ui.add(egui::DragValue::new(&mut scale[0]).speed(0.1)).changed()
-                    || ui.add(egui::DragValue::new(&mut scale[1]).speed(0.1)).changed()
-                    || ui.add(egui::DragValue::new(&mut scale[2]).speed(0.1)).changed()
+                if ui
+                    .add(egui::DragValue::new(&mut scale[0]).speed(0.1))
+                    .changed()
+                    || ui
+                        .add(egui::DragValue::new(&mut scale[1]).speed(0.1))
+                        .changed()
+                    || ui
+                        .add(egui::DragValue::new(&mut scale[2]).speed(0.1))
+                        .changed()
                 {
                     let mut new_kf = kf;
                     new_kf.scale = Vec3::new(scale[0], scale[1], scale[2]);
@@ -715,7 +737,10 @@ mod tests {
         assert!(panel.clips.is_empty());
         assert_eq!(panel.next_clip_id, 1);
         assert!(panel.selected_clip_id.is_none());
-        assert_eq!(panel.animations_dir, std::path::PathBuf::from("assets/animations"));
+        assert_eq!(
+            panel.animations_dir,
+            std::path::PathBuf::from("assets/animations")
+        );
     }
 
     #[test]
@@ -723,7 +748,7 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         assert_eq!(panel.clips.len(), 1);
         assert_eq!(panel.clips[0].clip.name, "TestClip");
         assert_eq!(panel.selected_clip_id, Some(1));
@@ -735,10 +760,10 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         assert_eq!(panel.clips.len(), 1); // Should not create duplicate
         assert!(panel.error_message.is_some());
     }
@@ -748,9 +773,9 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.delete_selected_clip();
-        
+
         assert!(panel.clips.is_empty());
         assert!(panel.selected_clip_id.is_none());
     }
@@ -760,9 +785,9 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.duplicate_selected_clip();
-        
+
         assert_eq!(panel.clips.len(), 2);
         assert_eq!(panel.clips[1].clip.name, "TestClip_Copy");
         assert_eq!(panel.selected_clip_id, Some(2));
@@ -773,14 +798,14 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         let transform = Transform {
             position: Vec3::new(1.0, 2.0, 3.0),
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         };
         panel.add_keyframe(0.5, transform);
-        
+
         let clip = panel.get_selected_clip().unwrap();
         assert_eq!(clip.clip.keyframes.len(), 1);
         assert_eq!(clip.clip.keyframes[0].time, 0.5);
@@ -792,11 +817,11 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.add_keyframe(0.5, Transform::IDENTITY);
         panel.selected_keyframe_index = Some(0);
         panel.remove_selected_keyframe();
-        
+
         let clip = panel.get_selected_clip().unwrap();
         assert!(clip.clip.keyframes.is_empty());
         assert!(panel.selected_keyframe_index.is_none());
@@ -807,9 +832,9 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.add_keyframe(0.5, Transform::IDENTITY);
-        
+
         let new_kf = TransformKeyframe {
             time: 1.0,
             position: Vec3::new(5.0, 0.0, 0.0),
@@ -818,11 +843,14 @@ mod tests {
             interpolation: KeyframeInterpolation::CubicSpline,
         };
         panel.update_keyframe(0, new_kf);
-        
+
         let clip = panel.get_selected_clip().unwrap();
         assert_eq!(clip.clip.keyframes[0].time, 1.0);
         assert_eq!(clip.clip.keyframes[0].position, Vec3::new(5.0, 0.0, 0.0));
-        assert_eq!(clip.clip.keyframes[0].interpolation, KeyframeInterpolation::CubicSpline);
+        assert_eq!(
+            clip.clip.keyframes[0].interpolation,
+            KeyframeInterpolation::CubicSpline
+        );
     }
 
     #[test]
@@ -830,19 +858,22 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         panel.add_keyframe(0.0, Transform::IDENTITY);
-        panel.add_keyframe(1.0, Transform {
-            position: Vec3::new(10.0, 0.0, 0.0),
-            rotation: Quat::IDENTITY,
-            scale: Vec3::ONE,
-        });
-        
+        panel.add_keyframe(
+            1.0,
+            Transform {
+                position: Vec3::new(10.0, 0.0, 0.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            },
+        );
+
         let clip = panel.get_selected_clip().unwrap();
         let json = clip.clip.to_json_string().unwrap();
         assert!(json.contains("TestClip"));
         assert!(json.contains("keyframes"));
-        
+
         let loaded = AnimationClip::from_json_string(&json).unwrap();
         assert_eq!(loaded.name, "TestClip");
         assert_eq!(loaded.keyframes.len(), 2);
@@ -855,11 +886,11 @@ mod tests {
         panel.create_clip();
         panel.add_keyframe(0.0, Transform::IDENTITY);
         panel.add_keyframe(2.0, Transform::IDENTITY);
-        
+
         panel.preview_playing = true;
         panel.preview_speed = 1.0;
         panel.update_preview(0.5);
-        
+
         assert!((panel.preview_time - 0.5).abs() < 0.001);
     }
 
@@ -870,16 +901,16 @@ mod tests {
         panel.create_clip();
         panel.add_keyframe(0.0, Transform::IDENTITY);
         panel.add_keyframe(1.0, Transform::IDENTITY);
-        
+
         // Make clip looped
         if let Some(clip) = panel.get_selected_clip_mut() {
             clip.clip.looped = true;
         }
-        
+
         panel.preview_playing = true;
         panel.preview_time = 0.8;
         panel.update_preview(0.5);
-        
+
         // Should have looped back
         assert!(panel.preview_time < 0.5);
     }
@@ -889,7 +920,7 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "TestClip".to_string();
         panel.create_clip();
-        
+
         assert!(panel.get_selected_clip_mut().is_some());
         assert!(panel.get_selected_clip().is_some());
     }
@@ -899,9 +930,9 @@ mod tests {
         let mut panel = AnimationEditorPanel::new();
         panel.new_clip_name = "OldName".to_string();
         panel.create_clip();
-        
+
         panel.rename_selected_clip("NewName");
-        
+
         let clip = panel.get_selected_clip().unwrap();
         assert_eq!(clip.clip.name, "NewName");
     }
@@ -915,9 +946,9 @@ mod tests {
             "keyframes": [],
             "looped": true
         }"#;
-        
+
         panel.load_clip_from_json_string(json);
-        
+
         assert_eq!(panel.clips.len(), 1);
         assert_eq!(panel.clips[0].clip.name, "ImportedClip");
     }

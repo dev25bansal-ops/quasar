@@ -46,7 +46,7 @@ impl Interpolatable for Vec3 {
     fn lerp(a: &Self, b: &Self, t: f32) -> Self {
         a.lerp(*b, t)
     }
-    
+
     fn cubic_spline(a: &Self, b: &Self, t: f32) -> Self {
         // Hermite interpolation for smoother curves
         let t2 = t * t;
@@ -127,7 +127,9 @@ impl TransformKeyframe {
 
     /// Sample this keyframe with interpolation awareness.
     pub fn sample_with_interpolation(&self, other: &Self, t: f32) -> Transform {
-        let position = self.interpolation.interpolate(&self.position, &other.position, t);
+        let position = self
+            .interpolation
+            .interpolate(&self.position, &other.position, t);
         let rotation = match self.interpolation {
             KeyframeInterpolation::Step => self.rotation,
             KeyframeInterpolation::Linear | KeyframeInterpolation::CubicSpline => {
@@ -188,36 +190,33 @@ impl AnimationClip {
     pub fn save_to_json(&self, path: &std::path::Path) -> Result<(), String> {
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize animation: {}", e))?;
-        
-        std::fs::write(path, json)
-            .map_err(|e| format!("Failed to write file: {}", e))?;
-        
+
+        std::fs::write(path, json).map_err(|e| format!("Failed to write file: {}", e))?;
+
         log::info!("Saved animation '{}' to {:?}", self.name, path);
         Ok(())
     }
 
     /// Load animation clip from JSON file.
     pub fn load_from_json(path: &std::path::Path) -> Result<Self, String> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read file: {}", e))?;
-        
-        let clip: Self = serde_json::from_str(&json)
-            .map_err(|e| format!("Failed to parse animation: {}", e))?;
-        
+        let json =
+            std::fs::read_to_string(path).map_err(|e| format!("Failed to read file: {}", e))?;
+
+        let clip: Self =
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse animation: {}", e))?;
+
         log::info!("Loaded animation '{}' from {:?}", clip.name, path);
         Ok(clip)
     }
 
     /// Export to JSON string.
     pub fn to_json_string(&self) -> Result<String, String> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize: {}", e))
+        serde_json::to_string_pretty(self).map_err(|e| format!("Failed to serialize: {}", e))
     }
 
     /// Import from JSON string.
     pub fn from_json_string(json: &str) -> Result<Self, String> {
-        serde_json::from_str(json)
-            .map_err(|e| format!("Failed to deserialize: {}", e))
+        serde_json::from_str(json).map_err(|e| format!("Failed to deserialize: {}", e))
     }
 
     pub fn sample(&self, time: f32) -> Option<Transform> {
@@ -478,10 +477,8 @@ impl System for AnimationSystem {
         // Use CachedArchetypeQueryState for zero-allocation iteration
         let mut query: CachedArchetypeQueryState<&AnimationPlayer, ()> =
             CachedArchetypeQueryState::new();
-        let players: Vec<(Entity, AnimationPlayer)> = query
-            .iter(world)
-            .map(|(e, p)| (e, p.clone()))
-            .collect();
+        let players: Vec<(Entity, AnimationPlayer)> =
+            query.iter(world).map(|(e, p)| (e, p.clone())).collect();
 
         for (entity, mut player) in players {
             if player.state != AnimationState::Playing {
@@ -1117,8 +1114,7 @@ pub mod compression {
 
     pub const COMPRESSION_VERSION: u32 = 1;
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-    #[derive(Default)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
     pub enum CompressionMethod {
         None = 0,
         Quantized8 = 1,
@@ -1127,8 +1123,6 @@ pub mod compression {
         KeyReduction = 3,
         CurveFitting = 4,
     }
-
-    
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CompressedAnimationClip {

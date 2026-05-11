@@ -200,8 +200,7 @@ impl fmt::Display for SourceLocation {
 }
 
 /// Rich error context.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ErrorContext {
     /// The subsystem or component this error relates to.
     pub context: String,
@@ -218,7 +217,6 @@ pub struct ErrorContext {
     /// Nested error chain.
     pub source: Option<Arc<QuasarError>>,
 }
-
 
 /// Top-level engine error with rich context.
 #[derive(Debug, Clone)]

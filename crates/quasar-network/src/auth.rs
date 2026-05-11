@@ -6,10 +6,10 @@
 //! - Rate limiting per client
 //! - Ban list management
 
-use std::collections::{HashMap, HashSet};
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use rand::Rng;
+use sha2::Sha256;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -554,8 +554,16 @@ mod tests {
         );
 
         if let AuthResult::Success { token } = result {
-            assert_eq!(token.signature.len(), 32, "HMAC-SHA256 should produce 32-byte signature");
-            assert_ne!(token.signature, vec![0u8; 32], "Signature should not be all zeros");
+            assert_eq!(
+                token.signature.len(),
+                32,
+                "HMAC-SHA256 should produce 32-byte signature"
+            );
+            assert_ne!(
+                token.signature,
+                vec![0u8; 32],
+                "Signature should not be all zeros"
+            );
         } else {
             panic!("Expected successful authentication");
         }
@@ -565,7 +573,10 @@ mod tests {
     fn secret_key_is_random() {
         let server1 = AuthServer::new();
         let server2 = AuthServer::new();
-        assert_ne!(server1.secret_key, server2.secret_key, "Secret keys should be unique per server");
+        assert_ne!(
+            server1.secret_key, server2.secret_key,
+            "Secret keys should be unique per server"
+        );
     }
 
     #[test]
@@ -589,7 +600,10 @@ mod tests {
 
         if let AuthResult::Success { mut token } = result {
             token.signature[0] ^= 0xFF;
-            assert!(server.validate_token(&token).is_err(), "Tampered signature should be rejected");
+            assert!(
+                server.validate_token(&token).is_err(),
+                "Tampered signature should be rejected"
+            );
         }
     }
 }

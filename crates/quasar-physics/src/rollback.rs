@@ -86,16 +86,16 @@ impl PhysicsSnapshot {
             })
             .collect();
 
-    let joints: Vec<JointState> = world
-        .impulse_joints
-        .iter()
-        .map(|(handle, joint)| JointState {
-            handle,
-            body1: joint.body1,
-            body2: joint.body2,
-            joint_type: JointType::Fixed, // Simplified - would need to extract from joint data
-        })
-        .collect();
+        let joints: Vec<JointState> = world
+            .impulse_joints
+            .iter()
+            .map(|(handle, joint)| JointState {
+                handle,
+                body1: joint.body1,
+                body2: joint.body2,
+                joint_type: JointType::Fixed, // Simplified - would need to extract from joint data
+            })
+            .collect();
 
         Self {
             tick,
@@ -124,15 +124,15 @@ impl PhysicsSnapshot {
             }
         }
 
-    // Restore joints - simplified for current rapier3d API
-    // Note: Joint rollback is complex and requires API-specific handling
-    // This is a placeholder that skips joint restoration for now
-    for _js in &self.joints {
-        // Joint restoration requires rebuilding the joint from serialized type
-        // This is a simplified implementation - full implementation would need
-        // to reconstruct each joint type separately
+        // Restore joints - simplified for current rapier3d API
+        // Note: Joint rollback is complex and requires API-specific handling
+        // This is a placeholder that skips joint restoration for now
+        for _js in &self.joints {
+            // Joint restoration requires rebuilding the joint from serialized type
+            // This is a simplified implementation - full implementation would need
+            // to reconstruct each joint type separately
+        }
     }
-}
 }
 
 /// Rollback manager for handling prediction errors.
@@ -228,11 +228,13 @@ mod tests {
             handle: ImpulseJointHandle::from_raw_parts(0, 0),
             body1: RigidBodyHandle::from_raw_parts(1, 0),
             body2: RigidBodyHandle::from_raw_parts(2, 0),
+            joint_type: JointType::Fixed,
         };
         let cloned = state.clone();
         assert_eq!(cloned.handle, state.handle);
         assert_eq!(cloned.body1, state.body1);
         assert_eq!(cloned.body2, state.body2);
+        assert!(matches!(cloned.joint_type, JointType::Fixed));
     }
 
     #[test]

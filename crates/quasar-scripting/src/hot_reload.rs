@@ -30,13 +30,17 @@
 
 #![allow(clippy::type_complexity)]
 
+use crossbeam_channel::{
+    unbounded as unbounded_channel, Receiver as UnboundedReceiver, Sender as UnboundedSender,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crossbeam_channel::{Receiver as UnboundedReceiver, Sender as UnboundedSender, unbounded as unbounded_channel};
 use std::time::{Duration, Instant};
 
 use mlua::prelude::*;
-use notify::{Config as WatcherConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    Config as WatcherConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -148,15 +152,9 @@ impl Default for HotReloadConfig {
 #[derive(Debug, Clone)]
 pub enum HotReloadEvent {
     /// A script file was detected as changed (before reload attempt)
-    ScriptDetected {
-        path: PathBuf,
-        timestamp: Instant,
-    },
+    ScriptDetected { path: PathBuf, timestamp: Instant },
     /// A script is about to be reloaded
-    ScriptReloadStarting {
-        path: PathBuf,
-        snapshot_taken: bool,
-    },
+    ScriptReloadStarting { path: PathBuf, snapshot_taken: bool },
     /// A script was successfully reloaded
     ScriptReloaded {
         path: PathBuf,
@@ -170,9 +168,7 @@ pub enum HotReloadEvent {
         recovery_action: RecoveryAction,
     },
     /// A script was removed from disk
-    ScriptRemoved {
-        path: PathBuf,
-    },
+    ScriptRemoved { path: PathBuf },
     /// Batch reload completed (multiple scripts)
     BatchReloadCompleted {
         reloaded_count: usize,
@@ -180,9 +176,7 @@ pub enum HotReloadEvent {
         total_duration: Duration,
     },
     /// File watcher started
-    WatcherStarted {
-        watch_paths: Vec<PathBuf>,
-    },
+    WatcherStarted { watch_paths: Vec<PathBuf> },
     /// File watcher encountered an error
     WatcherError {
         error: String,
@@ -357,14 +351,41 @@ impl StateManager {
 
         let mut snapshot = Vec::new();
         let reserved_keys = [
-            "quasar", "log", "_G", "_VERSION", "print", "assert", "error",
-            "type", "pairs", "ipairs", "next", "select", "unpack", "rawget",
-            "rawset", "rawequal", "rawlen", "setmetatable", "getmetatable",
-            "tonumber", "tostring", "pcall", "xpcall", "require", "dofile",
-            "loadfile", "load", "loadstring",
+            "quasar",
+            "log",
+            "_G",
+            "_VERSION",
+            "print",
+            "assert",
+            "error",
+            "type",
+            "pairs",
+            "ipairs",
+            "next",
+            "select",
+            "unpack",
+            "rawget",
+            "rawset",
+            "rawequal",
+            "rawlen",
+            "setmetatable",
+            "getmetatable",
+            "tonumber",
+            "tostring",
+            "pcall",
+            "xpcall",
+            "require",
+            "dofile",
+            "loadfile",
+            "load",
+            "loadstring",
         ];
 
-        if let Ok(globals) = lua.globals().pairs::<String, LuaValue>().collect::<Result<Vec<_>, _>>() {
+        if let Ok(globals) = lua
+            .globals()
+            .pairs::<String, LuaValue>()
+            .collect::<Result<Vec<_>, _>>()
+        {
             for (key, value) in globals {
                 // Skip reserved keys
                 if reserved_keys.contains(&key.as_str()) {
@@ -384,7 +405,11 @@ impl StateManager {
                     _ => {
                         // For tables/functions, we can't easily serialize them
                         // Log a warning but continue
-                        log::debug!("Cannot serialize global '{}' of type {:?}, skipping", key, value.type_name());
+                        log::debug!(
+                            "Cannot serialize global '{}' of type {:?}, skipping",
+                            key,
+                            value.type_name()
+                        );
                     }
                 }
             }
@@ -418,7 +443,11 @@ impl StateManager {
         // This is a simplified approach - in production, you'd want more robust serialization
         let mut state = String::new();
 
-        if let Ok(globals) = lua.globals().pairs::<String, LuaValue>().collect::<Result<Vec<_>, _>>() {
+        if let Ok(globals) = lua
+            .globals()
+            .pairs::<String, LuaValue>()
+            .collect::<Result<Vec<_>, _>>()
+        {
             for (key, value) in globals {
                 if key.starts_with('_') || key == "quasar" || key == "log" {
                     continue;
@@ -430,7 +459,11 @@ impl StateManager {
                     LuaValue::Boolean(b) => state.push_str(&format!("{} = {}\n", key, b)),
                     LuaValue::String(s) => {
                         if let Ok(s) = s.to_str() {
-                            state.push_str(&format!("{} = \"{}\"\n", key, s.replace('\\', "\\\\").replace('"', "\\\"")));
+                            state.push_str(&format!(
+                                "{} = \"{}\"\n",
+                                key,
+                                s.replace('\\', "\\\\").replace('"', "\\\"")
+                            ));
                         }
                     }
                     _ => {}
@@ -475,7 +508,9 @@ impl ErrorHandler {
     /// Validate Lua syntax without executing.
     fn validate_syntax(&self, lua: &Lua, source: &str) -> Result<(), LuaError> {
         // Try to load the chunk (syntax check) without executing
-        lua.load(source).set_name("<syntax_check>").into_function()?;
+        lua.load(source)
+            .set_name("<syntax_check>")
+            .into_function()?;
         Ok(())
     }
 
@@ -544,11 +579,7 @@ impl ErrorHandler {
                 handle.is_loaded = false;
             }
             RecoveryAction::LogAndContinue => {
-                log::warn!(
-                    "Hot-reload warning for {:?}: {}",
-                    handle.path,
-                    error_msg
-                );
+                log::warn!("Hot-reload warning for {:?}: {}", handle.path, error_msg);
             }
         }
 
@@ -677,7 +708,10 @@ impl LuaHotReloadSystem {
         // Verify scripts directory exists
         if !scripts_dir.exists() {
             std::fs::create_dir_all(&scripts_dir).map_err(|e| {
-                format!("Failed to create scripts directory {:?}: {}", scripts_dir, e)
+                format!(
+                    "Failed to create scripts directory {:?}: {}",
+                    scripts_dir, e
+                )
             })?;
         }
 
@@ -694,7 +728,8 @@ impl LuaHotReloadSystem {
                 }
             },
             WatcherConfig::default(),
-        ).map_err(|e| format!("Failed to create file watcher: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to create file watcher: {}", e))?;
 
         // Watch the scripts directory
         let mode = if config.recursive {
@@ -740,9 +775,11 @@ impl LuaHotReloadSystem {
             watched_paths,
         };
 
-        system.event_dispatcher.publish(HotReloadEvent::WatcherStarted {
-            watch_paths: system.watched_paths.clone(),
-        });
+        system
+            .event_dispatcher
+            .publish(HotReloadEvent::WatcherStarted {
+                watch_paths: system.watched_paths.clone(),
+            });
 
         Ok(system)
     }
@@ -764,10 +801,11 @@ impl LuaHotReloadSystem {
             if matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                 for path in event.paths {
                     if self.is_valid_script_extension(&path) {
-                        self.event_dispatcher.publish(HotReloadEvent::ScriptDetected {
-                            path: path.to_path_buf(),
-                            timestamp: Instant::now(),
-                        });
+                        self.event_dispatcher
+                            .publish(HotReloadEvent::ScriptDetected {
+                                path: path.to_path_buf(),
+                                timestamp: Instant::now(),
+                            });
                         self.debounce.record_change(path.to_path_buf());
                     }
                 }
@@ -775,9 +813,10 @@ impl LuaHotReloadSystem {
                 for path in event.paths {
                     if self.is_valid_script_extension(&path) {
                         self.script_cache.remove(&path);
-                        self.event_dispatcher.publish(HotReloadEvent::ScriptRemoved {
-                            path: path.to_path_buf(),
-                        });
+                        self.event_dispatcher
+                            .publish(HotReloadEvent::ScriptRemoved {
+                                path: path.to_path_buf(),
+                            });
                     }
                 }
             }
@@ -858,13 +897,15 @@ impl LuaHotReloadSystem {
         };
 
         // Notify that reload is starting
-        self.event_dispatcher.publish(HotReloadEvent::ScriptReloadStarting {
-            path: path.to_path_buf(),
-            snapshot_taken: global_snapshot.is_some(),
-        });
+        self.event_dispatcher
+            .publish(HotReloadEvent::ScriptReloadStarting {
+                path: path.to_path_buf(),
+                snapshot_taken: global_snapshot.is_some(),
+            });
 
         // Attempt to load and execute the new script
-        let reload_result = lua.load(&content)
+        let reload_result = lua
+            .load(&content)
             .set_name(path.to_string_lossy().as_ref())
             .exec();
 
@@ -963,10 +1004,11 @@ impl LuaHotReloadSystem {
     /// Record a file change event (call from external watchers).
     pub fn record_file_change(&mut self, path: &Path) {
         if self.is_valid_script_extension(path) {
-            self.event_dispatcher.publish(HotReloadEvent::ScriptDetected {
-                path: path.to_path_buf(),
-                timestamp: Instant::now(),
-            });
+            self.event_dispatcher
+                .publish(HotReloadEvent::ScriptDetected {
+                    path: path.to_path_buf(),
+                    timestamp: Instant::now(),
+                });
             self.debounce.record_change(path.to_path_buf());
         }
     }
@@ -1028,9 +1070,10 @@ impl LuaHotReloadSystem {
         if !path.exists() {
             // Script was removed
             self.script_cache.remove(path);
-            self.event_dispatcher.publish(HotReloadEvent::ScriptRemoved {
-                path: path.to_path_buf(),
-            });
+            self.event_dispatcher
+                .publish(HotReloadEvent::ScriptRemoved {
+                    path: path.to_path_buf(),
+                });
             return Ok(false);
         }
 
@@ -1145,14 +1188,14 @@ mod tests {
 
     fn create_temp_scripts_dir() -> TempDir {
         let dir = TempDir::new().expect("Failed to create temp dir");
-        
+
         // Create a simple test script
         let script_path = dir.path().join("test.lua");
         let mut file = std::fs::File::create(&script_path).expect("Failed to create test script");
         writeln!(file, "-- Test script").expect("Failed to write");
         writeln!(file, "test_var = 42").expect("Failed to write");
         writeln!(file, "function test_func() return 123 end").expect("Failed to write");
-        
+
         dir
     }
 
@@ -1188,19 +1231,19 @@ mod tests {
     #[test]
     fn test_debounce_engine() {
         let mut engine = DebounceEngine::new(Duration::from_millis(100));
-        
+
         // Record a change
         let path = PathBuf::from("test.lua");
         engine.record_change(path.clone());
-        
+
         // Should not be ready immediately
         let ready = engine.take_ready();
         assert!(ready.is_empty());
         assert!(engine.has_pending());
-        
+
         // Wait for debounce interval
         std::thread::sleep(Duration::from_millis(150));
-        
+
         // Now should be ready
         let ready = engine.take_ready();
         assert_eq!(ready.len(), 1);
@@ -1212,23 +1255,23 @@ mod tests {
     fn test_debounce_resets_timer() {
         let mut engine = DebounceEngine::new(Duration::from_millis(100));
         let path = PathBuf::from("test.lua");
-        
+
         // Record first change
         engine.record_change(path.clone());
-        
+
         // Wait a bit but not enough
         std::thread::sleep(Duration::from_millis(50));
-        
+
         // Record another change (resets timer)
         engine.record_change(path.clone());
-        
+
         // Should still not be ready (timer reset)
         let ready = engine.take_ready();
         assert!(ready.is_empty());
-        
+
         // Wait full interval
         std::thread::sleep(Duration::from_millis(100));
-        
+
         // Now should be ready
         let ready = engine.take_ready();
         assert_eq!(ready.len(), 1);
@@ -1239,7 +1282,7 @@ mod tests {
         let path = PathBuf::from("test.lua");
         let content = "print('hello')".to_string();
         let handle = ScriptHandle::new(path.clone(), content.clone());
-        
+
         assert_eq!(handle.path, path);
         assert_eq!(handle.last_good_content, content);
         assert!(!handle.is_loaded);
@@ -1253,9 +1296,9 @@ mod tests {
     fn test_script_handle_update() {
         let path = PathBuf::from("test.lua");
         let mut handle = ScriptHandle::new(path.clone(), "old content".to_string());
-        
+
         handle.update_content("new content".to_string());
-        
+
         assert_eq!(handle.last_good_content, "new content");
         assert!(handle.is_loaded);
         assert_eq!(handle.reload_count, 1);
@@ -1268,20 +1311,19 @@ mod tests {
     fn test_script_handle_failure_recording() {
         let path = PathBuf::from("test.lua");
         let mut handle = ScriptHandle::new(path.clone(), "content".to_string());
-        
+
         handle.record_failure("syntax error".to_string());
-        
+
         assert_eq!(handle.failed_count, 1);
         assert_eq!(handle.last_error, Some("syntax error".to_string()));
-        assert_eq!(handle.success_rate(), 0.5); // 0 successes, 1 failure = 0/(0+1) = 0... wait no
-        // Actually reload_count is 0, failed_count is 1, so 0/(0+1) = 0.0
+        assert_eq!(handle.success_rate(), 0.0);
     }
 
     #[test]
     fn test_is_valid_script_extension() {
         let config = HotReloadConfig::development();
         let system = LuaHotReloadSystem::new("scripts/", config.clone()).unwrap();
-        
+
         assert!(system.is_valid_script_extension(Path::new("test.lua")));
         assert!(system.is_valid_script_extension(Path::new("test.luau")));
         assert!(!system.is_valid_script_extension(Path::new("test.txt")));
@@ -1292,10 +1334,10 @@ mod tests {
     fn test_hot_reload_system_creation() {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
-        
+
         let system = LuaHotReloadSystem::new(temp_dir.path(), config);
         assert!(system.is_ok());
-        
+
         let system = system.unwrap();
         assert!(system.config.enabled);
         assert!(system.watcher.is_some());
@@ -1305,7 +1347,7 @@ mod tests {
     fn test_hot_reload_system_disabled() {
         let config = HotReloadConfig::production();
         let system = LuaHotReloadSystem::new("scripts/", config);
-        
+
         assert!(system.is_ok());
         let system = system.unwrap();
         assert!(!system.config.enabled);
@@ -1317,10 +1359,10 @@ mod tests {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
         let mut system = LuaHotReloadSystem::new(temp_dir.path(), config).unwrap();
-        
+
         let script_path = temp_dir.path().join("test.lua");
         system.register_script(&script_path, "test content");
-        
+
         assert!(system.script_cache.contains_key(&script_path));
         assert_eq!(system.tracked_scripts().len(), 1);
     }
@@ -1330,10 +1372,10 @@ mod tests {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
         let mut system = LuaHotReloadSystem::new(temp_dir.path(), config).unwrap();
-        
+
         let script_path = temp_dir.path().join("test.lua");
         system.register_script(&script_path, "content");
-        
+
         let stats = system.get_stats();
         assert_eq!(stats.total_scripts, 1);
         assert!(stats.is_enabled);
@@ -1346,10 +1388,10 @@ mod tests {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
         let mut system = LuaHotReloadSystem::new(temp_dir.path(), config).unwrap();
-        
+
         let script_path = PathBuf::from("test.lua");
         system.record_file_change(&script_path);
-        
+
         // The file should be in the debounce queue
         assert!(system.debounce.has_pending());
     }
@@ -1359,10 +1401,10 @@ mod tests {
         let lua = Lua::new();
         let config = HotReloadConfig::development();
         let error_handler = ErrorHandler::new(&config);
-        
+
         // Valid syntax
         assert!(error_handler.validate_syntax(&lua, "x = 1 + 1").is_ok());
-        
+
         // Invalid syntax
         assert!(error_handler.validate_syntax(&lua, "if x then").is_err());
     }
@@ -1371,17 +1413,17 @@ mod tests {
     fn test_error_classification() {
         let config = HotReloadConfig::development();
         let error_handler = ErrorHandler::new(&config);
-        
+
         // Syntax error
         let err = LuaError::runtime("syntax error: unexpected symbol");
         let (_, action) = error_handler.classify_error(&err);
         assert_eq!(action, RecoveryAction::KeepOldVersion);
-        
+
         // Runtime error
         let err = LuaError::runtime("attempt to call a nil value");
         let (_, action) = error_handler.classify_error(&err);
         assert_eq!(action, RecoveryAction::KeepOldVersion);
-        
+
         // File error
         let err = LuaError::runtime("No such file or directory");
         let (_, action) = error_handler.classify_error(&err);
@@ -1393,31 +1435,31 @@ mod tests {
         let lua = Lua::new();
         let config = HotReloadConfig::development();
         let state_manager = StateManager::new(&config);
-        
+
         // Set some globals
         lua.load("test_number = 42").exec().unwrap();
         lua.load("test_string = \"hello\"").exec().unwrap();
         lua.load("test_bool = true").exec().unwrap();
-        
+
         // Take snapshot
         let snapshot = state_manager.snapshot_globals(&lua);
-        
+
         // Verify snapshot contains our variables
         assert!(snapshot.iter().any(|(k, _)| k == "test_number"));
         assert!(snapshot.iter().any(|(k, _)| k == "test_string"));
         assert!(snapshot.iter().any(|(k, _)| k == "test_bool"));
-        
+
         // Change the globals
         lua.load("test_number = 100").exec().unwrap();
         lua.load("test_string = \"world\"").exec().unwrap();
-        
+
         // Restore from snapshot
         state_manager.restore_globals(&lua, &snapshot);
-        
+
         // Verify restoration
         let num: i32 = lua.globals().get("test_number").unwrap();
         assert_eq!(num, 42);
-        
+
         let s: String = lua.globals().get("test_string").unwrap();
         assert_eq!(s, "hello");
     }
@@ -1425,15 +1467,15 @@ mod tests {
     #[test]
     fn test_event_dispatcher() {
         let dispatcher = EventDispatcher::new();
-        
+
         dispatcher.publish(HotReloadEvent::ScriptDetected {
             path: PathBuf::from("test.lua"),
             timestamp: Instant::now(),
         });
-        
+
         let events = dispatcher.poll_events();
         assert_eq!(events.len(), 1);
-        
+
         match &events[0] {
             HotReloadEvent::ScriptDetected { path, .. } => {
                 assert_eq!(path, Path::new("test.lua"));
@@ -1447,10 +1489,10 @@ mod tests {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
         let mut system = LuaHotReloadSystem::new(temp_dir.path(), config).unwrap();
-        
+
         let lua = Lua::new();
         let nonexistent = temp_dir.path().join("nonexistent.lua");
-        
+
         let result = system.force_reload(&lua, &nonexistent);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), false); // Script was "removed"
@@ -1461,34 +1503,34 @@ mod tests {
         let temp_dir = create_temp_scripts_dir();
         let config = HotReloadConfig::development();
         let mut system = LuaHotReloadSystem::new(temp_dir.path(), config).unwrap();
-        
+
         system.register_script(&PathBuf::from("test1.lua"), "content1");
         system.register_script(&PathBuf::from("test2.lua"), "content2");
-        
+
         assert_eq!(system.tracked_scripts().len(), 2);
-        
+
         system.clear_cache();
-        
+
         assert_eq!(system.tracked_scripts().len(), 0);
     }
 
     #[test]
     fn test_debounce_multiple_files() {
         let mut engine = DebounceEngine::new(Duration::from_millis(50));
-        
+
         let path1 = PathBuf::from("script1.lua");
         let path2 = PathBuf::from("script2.lua");
         let path3 = PathBuf::from("script3.lua");
-        
+
         engine.record_change(path1.clone());
         std::thread::sleep(Duration::from_millis(10));
         engine.record_change(path2.clone());
         std::thread::sleep(Duration::from_millis(10));
         engine.record_change(path3.clone());
-        
+
         // Wait for all to be ready
         std::thread::sleep(Duration::from_millis(50));
-        
+
         let ready = engine.take_ready();
         assert_eq!(ready.len(), 3);
         assert!(ready.contains(&path1));
