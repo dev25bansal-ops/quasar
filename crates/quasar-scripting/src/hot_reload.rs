@@ -19,13 +19,18 @@
 //! ## Usage
 //!
 //! ```no_run
+//! use mlua::Lua;
 //! use quasar_scripting::hot_reload::{LuaHotReloadSystem, HotReloadConfig};
 //!
+//! # fn main() -> Result<(), String> {
+//! let lua = Lua::new();
 //! let config = HotReloadConfig::development();
 //! let mut system = LuaHotReloadSystem::new("scripts/", config).unwrap();
 //!
 //! // Call this every frame
-//! system.process_events(&mut lua)?;
+//! let _events = system.process_events(&lua)?;
+//! # Ok(())
+//! # }
 //! ```
 
 #![allow(clippy::type_complexity)]
@@ -649,10 +654,17 @@ impl EventDispatcher {
 /// # Example
 ///
 /// ```no_run
+/// use mlua::Lua;
+/// use quasar_scripting::hot_reload::{HotReloadConfig, LuaHotReloadSystem};
+///
+/// # fn main() -> Result<(), String> {
+/// let lua = Lua::new();
 /// let mut hot_reload = LuaHotReloadSystem::new("scripts/", HotReloadConfig::development())?;
 ///
 /// // In your game loop:
-/// hot_reload.process_events(&mut lua)?;
+/// let _events = hot_reload.process_events(&lua)?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct LuaHotReloadSystem {
     /// File watcher (None if disabled or in production mode)

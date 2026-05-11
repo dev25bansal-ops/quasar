@@ -15,6 +15,7 @@ use quasar_render::bindless::{
     MAX_MATERIALS,
 };
 use quasar_render::DrawCallUniform;
+use std::sync::OnceLock;
 
 // ── Texture Atlas Tests ─────────────────────────────────────────
 
@@ -78,6 +79,7 @@ fn texture_atlas_removal_and_reuse() {
     // Remove first texture
     atlas.remove(1);
     assert_eq!(atlas.count(), 1);
+    atlas.flush_removals();
 
     // Register new texture - should reuse freed slot
     let idx3 = atlas.register(3, view3).unwrap();
@@ -554,35 +556,7 @@ fn fallback_bind_group_builder_creation() {
 // ── Helper Functions ─────────────────────────────────────────────
 
 fn create_test_texture_view() -> wgpu::TextureView {
-    // Create a minimal test device for texture creation
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
-        ..Default::default()
-    });
-
-    // Try to get an adapter, fall back to a mock
-    let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::None,
-        compatible_surface: None,
-        force_fallback_adapter: true,
-    })) {
-        Some(a) => a,
-        None => {
-            // Return a placeholder - tests using this will be skipped
-            panic!("No GPU adapter available for test");
-        }
-    };
-
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Test Device"),
-            required_features: wgpu::Features::TEXTURE_BINDING_ARRAY,
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .expect("Failed to create test device");
+    let (device, _queue) = create_test_device();
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("Test Texture"),
@@ -603,28 +577,7 @@ fn create_test_texture_view() -> wgpu::TextureView {
 }
 
 fn create_test_sampler() -> wgpu::Sampler {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
-        ..Default::default()
-    });
-
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::None,
-        compatible_surface: None,
-        force_fallback_adapter: true,
-    }))
-    .expect("No adapter available");
-
-    let (device, _queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Test Device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .expect("Failed to create test device");
+    let (device, _queue) = create_test_device();
 
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some("Test Sampler"),
@@ -635,27 +588,42 @@ fn create_test_sampler() -> wgpu::Sampler {
 }
 
 fn create_test_device() -> (wgpu::Device, wgpu::Queue) {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
-        ..Default::default()
+    static TEST_DEVICE: OnceLock<Result<(wgpu::Device, wgpu::Queue), String>> = OnceLock::new();
+
+    let device = TEST_DEVICE.get_or_init(|| {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::all(),
+            ..Default::default()
+        });
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::None,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .or_else(|| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::None,
+                compatible_surface: None,
+                force_fallback_adapter: true,
+            }))
+        })
+        .ok_or_else(|| "No GPU adapter available for bindless integration tests".to_string())?;
+
+        pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("Bindless Test Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+            },
+            None,
+        ))
+        .map_err(|err| format!("Failed to create bindless test device: {err:?}"))
     });
 
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::None,
-        compatible_surface: None,
-        force_fallback_adapter: true,
-    }))
-    .expect("No adapter available");
-
-    pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Test Device"),
-            required_features: wgpu::Features::TEXTURE_BINDING_ARRAY
-                | wgpu::Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-        },
-        None,
-    ))
-    .expect("Failed to create test device")
+    match device {
+        Ok((device, queue)) => (device.clone(), queue.clone()),
+        Err(err) => panic!("{err}"),
+    }
 }

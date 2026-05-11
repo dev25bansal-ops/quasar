@@ -134,8 +134,8 @@ pub struct TextureAtlas {
     views: Vec<wgpu::TextureView>,
     /// Whether a texture has been removed (tombstone tracking).
     removed_indices: Vec<u32>,
-    /// Pending removals (deferred until next rebuild for GPU safety).
-    pending_removals: Vec<u64>,
+    /// Pending slot removals (deferred until next rebuild for GPU safety).
+    pending_removals: Vec<u32>,
 }
 
 impl TextureAtlas {
@@ -216,7 +216,7 @@ impl TextureAtlas {
     /// to ensure GPU operations referencing the texture have completed.
     pub fn remove(&mut self, texture_id: u64) -> Option<u32> {
         if let Some(idx) = self.id_to_index.remove(&texture_id) {
-            self.pending_removals.push(texture_id);
+            self.pending_removals.push(idx);
             Some(idx)
         } else {
             None
@@ -226,10 +226,8 @@ impl TextureAtlas {
     /// Flush pending removals and actually free the slots.
     /// Call this after ensuring no GPU commands reference the removed textures.
     pub fn flush_removals(&mut self) {
-        for texture_id in self.pending_removals.drain(..) {
-            if let Some(&idx) = self.id_to_index.get(&texture_id) {
-                self.removed_indices.push(idx);
-            }
+        for idx in self.pending_removals.drain(..) {
+            self.removed_indices.push(idx);
         }
     }
 
@@ -302,8 +300,8 @@ pub struct SamplerPool {
     next_index: u32,
     /// Removed pool indices available for reuse.
     removed_indices: Vec<u32>,
-    /// Pending removals (deferred for GPU safety).
-    pending_removals: Vec<u64>,
+    /// Pending slot removals (deferred for GPU safety).
+    pending_removals: Vec<u32>,
 }
 
 impl SamplerPool {
@@ -365,7 +363,7 @@ impl SamplerPool {
     /// Remove a sampler from the pool by handle (deferred).
     pub fn remove(&mut self, handle: u64) -> Option<u32> {
         if let Some(idx) = self.sampler_to_index.remove(&handle) {
-            self.pending_removals.push(handle);
+            self.pending_removals.push(idx);
             Some(idx)
         } else {
             None
@@ -374,10 +372,8 @@ impl SamplerPool {
 
     /// Flush pending sampler removals.
     pub fn flush_removals(&mut self) {
-        for handle in self.pending_removals.drain(..) {
-            if let Some(&idx) = self.sampler_to_index.get(&handle) {
-                self.removed_indices.push(idx);
-            }
+        for idx in self.pending_removals.drain(..) {
+            self.removed_indices.push(idx);
         }
     }
 
@@ -445,7 +441,7 @@ pub struct GpuMaterialData {
     /// Index into the bindless sampler pool.
     pub sampler_index: u32,
     /// Padding to align to 64 bytes (4x vec4).
-    pub _pad: [u32; 2],
+    pub _pad: [u32; 5],
 }
 
 impl Default for GpuMaterialData {
@@ -459,7 +455,7 @@ impl Default for GpuMaterialData {
             normal_tex_index: u32::MAX,
             mr_tex_index: u32::MAX,
             sampler_index: 0,
-            _pad: [0; 2],
+            _pad: [0; 5],
         }
     }
 }
@@ -476,6 +472,20 @@ impl GpuMaterialData {
     }
 }
 
+fn unused_material_slot() -> GpuMaterialData {
+    GpuMaterialData {
+        base_color: [0.0, 0.0, 0.0, 0.0],
+        roughness: 0.0,
+        metallic: 0.0,
+        emissive_strength: 0.0,
+        albedo_tex_index: u32::MAX,
+        normal_tex_index: u32::MAX,
+        mr_tex_index: u32::MAX,
+        sampler_index: 0,
+        _pad: [0; 5],
+    }
+}
+
 /// Storage buffer holding all material data for GPU-driven rendering.
 /// Supports incremental uploads (only dirty regions).
 pub struct MaterialDataBuffer {
@@ -487,6 +497,8 @@ pub struct MaterialDataBuffer {
     pub bind_group: wgpu::BindGroup,
     /// CPU-side material data.
     materials: Vec<GpuMaterialData>,
+    /// Whether each CPU-side slot currently contains a live material.
+    active: Vec<bool>,
     /// Track which materials have been modified since last upload.
     dirty: Vec<bool>,
     /// Number of dirty materials.
@@ -537,7 +549,8 @@ impl MaterialDataBuffer {
             buffer,
             bind_group_layout,
             bind_group,
-            materials: vec![GpuMaterialData::default(); actual_capacity],
+            materials: vec![unused_material_slot(); actual_capacity],
+            active: vec![false; actual_capacity],
             dirty: vec![false; actual_capacity],
             dirty_count: 0,
             free_slots: Vec::new(),
@@ -547,9 +560,7 @@ impl MaterialDataBuffer {
 
     /// Check if a slot is free (not in use).
     fn is_slot_free(&self, index: usize) -> bool {
-        index < self.materials.len()
-            && self.materials[index].albedo_tex_index == u32::MAX
-            && self.materials[index].base_color == [0.0, 0.0, 0.0, 0.0]
+        index < self.active.len() && !self.active[index]
     }
 
     /// Add a material. Returns its index, or `None` if the buffer is full.
@@ -563,16 +574,18 @@ impl MaterialDataBuffer {
                     self.dirty_count += 1;
                 }
                 self.materials[idx] = mat;
+                self.active[idx] = true;
                 return Some(slot);
             }
         }
 
         // Allocate new slot
-        if self.next_free_index < self.materials.capacity() as u32 {
+        if self.next_free_index < self.materials.len() as u32 {
             let idx = self.next_free_index as usize;
             self.next_free_index += 1;
             if idx < self.materials.len() {
                 self.materials[idx] = mat;
+                self.active[idx] = true;
                 if !self.dirty[idx] {
                     self.dirty[idx] = true;
                     self.dirty_count += 1;
@@ -592,7 +605,8 @@ impl MaterialDataBuffer {
             let was_in_use = !self.is_slot_free(idx);
             if was_in_use {
                 // Mark as free
-                self.materials[idx] = GpuMaterialData::default();
+                self.materials[idx] = unused_material_slot();
+                self.active[idx] = false;
                 self.free_slots.push(index);
                 // Mark as dirty to upload the cleared state
                 if !self.dirty[idx] {
@@ -606,7 +620,7 @@ impl MaterialDataBuffer {
     /// Update a material at a specific index.
     pub fn update(&mut self, index: u32, mat: GpuMaterialData) {
         let idx = index as usize;
-        if idx < self.materials.len() {
+        if idx < self.materials.len() && self.active[idx] {
             if !self.dirty[idx] {
                 self.dirty[idx] = true;
                 self.dirty_count += 1;
@@ -617,13 +631,18 @@ impl MaterialDataBuffer {
 
     /// Get a reference to a material by index.
     pub fn get(&self, index: u32) -> Option<&GpuMaterialData> {
-        self.materials.get(index as usize)
+        let idx = index as usize;
+        if self.active.get(idx).copied().unwrap_or(false) {
+            self.materials.get(idx)
+        } else {
+            None
+        }
     }
 
     /// Get a mutable reference to a material by index.
     pub fn get_mut(&mut self, index: u32) -> Option<&mut GpuMaterialData> {
         let idx = index as usize;
-        if idx < self.materials.len() {
+        if idx < self.materials.len() && self.active[idx] {
             if !self.dirty[idx] {
                 self.dirty[idx] = true;
                 self.dirty_count += 1;
@@ -658,7 +677,6 @@ impl MaterialDataBuffer {
                     self.dirty[i] = false;
                     i += 1;
                 }
-                let count = i - start;
                 let offset = (start as u64) * mat_size;
                 queue.write_buffer(
                     &self.buffer,
@@ -689,27 +707,25 @@ impl MaterialDataBuffer {
 
     /// Number of allocated material slots.
     pub fn capacity(&self) -> usize {
-        self.materials.capacity()
+        self.materials.len()
     }
 
     /// Number of materials currently in use.
     pub fn count(&self) -> u32 {
-        self.materials
-            .iter()
-            .filter(|m| m.albedo_tex_index != u32::MAX || m.base_color != [0.0, 0.0, 0.0, 0.0])
-            .count() as u32
+        self.active.iter().filter(|&&active| active).count() as u32
     }
 
     /// Get the number of free slots available for reuse.
     pub fn free_slot_count(&self) -> usize {
-        self.free_slots.len() + (self.materials.capacity() as u32 - self.next_free_index) as usize
+        self.free_slots.len() + (self.materials.len() as u32 - self.next_free_index) as usize
     }
 
     /// Clear all materials and reset dirty tracking.
     pub fn clear(&mut self) {
         for m in &mut self.materials {
-            *m = GpuMaterialData::default();
+            *m = unused_material_slot();
         }
+        self.active.fill(false);
         self.dirty.fill(false);
         self.dirty_count = 0;
         self.free_slots.clear();

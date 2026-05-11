@@ -1021,7 +1021,7 @@ impl Renderer {
             normal_tex_index: u32::MAX,
             mr_tex_index: u32::MAX,
             sampler_index: 0,
-            _pad: [0; 2],
+            _pad: [0; 5],
         };
 
         if let Some(mat_idx) = self.material_data_buffer.push(default_mat) {
